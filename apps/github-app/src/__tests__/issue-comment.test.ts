@@ -1,0 +1,198 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('@outpost/db', () => ({
+    prisma: {
+        ticket: {
+            create: vi.fn(),
+            findFirst: vi.fn(),
+            update: vi.fn(),
+        },
+        message: {
+            create: vi.fn(),
+        },
+        user: {
+            findFirst: vi.fn(),
+        },
+        teamMember: {
+            findUnique: vi.fn(),
+        },
+    },
+}));
+
+vi.mock('@outpost/queue', () => ({
+    createJob: vi.fn().mockResolvedValue('job-123'),
+    JobType: {
+        AI_RESPONSE: 'AI_RESPONSE',
+    },
+}));
+
+vi.mock('@outpost/shared', () => ({
+    truncate: vi.fn((str: string, _len: number) => str),
+}));
+
+vi.mock('../config.js', () => ({
+    config: {
+        appId: 'test-app-id',
+        privateKey: 'test-private-key',
+        installationId: 'test-installation-id',
+        webhookSecret: 'test-secret',
+        port: 3200,
+        teamLogins: ['teambot', 'admin-user'],
+    },
+}));
+
+import { handleIssueComment } from '../webhooks/issue-comment.js';
+import { prisma } from '@outpost/db';
+import { createJob, JobType } from '@outpost/queue';
+import type { EmitterWebhookEvent } from '@octokit/webhooks';
+
+const TICKET = {
+    id: 'ticket-1',
+    displayId: 'TKT-GH01',
+    status: 'OPEN',
+    priority: 'MEDIUM',
+    source: 'GITHUB_ISSUE',
+    sourceId: '42',
+};
+
+function makeEvent(overrides: Record<string, unknown> = {}): EmitterWebhookEvent<'issue_comment.created'> {
+    return {
+        id: 'evt-1',
+        name: 'issue_comment',
+        payload: {
+            action: 'created',
+            comment: {
+                body: 'I still have this problem after upgrading',
+                id: 100,
+                ...(overrides.comment as Record<string, unknown> ?? {}),
+            },
+            issue: {
+                number: 42,
+                ...(overrides.issue as Record<string, unknown> ?? {}),
+            },
+            repository: {
+                full_name: 'CopilotKit/CopilotKit',
+                ...(overrides.repository as Record<string, unknown> ?? {}),
+            },
+            sender: {
+                login: 'user123',
+                id: 999,
+                type: 'User',
+                ...(overrides.sender as Record<string, unknown> ?? {}),
+            },
+            ...overrides,
+        },
+    } as unknown as EmitterWebhookEvent<'issue_comment.created'>;
+}
+
+describe('handleIssueComment', () => {
+    beforeEach(() => {
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(
+            TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never,
+        );
+        vi.mocked(prisma.message.create).mockResolvedValue({
+            id: 'msg-1',
+        } as ReturnType<typeof prisma.message.create> extends Promise<infer T> ? T : never);
+        // Default: not a team member (no DB match either)
+        vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+    });
+
+    it('skips comments from bots', async () => {
+        const event = makeEvent({
+            sender: { login: 'bot[bot]', id: 1, type: 'Bot' },
+        });
+        await handleIssueComment(event);
+
+        expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('ignores comments on issues without tracked tickets', async () => {
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+        const event = makeEvent();
+        await handleIssueComment(event);
+
+        expect(prisma.message.create).not.toHaveBeenCalled();
+    });
+
+    it('appends a message and enqueues AI response for non-team-member', async () => {
+        const event = makeEvent();
+        await handleIssueComment(event);
+
+        expect(prisma.message.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                ticketId: 'ticket-1',
+                type: 'USER',
+                content: 'I still have this problem after upgrading',
+            }),
+        });
+
+        expect(createJob).toHaveBeenCalledWith(
+            JobType.AI_RESPONSE,
+            expect.objectContaining({
+                ticketId: 'ticket-1',
+                source: 'github',
+            }),
+        );
+    });
+
+    it('does not enqueue AI response for team member comments (static list)', async () => {
+        const event = makeEvent({
+            sender: { login: 'admin-user', id: 555, type: 'User' },
+        });
+        await handleIssueComment(event);
+
+        // Should still save the message
+        expect(prisma.message.create).toHaveBeenCalled();
+
+        // Should NOT enqueue an AI response
+        expect(createJob).not.toHaveBeenCalled();
+    });
+
+    it('does not enqueue AI response for team member comments (DB lookup)', async () => {
+        vi.mocked(prisma.user.findFirst).mockResolvedValue({
+            id: 'u-1',
+            email: 'team@copilotkit.ai',
+        } as ReturnType<typeof prisma.user.findFirst> extends Promise<infer T> ? T : never);
+        vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
+            id: 'tm-1',
+        } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
+
+        const event = makeEvent();
+        await handleIssueComment(event);
+
+        expect(prisma.message.create).toHaveBeenCalled();
+        expect(createJob).not.toHaveBeenCalled();
+    });
+
+    it('reopens ticket when customer replies to a resolved ticket', async () => {
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue({
+            ...TICKET,
+            status: 'RESOLVED',
+        } as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
+
+        const event = makeEvent();
+        await handleIssueComment(event);
+
+        expect(prisma.ticket.update).toHaveBeenCalledWith({
+            where: { id: 'ticket-1' },
+            data: { status: 'OPEN' },
+        });
+    });
+
+    it('updates status when team member replies to WAITING_ON_TEAM ticket', async () => {
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue({
+            ...TICKET,
+            status: 'WAITING_ON_TEAM',
+        } as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
+
+        const event = makeEvent({
+            sender: { login: 'teambot', id: 777, type: 'User' },
+        });
+        await handleIssueComment(event);
+
+        expect(prisma.ticket.update).toHaveBeenCalledWith({
+            where: { id: 'ticket-1' },
+            data: { status: 'WAITING_ON_CUSTOMER' },
+        });
+    });
+});
