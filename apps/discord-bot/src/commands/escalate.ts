@@ -1,16 +1,66 @@
-import type { ChatInputCommandInteraction } from 'discord.js';
+import { ChannelType, type ChatInputCommandInteraction } from 'discord.js';
+import { prisma } from '@outpost/db';
+import { createJob, JobType } from '@outpost/queue';
+import { findTicketByThreadId } from '../lib/tickets.js';
 
 export async function handleEscalate(interaction: ChatInputCommandInteraction): Promise<void> {
     const reason = interaction.options.getString('reason') ?? 'Needs engineering attention';
 
-    // TODO: Implement ticket escalation
-    // 1. Find ticket for current thread
-    // 2. Update priority to HIGH or CRITICAL
-    // 3. Notify engineering channel
-    // 4. Create a note with escalation reason
+    const channel = interaction.channel;
+    if (
+        !channel ||
+        (channel.type !== ChannelType.PublicThread &&
+            channel.type !== ChannelType.PrivateThread)
+    ) {
+        await interaction.reply({
+            content: 'This command must be used in a support thread.',
+            ephemeral: true,
+        });
+        return;
+    }
+
+    const ticket = await findTicketByThreadId(channel.id);
+    if (!ticket) {
+        await interaction.reply({
+            content: 'No ticket found for this thread.',
+            ephemeral: true,
+        });
+        return;
+    }
+
+    // Escalate: bump priority to HIGH if currently below it
+    const escalatedPriority =
+        ticket.priority === 'CRITICAL' ? 'CRITICAL' : 'HIGH';
+
+    await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: {
+            priority: escalatedPriority,
+            status: 'WAITING_ON_TEAM',
+        },
+    });
+
+    // Add escalation note
+    await prisma.note.create({
+        data: {
+            ticketId: ticket.id,
+            author: `${interaction.user.tag} (${interaction.user.id})`,
+            content: `Escalated. Reason: ${reason}`,
+        },
+    });
+
+    // Enqueue escalation notification
+    await createJob(JobType.SEND_NOTIFICATION, {
+        channel: 'discord',
+        recipient: 'team',
+        body: `Ticket ${ticket.displayId} has been escalated by ${interaction.user.tag}. Reason: ${reason}`,
+        metadata: { ticketId: ticket.id, threadId: channel.id },
+    });
 
     await interaction.reply({
-        content: `Ticket escalated. Reason: ${reason}`,
+        content: `Ticket ${ticket.displayId} escalated to ${escalatedPriority} priority. Reason: ${reason}`,
         ephemeral: false,
     });
+
+    console.log(`[Discord Bot] Ticket ${ticket.displayId} escalated by ${interaction.user.tag}`);
 }
