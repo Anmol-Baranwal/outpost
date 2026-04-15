@@ -85,6 +85,79 @@ export interface TicketClassification {
     reasoning: string;
 }
 
+// ─── Sentiment Types ───────────────────────────────────────────────────────
+
+export enum SentimentLabel {
+    POSITIVE = 'POSITIVE',
+    NEUTRAL = 'NEUTRAL',
+    NEGATIVE = 'NEGATIVE',
+    CRITICAL = 'CRITICAL',
+}
+
+export interface SentimentResult {
+    /** Percentage of negative sentiment (0-100) */
+    score: number;
+    /** Classified sentiment label */
+    label: SentimentLabel;
+    /** Token usage for cost monitoring */
+    tokenUsage: TokenUsage;
+}
+
+// ─── Engagement Types ──────────────────────────────────────────────────────
+
+export enum EngagementLevel {
+    HIGH = 'HIGH',
+    MEDIUM = 'MEDIUM',
+    LOW = 'LOW',
+    INACTIVE = 'INACTIVE',
+}
+
+export interface AccountMetrics {
+    /** Number of messages in the scoring window */
+    messageCount: number;
+    /** Number of tickets created in the scoring window */
+    ticketCount: number;
+    /** Average messages per day in the scoring window */
+    avgMessagesPerDay: number;
+    /** Days since most recent activity */
+    daysSinceLastActivity: number;
+    /** Percentage of messages that received a reply (0-100) */
+    responseRate: number;
+    /** Trend in ticket volume: positive = increasing, negative = decreasing */
+    ticketVolumeTrend: number;
+}
+
+export interface EngagementResult {
+    /** Engagement score (0-100) */
+    score: number;
+    /** Classified engagement level */
+    level: EngagementLevel;
+}
+
+// ─── Sentiment Trend Types ─────────────────────────────────────────────────
+
+export interface SentimentPeriod {
+    /** Start of the period (ISO date string) */
+    periodStart: string;
+    /** End of the period (ISO date string) */
+    periodEnd: string;
+    /** Sentiment score for this period */
+    score: number;
+    /** Sentiment label for this period */
+    label: SentimentLabel;
+    /** Number of messages analyzed in this period */
+    messageCount: number;
+}
+
+export interface SentimentTrendResult {
+    /** Sentiment over each period */
+    periods: SentimentPeriod[];
+    /** Overall trend direction: 'IMPROVING' | 'STABLE' | 'DECLINING' */
+    trend: 'IMPROVING' | 'STABLE' | 'DECLINING';
+    /** Change in score from first to last period (negative = improving, positive = worsening) */
+    delta: number;
+}
+
 export type PlatformTarget = 'discord' | 'github' | 'web';
 
 export interface PipelineOptions {

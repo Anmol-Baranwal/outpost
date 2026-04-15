@@ -33,6 +33,15 @@ export const config = {
     /** Maximum tokens for classification */
     maxClassifierTokens: 512,
 
+    /** Model used for sentiment analysis (cheap, fast) */
+    sentimentModel: process.env.AI_SENTIMENT_MODEL ?? 'claude-haiku-4-5-20251001',
+
+    /** Maximum tokens for sentiment analysis */
+    maxSentimentTokens: 512,
+
+    /** Temperature for sentiment analysis */
+    sentimentTemperature: 0.1,
+
     /** Temperature for response generation */
     responseTemperature: 0.3,
 
