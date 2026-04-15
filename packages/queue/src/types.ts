@@ -1,69 +1,69 @@
 /**
  * Job queue types for the Postgres-based job queue.
+ *
+ * Each job type has a strongly-typed payload shape. Handlers receive
+ * the typed payload and must return a JobResult.
  */
 
+// ─── Job Types ──────────────────────────────────────────────────────────────
+
 export enum JobType {
-    /** Process an incoming ticket from any source */
-    PROCESS_TICKET = 'PROCESS_TICKET',
-    /** Generate an AI response for a ticket */
-    GENERATE_RESPONSE = 'GENERATE_RESPONSE',
-    /** Send a notification (Discord, email, etc.) */
-    SEND_NOTIFICATION = 'SEND_NOTIFICATION',
-    /** Check SLA compliance for all open tickets */
-    CHECK_SLA = 'CHECK_SLA',
-    /** Analyze sentiment for a batch of messages */
-    ANALYZE_SENTIMENT = 'ANALYZE_SENTIMENT',
-    /** Sync documentation from external sources */
-    SYNC_DOCS = 'SYNC_DOCS',
-    /** Send a broadcast message */
-    SEND_BROADCAST = 'SEND_BROADCAST',
-    /** Index content for search */
-    INDEX_CONTENT = 'INDEX_CONTENT',
+    /** Generate an AI response for a ticket (Pathfinder -> Claude -> post to Discord/GitHub) */
+    AI_RESPONSE = 'AI_RESPONSE',
+    /** Auto-classify a ticket (priority, type, account matching) */
+    TICKET_CLASSIFY = 'TICKET_CLASSIFY',
+    /** Periodic SLA compliance check across all open tickets */
+    SLA_CHECK = 'SLA_CHECK',
+    /** Route a ticket to the right human */
+    ESCALATION = 'ESCALATION',
+    /** Compile daily new member digest */
+    ONBOARDING_DIGEST = 'ONBOARDING_DIGEST',
 }
 
-export interface JobPayload {
-    [JobType.PROCESS_TICKET]: {
-        ticketId: string;
-        source: string;
-        sourceData: Record<string, unknown>;
-    };
-    [JobType.GENERATE_RESPONSE]: {
-        ticketId: string;
-        messageId: string;
-        context: string;
-    };
-    [JobType.SEND_NOTIFICATION]: {
-        channel: 'discord' | 'email' | 'web';
-        recipient: string;
-        subject?: string;
-        body: string;
-        metadata?: Record<string, unknown>;
-    };
-    [JobType.CHECK_SLA]: {
-        batchSize?: number;
-    };
-    [JobType.ANALYZE_SENTIMENT]: {
-        accountId: string;
-        messageIds: string[];
-    };
-    [JobType.SYNC_DOCS]: {
-        sourceUrl: string;
-        categoryId: string;
-    };
-    [JobType.SEND_BROADCAST]: {
-        broadcastId: string;
-    };
-    [JobType.INDEX_CONTENT]: {
-        contentType: 'doc' | 'ticket' | 'message';
-        contentId: string;
-    };
+// ─── Payload Shapes ─────────────────────────────────────────────────────────
+
+export interface AiResponsePayload {
+    ticketId: string;
+    threadId?: string;
+    source: 'discord' | 'github';
 }
+
+export interface TicketClassifyPayload {
+    ticketId: string;
+}
+
+export interface SlaCheckPayload {
+    // No payload needed — runs against all open tickets
+}
+
+export interface EscalationPayload {
+    ticketId: string;
+    reason: string;
+    targetTeamMemberId?: string;
+}
+
+export interface OnboardingDigestPayload {
+    date: string; // ISO date string, e.g. "2026-04-15"
+}
+
+/** Map from JobType to its specific payload shape */
+export interface JobPayload {
+    [JobType.AI_RESPONSE]: AiResponsePayload;
+    [JobType.TICKET_CLASSIFY]: TicketClassifyPayload;
+    [JobType.SLA_CHECK]: SlaCheckPayload;
+    [JobType.ESCALATION]: EscalationPayload;
+    [JobType.ONBOARDING_DIGEST]: OnboardingDigestPayload;
+}
+
+// ─── Job Results ────────────────────────────────────────────────────────────
 
 export interface JobResult {
     success: boolean;
     data?: Record<string, unknown>;
     error?: string;
 }
+
+// ─── Options ────────────────────────────────────────────────────────────────
 
 export interface CreateJobOptions {
     /** When to run the job (defaults to now) */
@@ -72,4 +72,61 @@ export interface CreateJobOptions {
     maxAttempts?: number;
 }
 
-export type JobHandler<T extends JobType> = (payload: JobPayload[T]) => Promise<JobResult>;
+// ─── Handler Type ───────────────────────────────────────────────────────────
+
+/**
+ * A function that processes a job of a specific type.
+ * Handlers receive the typed payload and an optional context object
+ * for reporting progress.
+ */
+export type JobHandler<T extends JobType> = (
+    payload: JobPayload[T],
+    context: JobHandlerContext,
+) => Promise<JobResult>;
+
+/**
+ * Context passed to job handlers allowing them to report progress
+ * and check for cancellation.
+ */
+export interface JobHandlerContext {
+    /** Report job progress as a percentage (0-100) */
+    reportProgress: (percent: number) => Promise<void>;
+    /** The job ID being processed */
+    jobId: string;
+}
+
+// ─── Worker Types ───────────────────────────────────────────────────────────
+
+export interface WorkerOptions {
+    /** How often to poll for new jobs, in milliseconds. Default: 1000 */
+    pollIntervalMs?: number;
+    /** How many jobs to fetch per poll. Default: 10 */
+    batchSize?: number;
+    /** Maximum number of jobs to process concurrently. Default: 5 */
+    maxConcurrency?: number;
+    /** Per-job-type timeout overrides in milliseconds */
+    jobTimeouts?: Partial<Record<JobType, number>>;
+    /** Default timeout for jobs without a specific override, in ms. Default: 30000 */
+    defaultTimeoutMs?: number;
+}
+
+export interface WorkerHealthStatus {
+    running: boolean;
+    activeJobCount: number;
+    lastPollTime: Date | null;
+    registeredHandlers: string[];
+    upSince: Date | null;
+}
+
+// ─── Scheduler Types ────────────────────────────────────────────────────────
+
+export interface ScheduledJobDefinition<T extends JobType = JobType> {
+    /** Job type to create */
+    type: T;
+    /** Payload for the job */
+    payload: JobPayload[T];
+    /** Interval in milliseconds between runs */
+    intervalMs: number;
+    /** Human-readable description */
+    description: string;
+}
