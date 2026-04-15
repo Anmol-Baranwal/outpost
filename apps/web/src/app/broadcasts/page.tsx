@@ -1,7 +1,50 @@
+'use client';
+
+import { useState, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Megaphone } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { BroadcastList } from '@/components/broadcasts/broadcast-list';
+import { BroadcastComposer } from '@/components/broadcasts/broadcast-composer';
+import { filterMockBroadcasts } from '@/lib/mock-broadcasts';
+import type { BroadcastStatus } from '@/lib/mock-broadcasts';
+import type { BroadcastFormData } from '@/components/broadcasts/broadcast-composer';
 
 export default function BroadcastsPage() {
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const showComposer = searchParams.get('action') === 'create';
+
+    const [statusFilter, setStatusFilter] = useState<BroadcastStatus | null>(null);
+
+    const broadcasts = filterMockBroadcasts(
+        statusFilter ? { status: statusFilter } : {},
+    );
+
+    const openComposer = useCallback(() => {
+        router.push('/broadcasts?action=create');
+    }, [router]);
+
+    const closeComposer = useCallback(() => {
+        router.push('/broadcasts');
+    }, [router]);
+
+    const handleSend = useCallback(
+        (_data: BroadcastFormData) => {
+            // In production, POST to /api/broadcasts with status=sent
+            closeComposer();
+        },
+        [closeComposer],
+    );
+
+    const handleSaveDraft = useCallback(
+        (_data: BroadcastFormData) => {
+            // In production, POST to /api/broadcasts with status=draft
+            closeComposer();
+        },
+        [closeComposer],
+    );
+
     return (
         <div>
             <PageHeader
@@ -10,24 +53,35 @@ export default function BroadcastsPage() {
                 icon={Megaphone}
                 breadcrumbs={[{ label: 'Broadcasts' }]}
             />
-            <div className="mb-6">
-                <button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
-                    New Broadcast
-                </button>
-            </div>
-            <div className="rounded-lg border border-border bg-card">
-                <div className="border-b border-border px-6 py-3">
-                    <div className="grid grid-cols-4 text-sm font-medium text-muted-foreground">
-                        <span>Message</span>
-                        <span>Audience</span>
-                        <span>Status</span>
-                        <span>Created</span>
-                    </div>
+
+            {showComposer ? (
+                <div className="mb-6 rounded-lg border border-border bg-card p-6">
+                    <h2 className="mb-4 text-lg font-semibold text-foreground">
+                        New Broadcast
+                    </h2>
+                    <BroadcastComposer
+                        onSend={handleSend}
+                        onSaveDraft={handleSaveDraft}
+                        onCancel={closeComposer}
+                    />
                 </div>
-                <div className="p-6 text-center text-sm text-muted-foreground">
-                    No broadcasts yet. Create one to get started.
+            ) : (
+                <div className="mb-6">
+                    <button
+                        onClick={openComposer}
+                        data-testid="new-broadcast-button"
+                        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+                    >
+                        New Broadcast
+                    </button>
                 </div>
-            </div>
+            )}
+
+            <BroadcastList
+                broadcasts={broadcasts}
+                onStatusFilter={setStatusFilter}
+                activeFilter={statusFilter}
+            />
         </div>
     );
 }
