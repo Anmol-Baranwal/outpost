@@ -311,3 +311,28 @@ enum TeamMemberRole {
     ENGINEER
     VIEWER
 }
+
+// ─── Onboarding ─────────────────────────────────────────────────────────────
+
+model OnboardingMember {
+    id             String      @id @default(cuid())
+    discordId      String      @unique
+    username       String
+    joinedAt       DateTime    @default(now())
+    funnelStage    FunnelStage @default(JOINED)
+    contacted      Boolean     @default(false)
+    responded      Boolean     @default(false)
+    meetingBooked  Boolean     @default(false)
+    createdAt      DateTime    @default(now())
+    updatedAt      DateTime    @updatedAt
+
+    @@index([funnelStage])
+    @@index([joinedAt])
+}
+
+enum FunnelStage {
+    JOINED
+    CONTACTED
+    RESPONDED
+    MEETING_BOOKED
+}

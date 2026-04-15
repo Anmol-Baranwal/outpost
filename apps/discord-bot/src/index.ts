@@ -4,6 +4,7 @@ import { handleReady } from './events/ready.js';
 import { handleMessageCreate } from './events/message-create.js';
 import { handleInteractionCreate } from './events/interaction-create.js';
 import { handleThreadCreate } from './events/thread-create.js';
+import { handleGuildMemberAdd } from './events/guild-member-add.js';
 
 const client = new Client({
     intents: [
@@ -11,6 +12,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers,
     ],
 });
 
@@ -19,6 +21,7 @@ client.once(Events.ClientReady, handleReady);
 client.on(Events.MessageCreate, handleMessageCreate);
 client.on(Events.InteractionCreate, handleInteractionCreate);
 client.on(Events.ThreadCreate, handleThreadCreate);
+client.on(Events.GuildMemberAdd, handleGuildMemberAdd);
 
 // Start the bot
 client.login(config.discordToken).catch((error) => {

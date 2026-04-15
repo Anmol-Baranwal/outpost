@@ -4,4 +4,5 @@ export { Scheduler, DEFAULT_SCHEDULED_JOBS } from './scheduler.js';
 export { handleEscalation } from './handlers/escalation.js';
 export { handleSlaCheck } from './handlers/sla-check.js';
 export type { SlaCheckSummary } from './handlers/sla-check.js';
+export { handleOnboardingDigest } from './handlers/onboarding-digest.js';
 export * from './types.js';

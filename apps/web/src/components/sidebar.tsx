@@ -9,6 +9,7 @@ import {
     FileText,
     Bot,
     Megaphone,
+    Users,
     MessageSquare,
     Settings,
     HelpCircle,
@@ -35,6 +36,7 @@ const navItems: NavItem[] = [
     { name: 'Docs', href: '/docs', icon: FileText },
     { name: 'Agents', href: '/agents', icon: Bot },
     { name: 'Broadcasts', href: '/broadcasts', icon: Megaphone },
+    { name: 'Onboarding', href: '/onboarding', icon: Users },
     { name: 'Ask AI', href: '/qa', icon: MessageSquare, badge: 'Beta' },
 ];
 
