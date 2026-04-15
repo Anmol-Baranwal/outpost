@@ -1,13 +1,30 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AI_CONFIDENCE } from '@outpost/shared';
-import type { GeneratedResponse, PipelineContext, SearchResult } from './types.js';
+import type { GeneratedResponse, PipelineContext, SearchResult, TokenUsage } from './types.js';
 import { ConfidenceLevel } from './types.js';
+import { config } from './config.js';
+
+const SYSTEM_PROMPT_PREFIX = `You are an AI support assistant for CopilotKit, an open-source framework for building AI copilots, chatbots, and AI-powered UIs.
+
+Your personality:
+- Conversational and helpful, not robotic
+- Always include code examples when relevant (TypeScript/React preferred)
+- Reference specific docs pages with full URLs when available
+- Structure responses with **bold headers**, bullet points, and code blocks
+- End with a relevant follow-up suggestion or "Was this helpful?"
+
+Formatting rules:
+- Use markdown formatting throughout
+- Wrap code in fenced code blocks with language tags
+- Use bold for emphasis on key concepts
+- Keep paragraphs concise — prefer bullets over walls of text`;
 
 /**
- * Claude response generator stub.
+ * Claude response generator for the AI support pipeline.
  *
  * Takes a question and relevant context (from Pathfinder search results),
- * then generates a structured response with confidence scoring.
+ * then generates a structured response using Claude claude-sonnet-4-20250514.
+ * Supports both streaming and non-streaming modes.
  */
 export class ResponseGenerator {
     private client: Anthropic;
@@ -15,9 +32,9 @@ export class ResponseGenerator {
 
     constructor(options?: { apiKey?: string; model?: string }) {
         this.client = new Anthropic({
-            apiKey: options?.apiKey ?? process.env.ANTHROPIC_API_KEY,
+            apiKey: options?.apiKey ?? config.anthropicApiKey,
         });
-        this.model = options?.model ?? 'claude-sonnet-4-20250514';
+        this.model = options?.model ?? config.responseModel;
     }
 
     /**
@@ -26,59 +43,126 @@ export class ResponseGenerator {
     async generate(
         pipelineContext: PipelineContext,
         sources: SearchResult[],
+        conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
     ): Promise<GeneratedResponse> {
+        const startTime = Date.now();
         const systemPrompt = this.buildSystemPrompt(sources);
-        const userMessage = this.buildUserMessage(pipelineContext);
+        const messages = this.buildMessages(pipelineContext, conversationHistory);
 
-        // TODO: Replace with actual Claude API call once pipeline is wired up
-        console.log(`[Generator] Generating response for: ${pipelineContext.question.slice(0, 50)}...`);
-        console.log(`[Generator] Using ${sources.length} sources as context`);
+        try {
+            const message = await this.client.messages.create({
+                model: this.model,
+                max_tokens: config.maxResponseTokens,
+                temperature: config.responseTemperature,
+                system: systemPrompt,
+                messages,
+            });
 
-        const message = await this.client.messages.create({
-            model: this.model,
-            max_tokens: 1024,
-            system: systemPrompt,
-            messages: [{ role: 'user', content: userMessage }],
-        });
+            const responseText =
+                message.content[0].type === 'text' ? message.content[0].text : '';
 
-        const responseText =
-            message.content[0].type === 'text' ? message.content[0].text : '';
+            const tokenUsage: TokenUsage = {
+                inputTokens: message.usage.input_tokens,
+                outputTokens: message.usage.output_tokens,
+            };
 
-        const confidence = this.assessConfidence(sources, responseText);
-        const confidenceLevel = this.classifyConfidence(confidence);
+            const confidence = this.assessConfidence(sources, responseText);
+            const confidenceLevel = this.classifyConfidence(confidence);
+            const latencyMs = Date.now() - startTime;
 
-        return {
-            text: responseText,
-            confidence,
-            confidenceLevel,
-            sources,
-            autoSend: confidence >= AI_CONFIDENCE.AUTO_RESPOND,
-            reasoning: `Based on ${sources.length} source(s) with avg relevance ${this.avgScore(sources).toFixed(2)}`,
-        };
+            return {
+                text: responseText,
+                confidence,
+                confidenceLevel,
+                sources,
+                autoSend: confidence >= AI_CONFIDENCE.AUTO_RESPOND,
+                reasoning: `Based on ${sources.length} source(s) with avg relevance ${this.avgScore(sources).toFixed(2)}`,
+                tokenUsage,
+                latencyMs,
+            };
+        } catch (error) {
+            const latencyMs = Date.now() - startTime;
+            // Never crash — return a graceful fallback
+            return {
+                text: 'I apologize, but I was unable to generate a response at this time. A human support agent will follow up shortly.',
+                confidence: 0,
+                confidenceLevel: ConfidenceLevel.LOW,
+                sources,
+                autoSend: false,
+                reasoning: `Generation failed: ${error instanceof Error ? error.message : String(error)}`,
+                tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                latencyMs,
+            };
+        }
+    }
+
+    /**
+     * Generate a response in streaming mode, yielding text chunks as they arrive.
+     */
+    async *generateStream(
+        pipelineContext: PipelineContext,
+        sources: SearchResult[],
+        conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    ): AsyncIterable<string> {
+        const systemPrompt = this.buildSystemPrompt(sources);
+        const messages = this.buildMessages(pipelineContext, conversationHistory);
+
+        try {
+            const stream = this.client.messages.stream({
+                model: this.model,
+                max_tokens: config.maxResponseTokens,
+                temperature: config.responseTemperature,
+                system: systemPrompt,
+                messages,
+            });
+
+            for await (const event of stream) {
+                if (
+                    event.type === 'content_block_delta' &&
+                    event.delta.type === 'text_delta'
+                ) {
+                    yield event.delta.text;
+                }
+            }
+        } catch (error) {
+            yield `\n\n_Error generating response: ${error instanceof Error ? error.message : String(error)}_`;
+        }
     }
 
     private buildSystemPrompt(sources: SearchResult[]): string {
         const sourceContext = sources
-            .map((s, i) => `[Source ${i + 1}: ${s.title}]\n${s.content}`)
+            .map((s, i) => {
+                const urlLine = s.sourceUrl ? `\nURL: ${s.sourceUrl}` : '';
+                return `[Source ${i + 1}: ${s.title} (relevance: ${s.score.toFixed(2)})]${urlLine}\n${s.content}`;
+            })
             .join('\n\n');
 
         return [
-            'You are an AI support assistant for CopilotKit, an open-source framework for building AI copilots.',
-            'Answer the user\'s question based on the provided documentation context.',
-            'If the context does not contain enough information to answer confidently, say so clearly.',
-            'Be concise, helpful, and include relevant code examples when appropriate.',
+            SYSTEM_PROMPT_PREFIX,
             '',
             '--- Documentation Context ---',
-            sourceContext || '(No relevant documentation found)',
+            sourceContext || '(No relevant documentation found — answer from general CopilotKit knowledge if possible, otherwise say you need to escalate)',
         ].join('\n');
     }
 
-    private buildUserMessage(ctx: PipelineContext): string {
+    private buildMessages(
+        ctx: PipelineContext,
+        conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    ): Array<{ role: 'user' | 'assistant'; content: string }> {
+        const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+
+        // Include conversation history for follow-up questions
+        if (conversationHistory?.length) {
+            messages.push(...conversationHistory);
+        }
+
         const parts = [ctx.question];
         if (ctx.context) {
             parts.push(`\nAdditional context: ${ctx.context}`);
         }
-        return parts.join('\n');
+
+        messages.push({ role: 'user', content: parts.join('\n') });
+        return messages;
     }
 
     private assessConfidence(sources: SearchResult[], _response: string): number {

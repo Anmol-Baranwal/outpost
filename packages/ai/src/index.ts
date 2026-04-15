@@ -1,3 +1,10 @@
 export { PathfinderClient } from './pathfinder.js';
 export { ResponseGenerator } from './generator.js';
+export { ConfidenceScorer } from './confidence.js';
+export type { ConfidenceAssessment } from './confidence.js';
+export { TicketClassifier } from './classifier.js';
+export { ResponseFormatter } from './formatter.js';
+export { AIPipeline } from './pipeline.js';
+export { config } from './config.js';
+export type { AIConfig } from './config.js';
 export * from './types.js';
