@@ -200,6 +200,9 @@ importers:
         specifier: workspace:*
         version: link:../shared
     devDependencies:
+      '@copilotkit/aimock':
+        specifier: ^1.14.0
+        version: 1.14.0
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.17
@@ -372,6 +375,11 @@ packages:
 
   '@bramus/specificity@2.4.2':
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
+    hasBin: true
+
+  '@copilotkit/aimock@1.14.0':
+    resolution: {integrity: sha512-1NqwWEameArC7HWT7UHBlkq3pNlCA0eHBocaeL6mS5CULolT9XFL27tC9jJ+OSmREzLwkKbFYaAl2SssaXexVA==}
+    engines: {node: '>=20.15.0'}
     hasBin: true
 
   '@csstools/color-helpers@6.0.2':
@@ -4368,6 +4376,8 @@ snapshots:
   '@bramus/specificity@2.4.2':
     dependencies:
       css-tree: 3.2.1
+
+  '@copilotkit/aimock@1.14.0': {}
 
   '@csstools/color-helpers@6.0.2': {}
 
