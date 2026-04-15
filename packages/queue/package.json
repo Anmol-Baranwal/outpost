@@ -18,6 +18,7 @@
         "test": "vitest run"
     },
     "dependencies": {
+        "@outpost/ai": "workspace:*",
         "@outpost/db": "workspace:*",
         "@outpost/shared": "workspace:*"
     },

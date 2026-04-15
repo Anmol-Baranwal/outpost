@@ -228,6 +228,9 @@ importers:
 
   packages/queue:
     dependencies:
+      '@outpost/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@outpost/db':
         specifier: workspace:*
         version: link:../db

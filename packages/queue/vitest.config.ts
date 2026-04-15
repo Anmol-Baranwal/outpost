@@ -10,6 +10,7 @@ export default defineConfig({
         alias: {
             // Point workspace deps to their source so vite can resolve them
             // (they may not be built yet). Tests mock these anyway.
+            '@outpost/ai': path.resolve(__dirname, '../ai/src/index.ts'),
             '@outpost/db': path.resolve(__dirname, '../db/src/index.ts'),
             '@outpost/shared': path.resolve(__dirname, '../shared/src/index.ts'),
         },
