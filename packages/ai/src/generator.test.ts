@@ -146,12 +146,13 @@ describe('ResponseGenerator', () => {
             expect(body).not.toBeNull();
             const messages = body!.messages;
             // Should contain the history messages
-            const userMessages = messages.filter((m: { role: string; content: string | null }) => m.role === 'user');
-            const assistantMessages = messages.filter((m: { role: string; content: string | null }) => m.role === 'assistant');
-            expect(userMessages.some((m: { content: string | null }) =>
+            const allMessages = messages as Array<{ role: string; content: string | null }>;
+            const userMessages = allMessages.filter(m => m.role === 'user');
+            const assistantMessages = allMessages.filter(m => m.role === 'assistant');
+            expect(userMessages.some(m =>
                 typeof m.content === 'string' && m.content.includes('How do I use actions?')
             )).toBe(true);
-            expect(assistantMessages.some((m: { content: string | null }) =>
+            expect(assistantMessages.some(m =>
                 typeof m.content === 'string' && m.content.includes('You use useCopilotAction...')
             )).toBe(true);
         });
