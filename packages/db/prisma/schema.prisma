@@ -1,0 +1,308 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// ─── Tickets ────────────────────────────────────────────────────────────────
+
+model Ticket {
+    id              String         @id @default(cuid())
+    displayId       String         @unique // TKT-XXXX format
+    title           String
+    description     String
+    status          TicketStatus   @default(OPEN)
+    priority        TicketPriority @default(MEDIUM)
+    type            TicketType     @default(QUESTION)
+    source          TicketSource   @default(MANUAL)
+    sourceUrl       String?
+    channel         String? // Discord channel ID, GitHub repo, etc.
+    additionalInfo  Json?
+    suggestedResponse String?
+
+    assigneeId      String?
+    assignee        TeamMember?    @relation(fields: [assigneeId], references: [id])
+
+    accountId       String?
+    account         Account?       @relation(fields: [accountId], references: [id])
+
+    userId          String?
+    user            User?          @relation(fields: [userId], references: [id])
+
+    messages        Message[]
+    notes           Note[]
+    discussions     Discussion[]
+
+    slaBreachedAt   DateTime?
+    createdAt       DateTime       @default(now())
+    updatedAt       DateTime       @updatedAt
+
+    @@index([status])
+    @@index([priority])
+    @@index([accountId])
+}
+
+enum TicketStatus {
+    OPEN
+    IN_PROGRESS
+    WAITING_ON_CUSTOMER
+    WAITING_ON_TEAM
+    RESOLVED
+    CLOSED
+}
+
+enum TicketPriority {
+    CRITICAL
+    HIGH
+    MEDIUM
+    LOW
+}
+
+enum TicketType {
+    BUG
+    FEATURE_REQUEST
+    QUESTION
+    INTEGRATION_HELP
+    ACCOUNT_ISSUE
+    OTHER
+}
+
+enum TicketSource {
+    DISCORD
+    GITHUB_ISSUE
+    GITHUB_DISCUSSION
+    WEB
+    EMAIL
+    MANUAL
+}
+
+// ─── Messages & Notes ───────────────────────────────────────────────────────
+
+model Message {
+    id            String      @id @default(cuid())
+    ticketId      String
+    ticket        Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+    author        String
+    content       String
+    type          MessageType @default(USER)
+    isAiGenerated Boolean     @default(false)
+    attachments   Json?
+    createdAt     DateTime    @default(now())
+
+    @@index([ticketId])
+}
+
+enum MessageType {
+    USER
+    BOT
+    SYSTEM
+}
+
+model Note {
+    id        String   @id @default(cuid())
+    ticketId  String
+    ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+    author    String
+    content   String
+    createdAt DateTime @default(now())
+}
+
+model Discussion {
+    id        String              @id @default(cuid())
+    ticketId  String
+    ticket    Ticket              @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+    title     String
+    messages  DiscussionMessage[]
+    createdAt DateTime            @default(now())
+}
+
+model DiscussionMessage {
+    id           String     @id @default(cuid())
+    discussionId String
+    discussion   Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+    author       String
+    content      String
+    createdAt    DateTime   @default(now())
+}
+
+// ─── Accounts & Users ───────────────────────────────────────────────────────
+
+model Account {
+    id         String            @id @default(cuid())
+    name       String
+    domain     String?
+    owner      String?
+    sentiment  AccountSentiment  @default(NEUTRAL)
+    engagement AccountEngagement @default(MEDIUM)
+    acv        Float? // Annual Contract Value
+    closeDate  DateTime?
+    tickets    Ticket[]
+    users      User[]
+    createdAt  DateTime          @default(now())
+    updatedAt  DateTime          @updatedAt
+}
+
+enum AccountSentiment {
+    HAPPY
+    NEUTRAL
+    AT_RISK
+    CHURNING
+}
+
+enum AccountEngagement {
+    HIGH
+    MEDIUM
+    LOW
+    INACTIVE
+}
+
+model User {
+    id         String       @id @default(cuid())
+    name       String
+    email      String       @unique
+    domain     String?
+    externalId String? // Discord ID, GitHub username, etc.
+    source     TicketSource @default(MANUAL)
+    accountId  String?
+    account    Account?     @relation(fields: [accountId], references: [id])
+    tickets    Ticket[]
+    createdAt  DateTime     @default(now())
+    updatedAt  DateTime     @updatedAt
+}
+
+// ─── Job Queue ──────────────────────────────────────────────────────────────
+
+model Job {
+    id          String    @id @default(cuid())
+    type        String
+    payload     Json
+    status      JobStatus @default(PENDING)
+    attempts    Int       @default(0)
+    maxAttempts Int       @default(5)
+    runAt       DateTime  @default(now())
+    lockedAt    DateTime?
+    completedAt DateTime?
+    error       String?
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+
+    @@index([status, runAt])
+}
+
+enum JobStatus {
+    PENDING
+    PROCESSING
+    COMPLETED
+    FAILED
+}
+
+// ─── Agents ─────────────────────────────────────────────────────────────────
+
+model Agent {
+    id          String      @id @default(cuid())
+    name        String      @unique
+    description String?
+    config      Json        @default("{}")
+    lastRun     DateTime?
+    status      AgentStatus @default(ACTIVE)
+    createdAt   DateTime    @default(now())
+    updatedAt   DateTime    @updatedAt
+}
+
+enum AgentStatus {
+    ACTIVE
+    PAUSED
+    ERROR
+}
+
+// ─── Broadcasts ─────────────────────────────────────────────────────────────
+
+model Broadcast {
+    id             String            @id @default(cuid())
+    message        String
+    sendAs         String?
+    audience       BroadcastAudience @default(ALL_ACCOUNTS)
+    targetAccounts Json?
+    status         BroadcastStatus   @default(DRAFT)
+    sentAt         DateTime?
+    createdAt      DateTime          @default(now())
+    updatedAt      DateTime          @updatedAt
+}
+
+enum BroadcastAudience {
+    ALL_ACCOUNTS
+    SELECTED_ACCOUNTS
+    BY_SENTIMENT
+}
+
+enum BroadcastStatus {
+    DRAFT
+    SENT
+}
+
+// ─── Documentation ──────────────────────────────────────────────────────────
+
+model DocCategory {
+    id          String       @id @default(cuid())
+    name        String       @unique
+    description String?
+    articles    DocArticle[]
+    createdAt   DateTime     @default(now())
+}
+
+model DocArticle {
+    id         String    @id @default(cuid())
+    title      String
+    content    String
+    status     DocStatus @default(DRAFT)
+    sourceUrl  String?
+    categoryId String
+    category   DocCategory @relation(fields: [categoryId], references: [id])
+    createdAt  DateTime  @default(now())
+    updatedAt  DateTime  @updatedAt
+}
+
+enum DocStatus {
+    DRAFT
+    PUBLISHED
+}
+
+// ─── SLA Configuration ──────────────────────────────────────────────────────
+
+model SlaConfig {
+    id            String         @id @default(cuid())
+    metric        SlaMetric
+    targetMinutes Int
+    priority      TicketPriority
+    createdAt     DateTime       @default(now())
+
+    @@unique([metric, priority])
+}
+
+enum SlaMetric {
+    FIRST_RESPONSE
+    RESOLUTION
+}
+
+// ─── Team ───────────────────────────────────────────────────────────────────
+
+model TeamMember {
+    id        String         @id @default(cuid())
+    name      String
+    email     String         @unique
+    role      TeamMemberRole @default(SUPPORT)
+    avatarUrl String?
+    tickets   Ticket[]
+    createdAt DateTime       @default(now())
+    updatedAt DateTime       @updatedAt
+}
+
+enum TeamMemberRole {
+    ADMIN
+    SUPPORT
+    ENGINEER
+    VIEWER
+}
