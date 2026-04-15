@@ -92,11 +92,9 @@ async function handleNeedMoreHelp(interaction: ButtonInteraction): Promise<void>
     });
 
     // Enqueue an escalation notification
-    await createJob(JobType.SEND_NOTIFICATION, {
-        channel: 'discord',
-        recipient: 'team',
-        body: `Ticket ${ticket.displayId} needs more help. User requested human follow-up.`,
-        metadata: { ticketId: ticket.id, threadId },
+    await createJob(JobType.ESCALATION, {
+        ticketId: ticket.id,
+        reason: `User requested more help via "Need more help" button in thread ${threadId}`,
     });
 
     // Log the escalation

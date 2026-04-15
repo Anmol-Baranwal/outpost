@@ -113,10 +113,10 @@ describe('handleButtonInteraction', () => {
         });
 
         expect(createJob).toHaveBeenCalledWith(
-            JobType.SEND_NOTIFICATION,
+            JobType.ESCALATION,
             expect.objectContaining({
-                channel: 'discord',
-                recipient: 'team',
+                ticketId: 'ticket-1',
+                reason: expect.stringContaining('Need more help'),
             }),
         );
 

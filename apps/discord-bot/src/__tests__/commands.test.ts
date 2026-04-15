@@ -231,11 +231,10 @@ describe('handleEscalate', () => {
         });
 
         expect(createJob).toHaveBeenCalledWith(
-            JobType.SEND_NOTIFICATION,
+            JobType.ESCALATION,
             expect.objectContaining({
-                channel: 'discord',
-                recipient: 'team',
-                body: expect.stringContaining('Production is down'),
+                ticketId: 'ticket-1',
+                reason: expect.stringContaining('Production is down'),
             }),
         );
     });

@@ -114,10 +114,10 @@ describe('handleMessageCreate', () => {
         });
 
         expect(createJob).toHaveBeenCalledWith(
-            JobType.GENERATE_RESPONSE,
+            JobType.AI_RESPONSE,
             expect.objectContaining({
                 ticketId: 'ticket-1',
-                messageId: 'msg-1',
+                source: 'discord',
             }),
         );
     });

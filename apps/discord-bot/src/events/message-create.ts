@@ -54,10 +54,10 @@ export async function handleMessageCreate(message: Message): Promise<void> {
             }
         } else {
             // Original poster or other user: enqueue a new AI response for follow-up
-            await createJob(JobType.GENERATE_RESPONSE, {
+            await createJob(JobType.AI_RESPONSE, {
                 ticketId: ticket.id,
-                messageId: savedMessage.id,
-                context: `Follow-up message in thread: ${message.content}`,
+                threadId,
+                source: 'discord' as const,
             });
 
             // Update ticket status if it was waiting on customer

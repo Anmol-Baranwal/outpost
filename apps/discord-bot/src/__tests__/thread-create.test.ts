@@ -124,10 +124,10 @@ describe('handleThreadCreate', () => {
 
         // Should enqueue an AI response job
         expect(createJob).toHaveBeenCalledWith(
-            JobType.GENERATE_RESPONSE,
+            JobType.AI_RESPONSE,
             expect.objectContaining({
                 ticketId: 'ticket-internal-id',
-                messageId: 'message-internal-id',
+                source: 'discord',
             }),
         );
 

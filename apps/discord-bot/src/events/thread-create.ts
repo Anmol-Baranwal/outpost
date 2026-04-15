@@ -71,10 +71,10 @@ export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: bo
         }
 
         // Enqueue an AI response job
-        await createJob(JobType.GENERATE_RESPONSE, {
+        await createJob(JobType.AI_RESPONSE, {
             ticketId: ticket.id,
-            messageId,
-            context: `New support thread: ${thread.name}\n\n${content}`,
+            threadId: thread.id,
+            source: 'discord' as const,
         });
 
         // Post acknowledgment in the thread

@@ -50,11 +50,9 @@ export async function handleEscalate(interaction: ChatInputCommandInteraction): 
     });
 
     // Enqueue escalation notification
-    await createJob(JobType.SEND_NOTIFICATION, {
-        channel: 'discord',
-        recipient: 'team',
-        body: `Ticket ${ticket.displayId} has been escalated by ${interaction.user.tag}. Reason: ${reason}`,
-        metadata: { ticketId: ticket.id, threadId: channel.id },
+    await createJob(JobType.ESCALATION, {
+        ticketId: ticket.id,
+        reason: `Escalated by ${interaction.user.tag}: ${reason}`,
     });
 
     await interaction.reply({
