@@ -1,0 +1,101 @@
+## Render Blueprint — Outpost production infrastructure
+## https://docs.render.com/blueprint-spec
+
+databases:
+    - name: outpost-db
+      plan: standard
+      databaseName: outpost
+      user: outpost
+      ipAllowList: [] # Only internal access
+      postgresMajorVersion: "16"
+      # Note: pgvector must be enabled manually via SQL after provisioning:
+      #   CREATE EXTENSION IF NOT EXISTS vector;
+
+envVarGroups:
+    - name: outpost-shared
+      envVars:
+          - key: NODE_ENV
+            value: production
+          - key: DATABASE_URL
+            fromDatabase:
+                name: outpost-db
+                property: connectionString
+
+services:
+    # ── Next.js web application ──────────────────────────────────────────────
+    - type: web
+      name: outpost-web
+      runtime: docker
+      plan: standard
+      dockerfilePath: apps/web/Dockerfile
+      dockerContext: .
+      repo: https://github.com/jpr5/outpost
+      branch: main
+      autoDeploy: true
+      healthCheckPath: /api/health
+      envVars:
+          - key: PORT
+            value: "3000"
+          - key: NEXTAUTH_URL
+            sync: false
+          - key: NEXTAUTH_SECRET
+            generateValue: true
+          - key: GITHUB_CLIENT_ID
+            sync: false
+          - key: GITHUB_CLIENT_SECRET
+            sync: false
+          - key: ANTHROPIC_API_KEY
+            sync: false
+          - key: PATHFINDER_URL
+            sync: false
+          - key: SENTRY_DSN
+            sync: false
+          - fromGroup: outpost-shared
+
+    # ── Discord bot (background worker) ──────────────────────────────────────
+    - type: worker
+      name: outpost-discord-bot
+      runtime: docker
+      plan: standard
+      dockerfilePath: apps/discord-bot/Dockerfile
+      dockerContext: .
+      repo: https://github.com/jpr5/outpost
+      branch: main
+      autoDeploy: true
+      envVars:
+          - key: HEALTH_PORT
+            value: "3001"
+          - key: DISCORD_TOKEN
+            sync: false
+          - key: DISCORD_CLIENT_ID
+            sync: false
+          - key: GUILD_ID
+            sync: false
+          - key: MONITORED_CHANNEL_IDS
+            sync: false
+          - fromGroup: outpost-shared
+
+    # ── GitHub app (background worker) ───────────────────────────────────────
+    - type: worker
+      name: outpost-github-app
+      runtime: docker
+      plan: standard
+      dockerfilePath: apps/github-app/Dockerfile
+      dockerContext: .
+      repo: https://github.com/jpr5/outpost
+      branch: main
+      autoDeploy: true
+      envVars:
+          - key: PORT
+            value: "3200"
+          - key: GITHUB_APP_ID
+            sync: false
+          - key: GITHUB_PRIVATE_KEY
+            sync: false
+          - key: GITHUB_INSTALLATION_ID
+            sync: false
+          - key: GITHUB_WEBHOOK_SECRET
+            sync: false
+          - key: GITHUB_TEAM_LOGINS
+            sync: false
+          - fromGroup: outpost-shared

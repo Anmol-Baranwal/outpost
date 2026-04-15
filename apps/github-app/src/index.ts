@@ -1,3 +1,5 @@
+const startedAt = Date.now();
+
 import { createServer } from 'node:http';
 import { Webhooks, createNodeMiddleware } from '@octokit/webhooks';
 import { config } from './config.js';
@@ -28,7 +30,13 @@ const server = createServer((req, res) => {
     // Health check endpoint
     if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', service: 'github-app' }));
+        res.end(
+            JSON.stringify({
+                status: 'ok',
+                service: 'github-app',
+                uptime: Math.floor((Date.now() - startedAt) / 1000),
+            }),
+        );
         return;
     }
 

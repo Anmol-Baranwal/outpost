@@ -108,14 +108,24 @@
           <li>Share the <code>DATABASE_URL</code> across all services via Railway's variable references</li>
         </ol>
 
-        <h3>Render</h3>
+        <h3>Render (Recommended)</h3>
+        <p>
+          Outpost ships a <code>render.yaml</code> <a href="https://docs.render.com/blueprint-spec" target="_blank">Blueprint</a>
+          that provisions all services and the database in one step.
+        </p>
         <ol>
-          <li>Create a PostgreSQL database on Render</li>
-          <li>Deploy <code>apps/web</code> as a Web Service</li>
-          <li>Deploy <code>apps/discord-bot</code> as a Background Worker</li>
-          <li>Deploy <code>apps/github-app</code> as a Web Service (needs public URL for webhooks)</li>
-          <li>Use an Environment Group to share database credentials</li>
+          <li>Fork or push the repo to GitHub</li>
+          <li>Go to <a href="https://dashboard.render.com/blueprints" target="_blank">Render Blueprints</a> and click <strong>New Blueprint Instance</strong></li>
+          <li>Select the repo &mdash; Render reads <code>render.yaml</code> automatically</li>
+          <li>Fill in the <code>sync: false</code> variables (secrets like <code>DISCORD_TOKEN</code>, <code>ANTHROPIC_API_KEY</code>, etc.)</li>
+          <li>Click <strong>Apply</strong> &mdash; Render creates the database, builds Docker images, and deploys</li>
+          <li>After provisioning, enable pgvector: <code>CREATE EXTENSION IF NOT EXISTS vector;</code></li>
+          <li>Set <code>RENDER_DEPLOY_HOOK_URL</code> as a GitHub Actions secret for CI-triggered deploys</li>
         </ol>
+        <p>
+          The blueprint creates: <strong>outpost-web</strong> (web service), <strong>outpost-discord-bot</strong> (worker),
+          <strong>outpost-github-app</strong> (worker), and <strong>outpost-db</strong> (PostgreSQL 16).
+        </p>
 
         <h3>VPS / Bare Metal</h3>
         <div class="code-block">
