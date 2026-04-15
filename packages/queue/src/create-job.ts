@@ -4,6 +4,9 @@ import type { JobType, JobPayload, CreateJobOptions } from './types.js';
 
 /**
  * Create a new job in the queue.
+ *
+ * Returns the job ID for tracking. The job will be picked up by the next
+ * available worker once its runAt time has passed.
  */
 export async function createJob<T extends JobType>(
     type: T,
@@ -19,4 +22,16 @@ export async function createJob<T extends JobType>(
         },
     });
     return job.id;
+}
+
+/**
+ * Update the progress of a running job.
+ * Progress is a percentage from 0 to 100.
+ */
+export async function updateJobProgress(jobId: string, percent: number): Promise<void> {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    await prisma.job.update({
+        where: { id: jobId },
+        data: { progress: clamped },
+    });
 }
