@@ -1,3 +1,4 @@
+import { Bot } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 
 export default function AgentsPage() {
@@ -6,6 +7,8 @@ export default function AgentsPage() {
             <PageHeader
                 title="Agents"
                 description="Configure and monitor AI agents for automated support operations."
+                icon={Bot}
+                breadcrumbs={[{ label: 'Agents' }]}
             />
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                 <AgentCard
@@ -38,25 +41,25 @@ function AgentCard({
     status: 'active' | 'paused' | 'error';
 }) {
     const statusColors = {
-        active: 'bg-green-100 text-green-800',
-        paused: 'bg-yellow-100 text-yellow-800',
-        error: 'bg-red-100 text-red-800',
+        active: 'bg-green-500/10 text-green-400',
+        paused: 'bg-yellow-500/10 text-yellow-400',
+        error: 'bg-red-500/10 text-red-400',
     };
 
     return (
-        <div className="rounded-lg border border-gray-200 p-6">
+        <div className="rounded-lg border border-border bg-card p-6">
             <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-gray-900">{name}</h3>
+                <h3 className="font-semibold text-card-foreground">{name}</h3>
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[status]}`}>
                     {status}
                 </span>
             </div>
-            <p className="mt-2 text-sm text-gray-500">{description}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{description}</p>
             <div className="mt-4 flex gap-2">
-                <button className="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                <button className="rounded-md border border-input px-3 py-1 text-xs font-medium text-foreground hover:bg-accent">
                     Configure
                 </button>
-                <button className="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                <button className="rounded-md border border-input px-3 py-1 text-xs font-medium text-foreground hover:bg-accent">
                     View Logs
                 </button>
             </div>

@@ -6,13 +6,57 @@
     :root {
         --background: 0 0% 100%;
         --foreground: 220 15% 15%;
-        --muted: 220 15% 95%;
-        --muted-foreground: 220 10% 45%;
-        --border: 220 15% 90%;
+        --card: 0 0% 100%;
+        --card-foreground: 220 15% 15%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 220 15% 15%;
         --primary: 220 60% 50%;
         --primary-foreground: 0 0% 100%;
+        --secondary: 220 15% 95%;
+        --secondary-foreground: 220 15% 20%;
+        --muted: 220 15% 95%;
+        --muted-foreground: 220 10% 45%;
+        --accent: 220 15% 93%;
+        --accent-foreground: 220 15% 15%;
         --destructive: 0 72% 51%;
         --destructive-foreground: 0 0% 100%;
+        --border: 220 15% 90%;
+        --input: 220 15% 90%;
+        --ring: 220 60% 50%;
+        --sidebar-bg: 220 20% 97%;
+        --sidebar-foreground: 220 15% 30%;
+        --sidebar-hover: 220 20% 93%;
+        --sidebar-active: 220 40% 95%;
+        --sidebar-active-foreground: 220 60% 45%;
+        --sidebar-border: 220 15% 90%;
+    }
+
+    .dark {
+        --background: 224 14% 10%;
+        --foreground: 210 20% 90%;
+        --card: 224 14% 12%;
+        --card-foreground: 210 20% 90%;
+        --popover: 224 14% 12%;
+        --popover-foreground: 210 20% 90%;
+        --primary: 220 60% 55%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 220 14% 18%;
+        --secondary-foreground: 210 20% 85%;
+        --muted: 220 14% 16%;
+        --muted-foreground: 220 10% 55%;
+        --accent: 220 14% 18%;
+        --accent-foreground: 210 20% 90%;
+        --destructive: 0 62% 50%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 220 14% 18%;
+        --input: 220 14% 18%;
+        --ring: 220 60% 55%;
+        --sidebar-bg: 224 14% 8%;
+        --sidebar-foreground: 220 10% 65%;
+        --sidebar-hover: 224 14% 14%;
+        --sidebar-active: 220 40% 15%;
+        --sidebar-active-foreground: 220 60% 70%;
+        --sidebar-border: 220 14% 16%;
     }
 
     * {
