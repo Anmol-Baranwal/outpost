@@ -13,8 +13,8 @@ const mockDoSearch = vi.fn();
 const mockGetById = vi.fn();
 
 vi.mock('@hubspot/api-client', () => ({
-    Client: vi.fn().mockImplementation(() => ({
-        crm: {
+    Client: class MockClient {
+        crm = {
             companies: {
                 basicApi: { getPage: mockGetPage },
                 searchApi: { doSearch: mockDoSearch },
@@ -22,8 +22,8 @@ vi.mock('@hubspot/api-client', () => ({
             owners: {
                 ownersApi: { getById: mockGetById },
             },
-        },
-    })),
+        };
+    },
 }));
 
 // Import after mocks
