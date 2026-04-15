@@ -19,13 +19,31 @@ webhooks.onError((error) => {
     console.error('[GitHub App] Webhook error:', error);
 });
 
-// Start HTTP server for webhook delivery
-const middleware = createNodeMiddleware(webhooks, { path: '/api/webhooks/github' });
-const server = createServer(middleware);
+// Webhook middleware handles signature verification internally
+const webhookMiddleware = createNodeMiddleware(webhooks, {
+    path: '/api/webhooks/github',
+});
+
+const server = createServer((req, res) => {
+    // Health check endpoint
+    if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', service: 'github-app' }));
+        return;
+    }
+
+    // Delegate everything else to the webhook middleware
+    webhookMiddleware(req, res, () => {
+        // If the middleware didn't handle the request, return 404
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Not found' }));
+    });
+});
 
 server.listen(config.port, () => {
     console.log(`[GitHub App] Listening for webhooks on port ${config.port}`);
     console.log(`[GitHub App] Webhook endpoint: http://localhost:${config.port}/api/webhooks/github`);
+    console.log(`[GitHub App] Health check: http://localhost:${config.port}/health`);
 });
 
 // Graceful shutdown
@@ -40,3 +58,5 @@ process.on('SIGTERM', () => {
     server.close();
     process.exit(0);
 });
+
+export { server, webhooks };
