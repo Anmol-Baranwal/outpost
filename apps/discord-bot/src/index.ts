@@ -5,6 +5,10 @@ import { handleMessageCreate } from './events/message-create.js';
 import { handleInteractionCreate } from './events/interaction-create.js';
 import { handleThreadCreate } from './events/thread-create.js';
 import { handleGuildMemberAdd } from './events/guild-member-add.js';
+import { startHealthServer } from './health.js';
+
+const healthPort = parseInt(process.env.HEALTH_PORT ?? '3001', 10);
+const healthServer = startHealthServer(healthPort);
 
 const client = new Client({
     intents: [
@@ -32,12 +36,14 @@ client.login(config.discordToken).catch((error) => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('Shutting down Discord bot...');
+    healthServer.close();
     client.destroy();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     console.log('Shutting down Discord bot...');
+    healthServer.close();
     client.destroy();
     process.exit(0);
 });
