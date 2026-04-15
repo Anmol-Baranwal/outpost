@@ -1,4 +1,7 @@
-import type { ButtonInteraction } from 'discord.js';
+import { ChannelType, type ButtonInteraction } from 'discord.js';
+import { prisma } from '@outpost/db';
+import { createJob, JobType } from '@outpost/queue';
+import { findTicketByThreadId } from '../lib/tickets.js';
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
     const handlers: Record<string, (i: ButtonInteraction) => Promise<void>> = {
@@ -21,25 +24,107 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
 }
 
 async function handleIssueSolved(interaction: ButtonInteraction): Promise<void> {
-    // TODO: Implement issue resolution via button
-    // 1. Find ticket for current thread
-    // 2. Update status to RESOLVED
-    // 3. Record customer satisfaction
+    const threadId = getThreadId(interaction);
+    if (!threadId) {
+        await interaction.reply({
+            content: 'This button can only be used inside a support thread.',
+            ephemeral: true,
+        });
+        return;
+    }
+
+    const ticket = await findTicketByThreadId(threadId);
+    if (!ticket) {
+        await interaction.reply({
+            content: 'No ticket found for this thread.',
+            ephemeral: true,
+        });
+        return;
+    }
+
+    // Update ticket status to CLOSED
+    await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: { status: 'CLOSED' },
+    });
+
+    // Log the resolution as a system message
+    await prisma.message.create({
+        data: {
+            ticketId: ticket.id,
+            author: `${interaction.user.tag} (${interaction.user.id})`,
+            content: 'Issue marked as solved by user.',
+            type: 'SYSTEM',
+        },
+    });
 
     await interaction.reply({
-        content: 'Glad we could help! This ticket has been marked as resolved.',
+        content: 'Glad we could help! \uD83C\uDF89',
         ephemeral: false,
     });
+
+    console.log(`[Discord Bot] Ticket ${ticket.displayId} closed via "Issue Solved" button`);
 }
 
 async function handleNeedMoreHelp(interaction: ButtonInteraction): Promise<void> {
-    // TODO: Implement re-opening via button
-    // 1. Find ticket for current thread
-    // 2. Update status to OPEN
-    // 3. Notify the assigned team member
+    const threadId = getThreadId(interaction);
+    if (!threadId) {
+        await interaction.reply({
+            content: 'This button can only be used inside a support thread.',
+            ephemeral: true,
+        });
+        return;
+    }
+
+    const ticket = await findTicketByThreadId(threadId);
+    if (!ticket) {
+        await interaction.reply({
+            content: 'No ticket found for this thread.',
+            ephemeral: true,
+        });
+        return;
+    }
+
+    // Update ticket to waiting on team
+    await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: { status: 'WAITING_ON_TEAM' },
+    });
+
+    // Enqueue an escalation notification
+    await createJob(JobType.SEND_NOTIFICATION, {
+        channel: 'discord',
+        recipient: 'team',
+        body: `Ticket ${ticket.displayId} needs more help. User requested human follow-up.`,
+        metadata: { ticketId: ticket.id, threadId },
+    });
+
+    // Log the escalation
+    await prisma.message.create({
+        data: {
+            ticketId: ticket.id,
+            author: `${interaction.user.tag} (${interaction.user.id})`,
+            content: 'User requested more help. Escalating to team.',
+            type: 'SYSTEM',
+        },
+    });
 
     await interaction.reply({
-        content: 'No problem! A team member will follow up shortly.',
+        content: 'A team member has been notified and will follow up shortly.',
         ephemeral: false,
     });
+
+    console.log(`[Discord Bot] Ticket ${ticket.displayId} escalated via "Need more help" button`);
+}
+
+function getThreadId(interaction: ButtonInteraction): string | null {
+    const channel = interaction.channel;
+    if (!channel) return null;
+    if (
+        channel.type === ChannelType.PublicThread ||
+        channel.type === ChannelType.PrivateThread
+    ) {
+        return channel.id;
+    }
+    return null;
 }

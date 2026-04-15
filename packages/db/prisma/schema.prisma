@@ -18,6 +18,7 @@ model Ticket {
     priority        TicketPriority @default(MEDIUM)
     type            TicketType     @default(QUESTION)
     source          TicketSource   @default(MANUAL)
+    sourceId        String? // External ID for lookups (Discord thread ID, GitHub issue number, etc.)
     sourceUrl       String?
     channel         String? // Discord channel ID, GitHub repo, etc.
     additionalInfo  Json?
@@ -43,6 +44,7 @@ model Ticket {
     @@index([status])
     @@index([priority])
     @@index([accountId])
+    @@index([source, sourceId])
 }
 
 enum TicketStatus {
