@@ -22,6 +22,12 @@ export const DEFAULT_SCHEDULED_JOBS: ScheduledJobDefinition[] = [
         intervalMs: 24 * 60 * 60 * 1000, // 24 hours
         description: 'Compile daily new member onboarding digest',
     },
+    {
+        type: JobType.HUBSPOT_SYNC,
+        payload: {},
+        intervalMs: 24 * 60 * 60 * 1000, // 24 hours
+        description: 'Sync accounts from HubSpot CRM',
+    },
 ];
 
 /**
