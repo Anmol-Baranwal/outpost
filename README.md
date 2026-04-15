@@ -74,7 +74,8 @@ outpost/
 ├── apps/
 │   ├── web/              # Next.js web dashboard
 │   ├── discord-bot/      # Discord bot for support channels
-│   └── github-app/       # GitHub App for issue/discussion tracking
+│   ├── github-app/       # GitHub App for issue/discussion tracking
+│   └── docs/             # Public documentation site
 ├── packages/
 │   ├── ai/               # AI pipeline (Pathfinder + Claude)
 │   ├── db/               # Prisma schema and database client
@@ -83,6 +84,26 @@ outpost/
 ├── docker-compose.yml    # Local PostgreSQL with pgvector
 └── turbo.json            # Turborepo pipeline config
 ```
+
+## Documentation
+
+The docs site lives in `apps/docs/` and is a static HTML site (no build step). To preview locally:
+
+```bash
+cd apps/docs
+npx serve . -l 4000
+```
+
+Then open http://localhost:4000.
+
+## Contributing
+
+1. Fork the repo and create a feature branch
+2. Make your changes with clear, descriptive commits (plain English, no conventional prefixes)
+3. Run `pnpm test && pnpm lint && pnpm typecheck` to verify
+4. Open a PR against `main`
+
+See the [Contributing Guide](apps/docs/contributing/index.html) in the docs for full details.
 
 ## License
 

@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Documentation — Outpost</title>
+    <meta
+      name="description"
+      content="Outpost documentation — AI-powered support operations platform."
+    />
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../style.css" />
+    <style>
+      .quick-start-paths {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.25rem;
+        margin-top: 1.5rem;
+      }
+      .quick-start-path {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.5rem;
+      }
+      .quick-start-path h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-top: 0;
+        margin-bottom: 0.75rem;
+        color: var(--text-primary);
+      }
+
+      .highlight-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        margin-top: 1.5rem;
+        margin-bottom: 2rem;
+      }
+      .highlight-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 1rem 1.15rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        transition:
+          border-color 0.3s,
+          transform 0.3s,
+          box-shadow 0.3s;
+      }
+      .highlight-card:hover {
+        border-color: var(--border-bright);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+      }
+      .highlight-card-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .highlight-card-desc {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        line-height: 1.45;
+        margin: 0;
+        flex: 1;
+      }
+      .highlight-card-cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.78rem;
+        font-weight: 500;
+        color: var(--accent);
+        margin-top: 0.25rem;
+      }
+
+      @media (max-width: 1024px) {
+        .highlight-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 768px) {
+        .highlight-grid,
+        .quick-start-paths {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button
+            class="sidebar-toggle"
+            onclick="document.querySelector('.sidebar').classList.toggle('open')"
+            aria-label="Toggle sidebar"
+          >
+            &#9776;
+          </button>
+          <a href="/" class="nav-brand"> <span class="prompt">&#127956;&#65039;</span> Outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/docs" style="color: var(--accent)">Docs</a></li>
+          <li>
+            <a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+                />
+              </svg>
+              GitHub
+            </a>
+          </li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Outpost Documentation</h1>
+        <p class="lead">
+          Outpost is CopilotKit's AI-powered support operations platform. It unifies customer
+          support across Discord, GitHub, and the web into a single intelligent hub.
+        </p>
+
+        <div class="highlight-grid">
+          <a href="/getting-started" class="highlight-card" style="text-decoration: none">
+            <div class="highlight-card-title">&#128640; Quick Start</div>
+            <p class="highlight-card-desc">
+              Get Outpost running locally in under 5 minutes with Docker and pnpm.
+            </p>
+            <span class="highlight-card-cta">Get started &#8594;</span>
+          </a>
+          <a href="/architecture" class="highlight-card" style="text-decoration: none">
+            <div class="highlight-card-title">&#127959;&#65039; Architecture</div>
+            <p class="highlight-card-desc">
+              Three processes, one database. Understand how Outpost is structured.
+            </p>
+            <span class="highlight-card-cta">Learn more &#8594;</span>
+          </a>
+          <a href="/discord-bot" class="highlight-card" style="text-decoration: none">
+            <div class="highlight-card-title">&#128172; Discord Bot</div>
+            <p class="highlight-card-desc">
+              Set up the Discord bot for slash commands and thread-based support.
+            </p>
+            <span class="highlight-card-cta">Set up &#8594;</span>
+          </a>
+          <a href="/github-app" class="highlight-card" style="text-decoration: none">
+            <div class="highlight-card-title">&#128025; GitHub App</div>
+            <p class="highlight-card-desc">
+              Install the GitHub App for issue and discussion tracking.
+            </p>
+            <span class="highlight-card-cta">Install &#8594;</span>
+          </a>
+        </div>
+
+        <h2>Quick Start Paths</h2>
+
+        <div class="quick-start-paths">
+          <div class="quick-start-path">
+            <h3>&#9889; I want to try it locally</h3>
+            <ol style="color: var(--text-secondary); font-size: 0.9rem; padding-left: 1.25rem">
+              <li>Clone the repo</li>
+              <li><code>docker compose up -d</code> for PostgreSQL</li>
+              <li><code>pnpm install && pnpm dev</code></li>
+              <li>Open <code>http://localhost:3000</code></li>
+            </ol>
+            <p style="margin-top: 1rem">
+              <a href="/getting-started">Full quick start guide &#8594;</a>
+            </p>
+          </div>
+          <div class="quick-start-path">
+            <h3>&#128736;&#65039; I want to deploy it</h3>
+            <ol style="color: var(--text-secondary); font-size: 0.9rem; padding-left: 1.25rem">
+              <li>Provision PostgreSQL 16 with pgvector</li>
+              <li>Configure environment variables</li>
+              <li>Deploy with Docker or your platform of choice</li>
+              <li>Set up Discord bot and GitHub App</li>
+            </ol>
+            <p style="margin-top: 1rem">
+              <a href="/deployment">Deployment guide &#8594;</a>
+            </p>
+          </div>
+        </div>
+
+        <h2>Documentation Sections</h2>
+
+        <div class="feature-grid">
+          <a href="/getting-started" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-orange">START HERE</span>
+            <h3>Quick Start</h3>
+            <p>Clone, install, run. Get Outpost up in 5 minutes.</p>
+          </a>
+          <a href="/architecture" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-blue">CORE</span>
+            <h3>Architecture</h3>
+            <p>How Outpost's three processes and shared database work together.</p>
+          </a>
+          <a href="/configuration" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-purple">CONFIG</span>
+            <h3>Configuration</h3>
+            <p>Environment variables, SLA targets, routing rules, and more.</p>
+          </a>
+          <a href="/discord-bot" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-blue">INTEGRATION</span>
+            <h3>Discord Bot</h3>
+            <p>Slash commands, thread management, and auto-replies.</p>
+          </a>
+          <a href="/github-app" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-blue">INTEGRATION</span>
+            <h3>GitHub App</h3>
+            <p>Issue tracking, discussion sync, and automated triage.</p>
+          </a>
+          <a href="/api-reference" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-amber">API</span>
+            <h3>API Reference</h3>
+            <p>REST endpoints, webhooks, and programmatic access.</p>
+          </a>
+          <a href="/deployment" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-red">OPS</span>
+            <h3>Deployment</h3>
+            <p>Docker, Railway, Render, and production best practices.</p>
+          </a>
+          <a href="/contributing" class="feature-link" style="text-decoration: none">
+            <span class="badge badge-purple">COMMUNITY</span>
+            <h3>Contributing</h3>
+            <p>How to contribute to Outpost. Code style, PRs, and testing.</p>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left">
+          <span>&#127956;&#65039;</span> Outpost &mdash; by CopilotKit
+        </div>
+        <ul class="footer-links">
+          <li><a href="/">Home</a></li>
+          <li>
+            <a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener"
+              >GitHub</a
+            >
+          </li>
+          <li>
+            <a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a>
+          </li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>API Reference — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="/" class="nav-brand"> <span class="prompt">&#127956;&#65039;</span> Outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/docs" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>API Reference</h1>
+        <p class="lead">
+          Outpost exposes REST endpoints through the Next.js API routes for programmatic access to
+          tickets, accounts, and configuration. All endpoints require authentication.
+        </p>
+
+        <h2>Authentication</h2>
+        <p>
+          API requests are authenticated via session cookies (for dashboard users) or API keys for
+          external integrations.
+        </p>
+        <div class="code-block">
+          <div class="code-block-header">example request <span class="lang-tag">bash</span></div>
+          <pre><code><span class="fn">curl</span> -H <span class="str">"Authorization: Bearer YOUR_API_KEY"</span> \
+  https://your-outpost.com/api/tickets</code></pre>
+        </div>
+
+        <h2>Tickets</h2>
+
+        <h3>List Tickets</h3>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td>/api/tickets</td><td>List tickets with pagination and filters</td></tr>
+          </tbody>
+        </table>
+        <p>Query parameters:</p>
+        <ul>
+          <li><code>status</code> &mdash; Filter by status: <code>open</code>, <code>in_progress</code>, <code>resolved</code>, <code>closed</code></li>
+          <li><code>priority</code> &mdash; Filter by priority: <code>critical</code>, <code>high</code>, <code>medium</code>, <code>low</code></li>
+          <li><code>source</code> &mdash; Filter by source: <code>discord</code>, <code>github</code>, <code>web</code></li>
+          <li><code>assignee</code> &mdash; Filter by assignee user ID</li>
+          <li><code>account</code> &mdash; Filter by account ID</li>
+          <li><code>page</code> &mdash; Page number (default: 1)</li>
+          <li><code>limit</code> &mdash; Items per page (default: 50, max: 100)</li>
+        </ul>
+
+        <h3>Get Ticket</h3>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td>/api/tickets/:id</td><td>Get a single ticket with full details</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Create Ticket</h3>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td>/api/tickets</td><td>Create a new ticket</td></tr>
+          </tbody>
+        </table>
+        <div class="code-block">
+          <div class="code-block-header">request body <span class="lang-tag">json</span></div>
+          <pre><code>{
+  <span class="key">"title"</span>: <span class="str">"Unable to connect to API"</span>,
+  <span class="key">"description"</span>: <span class="str">"Getting 502 errors when calling /api/chat"</span>,
+  <span class="key">"source"</span>: <span class="str">"web"</span>,
+  <span class="key">"priority"</span>: <span class="str">"high"</span>,
+  <span class="key">"accountId"</span>: <span class="str">"acc_123"</span>
+}</code></pre>
+        </div>
+
+        <h3>Update Ticket</h3>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>PATCH</td><td>/api/tickets/:id</td><td>Update ticket fields</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Accounts</h2>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td>/api/accounts</td><td>List all customer accounts</td></tr>
+            <tr><td>GET</td><td>/api/accounts/:id</td><td>Get account details with support history</td></tr>
+            <tr><td>POST</td><td>/api/accounts</td><td>Create a new account</td></tr>
+            <tr><td>PATCH</td><td>/api/accounts/:id</td><td>Update account details</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Analytics</h2>
+        <table class="endpoint-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td>/api/analytics/overview</td><td>Dashboard overview metrics</td></tr>
+            <tr><td>GET</td><td>/api/analytics/sla</td><td>SLA compliance report</td></tr>
+            <tr><td>GET</td><td>/api/analytics/volume</td><td>Ticket volume over time</td></tr>
+            <tr><td>GET</td><td>/api/analytics/agents</td><td>Per-agent performance metrics</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="webhooks">Webhooks</h2>
+        <p>
+          Outpost can send webhooks to external systems when events occur. Configure webhook
+          endpoints in the dashboard under <strong>Settings &rarr; Webhooks</strong>.
+        </p>
+
+        <h3>Events</h3>
+        <table class="endpoint-table">
+          <thead><tr><th>Event</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>ticket.created</td><td>New ticket created from any source</td></tr>
+            <tr><td>ticket.updated</td><td>Ticket fields changed (status, priority, assignee)</td></tr>
+            <tr><td>ticket.resolved</td><td>Ticket marked as resolved</td></tr>
+            <tr><td>ticket.sla_breach</td><td>SLA response or resolution target missed</td></tr>
+            <tr><td>message.created</td><td>New message on a ticket</td></tr>
+            <tr><td>account.created</td><td>New customer account added</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Webhook Payload</h3>
+        <div class="code-block">
+          <div class="code-block-header">webhook payload <span class="lang-tag">json</span></div>
+          <pre><code>{
+  <span class="key">"event"</span>: <span class="str">"ticket.created"</span>,
+  <span class="key">"timestamp"</span>: <span class="str">"2025-01-15T10:30:00Z"</span>,
+  <span class="key">"data"</span>: {
+    <span class="key">"id"</span>: <span class="str">"tkt_abc123"</span>,
+    <span class="key">"title"</span>: <span class="str">"Unable to connect to API"</span>,
+    <span class="key">"status"</span>: <span class="str">"open"</span>,
+    <span class="key">"priority"</span>: <span class="str">"high"</span>,
+    <span class="key">"source"</span>: <span class="str">"discord"</span>
+  }
+}</code></pre>
+        </div>
+
+        <div class="info-box">
+          <p>
+            <strong>Signature verification:</strong> All webhook payloads include an
+            <code>X-Outpost-Signature</code> header containing an HMAC-SHA256 signature. Verify
+            this against your webhook secret to ensure the payload is authentic.
+          </p>
+        </div>
+
+        <div class="prev-next">
+          <a href="/github-app">
+            <span class="label">Previous</span>
+            <span class="title">GitHub App</span>
+          </a>
+          <a href="/deployment" class="next">
+            <span class="label">Next</span>
+            <span class="title">Deployment</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span>&#127956;&#65039;</span> Outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>

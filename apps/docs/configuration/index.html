@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Configuration — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="/" class="nav-brand"> <span class="prompt">&#127956;&#65039;</span> Outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/docs" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Configuration Reference</h1>
+        <p class="lead">
+          Outpost is configured through environment variables. Copy <code>.env.example</code> to
+          <code>.env</code> and customize the values below.
+        </p>
+
+        <h2>Core Settings</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>DATABASE_URL</td><td>PostgreSQL connection string (must include pgvector)</td><td>&mdash;</td></tr>
+            <tr><td>NODE_ENV</td><td>Environment: <code>development</code> or <code>production</code></td><td>development</td></tr>
+            <tr><td>PORT</td><td>Web app port</td><td>3000</td></tr>
+            <tr><td>LOG_LEVEL</td><td>Logging verbosity: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code></td><td>info</td></tr>
+          </tbody>
+        </table>
+
+        <h2>AI Configuration</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>ANTHROPIC_API_KEY</td><td>Anthropic API key for Claude</td><td>&mdash;</td></tr>
+            <tr><td>AI_MODEL</td><td>Claude model to use for triage and responses</td><td>claude-sonnet-4-20250514</td></tr>
+            <tr><td>PATHFINDER_URL</td><td>Pathfinder server URL for knowledge base search</td><td>http://localhost:8080</td></tr>
+            <tr><td>EMBEDDING_MODEL</td><td>Model for generating vector embeddings</td><td>text-embedding-3-small</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Discord Bot</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>DISCORD_BOT_TOKEN</td><td>Discord bot token from the Developer Portal</td><td>&mdash;</td></tr>
+            <tr><td>DISCORD_CLIENT_ID</td><td>Application ID for slash command registration</td><td>&mdash;</td></tr>
+            <tr><td>DISCORD_GUILD_ID</td><td>Server ID (for guild-scoped commands in development)</td><td>&mdash;</td></tr>
+            <tr><td>DISCORD_SUPPORT_CHANNEL</td><td>Channel ID where support threads are created</td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
+
+        <h2>GitHub App</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>GITHUB_APP_ID</td><td>GitHub App ID</td><td>&mdash;</td></tr>
+            <tr><td>GITHUB_PRIVATE_KEY</td><td>PEM-encoded private key (or path to .pem file)</td><td>&mdash;</td></tr>
+            <tr><td>GITHUB_WEBHOOK_SECRET</td><td>Webhook secret for signature verification</td><td>&mdash;</td></tr>
+            <tr><td>GITHUB_APP_PORT</td><td>Port for the webhook receiver</td><td>3001</td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="sla-targets">SLA Targets</h2>
+        <p>
+          SLA targets are configured per priority level in the database through the admin dashboard.
+          Default values when seeding:
+        </p>
+        <table class="env-table">
+          <thead><tr><th>Priority</th><th>First Response</th><th>Resolution</th></tr></thead>
+          <tbody>
+            <tr><td>Critical</td><td>15 minutes</td><td>4 hours</td></tr>
+            <tr><td>High</td><td>1 hour</td><td>24 hours</td></tr>
+            <tr><td>Medium</td><td>4 hours</td><td>72 hours</td></tr>
+            <tr><td>Low</td><td>24 hours</td><td>1 week</td></tr>
+          </tbody>
+        </table>
+
+        <div class="info-box">
+          <p>
+            <strong>Note:</strong> SLA targets can also be overridden per-account for enterprise
+            customers with custom support agreements.
+          </p>
+        </div>
+
+        <h2 id="routing-rules">Routing Rules</h2>
+        <p>
+          Routing rules determine which agent or team handles a ticket. Rules are evaluated in
+          priority order and can match on:
+        </p>
+        <ul>
+          <li><strong>Source channel</strong> &mdash; Discord, GitHub, or web</li>
+          <li><strong>Priority level</strong> &mdash; critical, high, medium, low</li>
+          <li><strong>Tags/labels</strong> &mdash; keyword-based matching</li>
+          <li><strong>Account</strong> &mdash; specific customer organizations</li>
+          <li><strong>Content patterns</strong> &mdash; regex matching on ticket content</li>
+        </ul>
+
+        <p>
+          Routing rules are managed through the admin dashboard under
+          <strong>Settings &rarr; Routing</strong>.
+        </p>
+
+        <h2>Job Queue</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>QUEUE_CONCURRENCY</td><td>Max concurrent job workers</td><td>5</td></tr>
+            <tr><td>QUEUE_POLL_INTERVAL</td><td>How often to poll for new jobs (ms)</td><td>1000</td></tr>
+            <tr><td>QUEUE_MAX_RETRIES</td><td>Max retry attempts before dead-letter</td><td>3</td></tr>
+            <tr><td>QUEUE_RETRY_DELAY</td><td>Base delay between retries (ms, exponential backoff)</td><td>5000</td></tr>
+          </tbody>
+        </table>
+
+        <div class="prev-next">
+          <a href="/architecture">
+            <span class="label">Previous</span>
+            <span class="title">Architecture</span>
+          </a>
+          <a href="/discord-bot" class="next">
+            <span class="label">Next</span>
+            <span class="title">Discord Bot</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span>&#127956;&#65039;</span> Outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>
