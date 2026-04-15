@@ -1,0 +1,69 @@
+/**
+ * AI pipeline configuration.
+ *
+ * Centralizes all AI-related settings: API keys, model selections,
+ * confidence thresholds, and Pathfinder connection params.
+ */
+
+export const config = {
+    /** Anthropic API key — required for Claude calls */
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
+
+    /** Pathfinder MCP server URL */
+    pathfinderMcpUrl: process.env.PATHFINDER_MCP_URL ?? 'https://mcp.copilotkit.ai',
+
+    /** Fallback docs URL when MCP is unavailable */
+    fallbackDocsUrl: process.env.FALLBACK_DOCS_URL ?? 'https://docs.copilotkit.ai/llms-full.txt',
+
+    /** Model used for response generation */
+    responseModel: process.env.AI_RESPONSE_MODEL ?? 'claude-sonnet-4-20250514',
+
+    /** Model used for confidence scoring (cheaper, faster) */
+    confidenceModel: process.env.AI_CONFIDENCE_MODEL ?? 'claude-haiku-4-5-20251001',
+
+    /** Model used for ticket classification (cheaper, faster) */
+    classifierModel: process.env.AI_CLASSIFIER_MODEL ?? 'claude-haiku-4-5-20251001',
+
+    /** Maximum tokens for response generation */
+    maxResponseTokens: 2048,
+
+    /** Maximum tokens for confidence scoring */
+    maxConfidenceTokens: 256,
+
+    /** Maximum tokens for classification */
+    maxClassifierTokens: 512,
+
+    /** Temperature for response generation */
+    responseTemperature: 0.3,
+
+    /** Temperature for confidence scoring (lower = more deterministic) */
+    confidenceTemperature: 0.1,
+
+    /** Temperature for classification */
+    classifierTemperature: 0.1,
+
+    /** Confidence thresholds */
+    confidence: {
+        /** Above this: HIGH confidence (auto-post) */
+        highThreshold: 0.8,
+        /** Above this: MEDIUM confidence (post with disclaimer) */
+        mediumThreshold: 0.5,
+        /** Below mediumThreshold: LOW confidence (disclaimer + escalate) */
+    },
+
+    /** Pathfinder search settings */
+    pathfinder: {
+        /** Default number of results to return */
+        defaultLimit: 8,
+        /** Minimum similarity score to include */
+        defaultMinScore: 0.3,
+        /** Request timeout in milliseconds */
+        requestTimeoutMs: 10_000,
+        /** Session TTL in milliseconds (30 minutes) */
+        sessionTtlMs: 30 * 60 * 1000,
+        /** Reconnect grace period before TTL expiry (5 minutes) */
+        refreshBeforeExpiryMs: 5 * 60 * 1000,
+    },
+} as const;
+
+export type AIConfig = typeof config;

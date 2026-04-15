@@ -8,6 +8,17 @@ export enum ConfidenceLevel {
     LOW = 'LOW',
 }
 
+export enum TicketPriority {
+    LOW = 'LOW',
+    MEDIUM = 'MEDIUM',
+    HIGH = 'HIGH',
+}
+
+export enum TicketType {
+    ISSUE = 'ISSUE',
+    REQUEST = 'REQUEST',
+}
+
 export interface SearchResult {
     /** Title of the matched document or section */
     title: string;
@@ -34,6 +45,15 @@ export interface GeneratedResponse {
     autoSend: boolean;
     /** Reasoning for the confidence assessment */
     reasoning: string;
+    /** Token usage for cost monitoring */
+    tokenUsage?: TokenUsage;
+    /** End-to-end latency in milliseconds */
+    latencyMs?: number;
+}
+
+export interface TokenUsage {
+    inputTokens: number;
+    outputTokens: number;
 }
 
 export interface PipelineContext {
@@ -52,6 +72,56 @@ export interface PathfinderQuery {
     query: string;
     /** Maximum number of results */
     limit?: number;
+    /** Minimum relevance score threshold */
+    minScore?: number;
     /** Filter by category */
     category?: string;
+}
+
+export interface TicketClassification {
+    priority: TicketPriority;
+    type: TicketType;
+    tags: string[];
+    reasoning: string;
+}
+
+export type PlatformTarget = 'discord' | 'github' | 'web';
+
+export interface PipelineOptions {
+    /** Platform target for response formatting */
+    source: PlatformTarget;
+    /** Whether to use streaming mode */
+    streaming?: boolean;
+    /** Conversation history for follow-up questions */
+    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    /** Maximum output tokens */
+    maxTokens?: number;
+}
+
+export interface FormattedResponse {
+    /** The formatted response text */
+    text: string;
+    /** Action buttons metadata (for Discord bot) */
+    buttons?: Array<{ label: string; action: string }>;
+    /** Whether the response was truncated */
+    truncated?: boolean;
+    /** Split messages (for Discord 2000-char limit) */
+    parts?: string[];
+}
+
+export interface PipelineResult {
+    /** The generated response text */
+    response: string;
+    /** Formatted response for the target platform */
+    formatted: FormattedResponse;
+    /** Confidence assessment */
+    confidence: ConfidenceLevel;
+    /** Confidence score (0-1) */
+    confidenceScore: number;
+    /** Search results used as context */
+    searchResults: SearchResult[];
+    /** Token usage across all Claude calls */
+    tokenUsage: TokenUsage;
+    /** End-to-end latency in milliseconds */
+    latencyMs: number;
 }
