@@ -1,4 +1,4 @@
-import type { Interaction } from 'discord.js';
+import type { ChatInputCommandInteraction, Interaction } from 'discord.js';
 import { handleAssign } from '../commands/assign.js';
 import { handleClose } from '../commands/close.js';
 import { handleEscalate } from '../commands/escalate.js';
@@ -7,7 +7,7 @@ import { handleButtonInteraction } from '../interactions/buttons.js';
 
 export async function handleInteractionCreate(interaction: Interaction): Promise<void> {
     if (interaction.isChatInputCommand()) {
-        const commandHandlers: Record<string, (i: typeof interaction) => Promise<void>> = {
+        const commandHandlers: Record<string, (i: ChatInputCommandInteraction) => Promise<void>> = {
             assign: handleAssign,
             close: handleClose,
             escalate: handleEscalate,

@@ -13,7 +13,7 @@ export async function createJob<T extends JobType>(
     const job = await prisma.job.create({
         data: {
             type,
-            payload: payload as Record<string, unknown>,
+            payload: JSON.parse(JSON.stringify(payload)),
             maxAttempts: options?.maxAttempts ?? MAX_JOB_ATTEMPTS,
             runAt: options?.runAt ?? new Date(),
         },

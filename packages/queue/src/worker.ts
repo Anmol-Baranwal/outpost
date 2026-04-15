@@ -1,4 +1,3 @@
-import { Prisma } from '@outpost/db';
 import { prisma } from '@outpost/db';
 import { calculateBackoff } from '@outpost/shared';
 import type { JobType, JobHandler, JobResult } from './types.js';
@@ -76,7 +75,7 @@ export class Worker {
             Array<{
                 id: string;
                 type: string;
-                payload: Prisma.JsonValue;
+                payload: unknown;
                 attempts: number;
                 maxAttempts: number;
             }>
@@ -104,7 +103,7 @@ export class Worker {
     private async processJob(job: {
         id: string;
         type: string;
-        payload: Prisma.JsonValue;
+        payload: unknown;
         attempts: number;
         maxAttempts: number;
     }): Promise<void> {
