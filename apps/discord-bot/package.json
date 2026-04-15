@@ -1,0 +1,26 @@
+{
+    "name": "@outpost/discord-bot",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "main": "./dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsx watch src/index.ts",
+        "start": "node dist/index.js",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint src/",
+        "test": "echo 'No tests yet'",
+        "register-commands": "tsx src/register-commands.ts"
+    },
+    "dependencies": {
+        "@outpost/db": "workspace:*",
+        "@outpost/queue": "workspace:*",
+        "@outpost/shared": "workspace:*",
+        "discord.js": "^14.16.0"
+    },
+    "devDependencies": {
+        "tsx": "^4.19.0",
+        "typescript": "^5.7.0"
+    }
+}
