@@ -5,5 +5,6 @@ export { handleEscalation } from './handlers/escalation.js';
 export { handleSlaCheck } from './handlers/sla-check.js';
 export type { SlaCheckSummary } from './handlers/sla-check.js';
 export { handleOnboardingDigest } from './handlers/onboarding-digest.js';
+export { handleAccountScoring } from './handlers/account-scoring.js';
 export { handleHubSpotSync } from './handlers/hubspot-sync.js';
 export * from './types.js';

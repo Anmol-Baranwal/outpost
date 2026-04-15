@@ -18,6 +18,8 @@ export enum JobType {
     ESCALATION = 'ESCALATION',
     /** Compile daily new member digest */
     ONBOARDING_DIGEST = 'ONBOARDING_DIGEST',
+    /** Run sentiment and engagement scoring on accounts */
+    ACCOUNT_SCORING = 'ACCOUNT_SCORING',
     /** Sync accounts from HubSpot CRM */
     HUBSPOT_SYNC = 'HUBSPOT_SYNC',
 }
@@ -48,6 +50,11 @@ export interface OnboardingDigestPayload {
     date: string; // ISO date string, e.g. "2026-04-15"
 }
 
+export interface AccountScoringPayload {
+    /** Optional account ID to score a single account; omit for all accounts */
+    accountId?: string;
+}
+
 export interface HubSpotSyncPayload {
     /** Optional domain to sync a single account; omit for full sync */
     domain?: string;
@@ -60,6 +67,7 @@ export interface JobPayload {
     [JobType.SLA_CHECK]: SlaCheckPayload;
     [JobType.ESCALATION]: EscalationPayload;
     [JobType.ONBOARDING_DIGEST]: OnboardingDigestPayload;
+    [JobType.ACCOUNT_SCORING]: AccountScoringPayload;
     [JobType.HUBSPOT_SYNC]: HubSpotSyncPayload;
 }
 

@@ -23,6 +23,12 @@ export const DEFAULT_SCHEDULED_JOBS: ScheduledJobDefinition[] = [
         description: 'Compile daily new member onboarding digest',
     },
     {
+        type: JobType.ACCOUNT_SCORING,
+        payload: {},
+        intervalMs: 24 * 60 * 60 * 1000, // 24 hours
+        description: 'Run sentiment and engagement scoring on all accounts',
+    },
+    {
         type: JobType.HUBSPOT_SYNC,
         payload: {},
         intervalMs: 24 * 60 * 60 * 1000, // 24 hours
