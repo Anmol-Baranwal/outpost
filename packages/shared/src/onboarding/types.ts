@@ -43,7 +43,4 @@ export interface FunnelMetrics {
     totalMembers: number;
 }
 
-export interface DateRange {
-    from: Date;
-    to: Date;
-}
+// DateRange is exported from ../sla/metrics.ts — use that one
