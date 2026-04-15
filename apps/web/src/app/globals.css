@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 0 0% 100%;
+        --foreground: 220 15% 15%;
+        --muted: 220 15% 95%;
+        --muted-foreground: 220 10% 45%;
+        --border: 220 15% 90%;
+        --primary: 220 60% 50%;
+        --primary-foreground: 0 0% 100%;
+        --destructive: 0 72% 51%;
+        --destructive-foreground: 0 0% 100%;
+    }
+
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+        font-feature-settings: "rlig" 1, "calt" 1;
+    }
+}
+
+@layer utilities {
+    .border-border {
+        border-color: hsl(var(--border));
+    }
+
+    .bg-background {
+        background-color: hsl(var(--background));
+    }
+
+    .text-foreground {
+        color: hsl(var(--foreground));
+    }
+}
