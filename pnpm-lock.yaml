@@ -249,6 +249,10 @@ importers:
         version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.17)(jiti@2.6.1)(jsdom@29.0.2)(lightningcss@1.32.0)(tsx@4.21.0)
 
   packages/shared:
+    dependencies:
+      '@hubspot/api-client':
+        specifier: ^13.5.0
+        version: 13.5.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -642,6 +646,10 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@hubspot/api-client@13.5.0':
+    resolution: {integrity: sha512-zZ9ybOqudSgAZSow5dgYWRkslDPfqA2fWnERMqWQm6ASlM/XCFS6zoec0zD3d6OxeoLOfiovVo39gVpK+KWQ9Q==}
+    engines: {node: '>=18.0.0'}
 
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
@@ -2227,6 +2235,9 @@ packages:
 
   es-toolkit@1.45.1:
     resolution: {integrity: sha512-/jhoOj/Fx+A+IIyDNOvO3TItGmlMKhtX8ISAHKE90c4b/k1tqaqEZ+uUqfpU8DMnW5cgNJv606zS55jGvza0Xw==}
+
+  es6-promise@4.2.8:
+    resolution: {integrity: sha512-HJDGx5daxeIvxdBxvG2cb9g4tEvwIk3i8+nhX0yGrYmZUzbkdg8QbDevheDB8gd0//uPj4c1EQua8Q+MViT0/w==}
 
   esbuild@0.27.7:
     resolution: {integrity: sha512-IxpibTjyVnmrIQo5aqNpCgoACA/dTKLTlhMHihVHhdkxKyPO1uBBthumT0rdHmcsk9uMonIWS0m4FljWzILh3w==}
@@ -4570,6 +4581,18 @@ snapshots:
 
   '@exodus/bytes@1.15.0': {}
 
+  '@hubspot/api-client@13.5.0':
+    dependencies:
+      '@types/node': 22.19.17
+      '@types/node-fetch': 2.6.13
+      bottleneck: 2.19.5
+      es6-promise: 4.2.8
+      form-data: 4.0.5
+      lodash.merge: 4.6.2
+      node-fetch: 2.7.0
+    transitivePeerDependencies:
+      - encoding
+
   '@humanfs/core@0.19.1': {}
 
   '@humanfs/node@0.16.7':
@@ -6112,6 +6135,8 @@ snapshots:
       is-symbol: 1.1.1
 
   es-toolkit@1.45.1: {}
+
+  es6-promise@4.2.8: {}
 
   esbuild@0.27.7:
     optionalDependencies:

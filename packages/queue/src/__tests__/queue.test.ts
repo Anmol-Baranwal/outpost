@@ -418,7 +418,7 @@ describe('Scheduler', () => {
         const types = DEFAULT_SCHEDULED_JOBS.map((d) => d.type);
         expect(types).toContain(JobType.SLA_CHECK);
         expect(types).toContain(JobType.ONBOARDING_DIGEST);
-        expect(types).toContain(JobType.ACCOUNT_SCORING);
+        expect(types).toContain(JobType.HUBSPOT_SYNC);
     });
 
     it('creates a job immediately on start if none exists', async () => {
