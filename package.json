@@ -1,0 +1,27 @@
+{
+    "name": "outpost",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "turbo run build",
+        "dev": "turbo run dev",
+        "lint": "turbo run lint",
+        "test": "turbo run test",
+        "typecheck": "turbo run typecheck",
+        "db:generate": "turbo run db:generate --filter=@outpost/db",
+        "db:push": "turbo run db:push --filter=@outpost/db",
+        "db:seed": "turbo run db:seed --filter=@outpost/db",
+        "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+        "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\""
+    },
+    "devDependencies": {
+        "prettier": "^3.2.0",
+        "turbo": "^2.3.0",
+        "typescript": "^5.7.0"
+    },
+    "packageManager": "pnpm@9.15.0",
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}
