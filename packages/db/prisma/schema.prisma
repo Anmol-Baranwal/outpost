@@ -79,6 +79,7 @@ enum TicketSource {
     WEB
     EMAIL
     MANUAL
+    ORCA
 }
 
 // ─── Messages & Notes ───────────────────────────────────────────────────────
