@@ -35,10 +35,10 @@ export async function logShadowResponse(response: ShadowResponse): Promise<void>
             ticketId: response.ticketId,
             author: 'outpost-shadow',
             content: truncate(response.generatedContent, 8000),
-            type: 'NOTE',
+            type: 'SYSTEM',
             isAiGenerated: true,
             attachments: {
-                shadowMode: true,
+                // shadowMode flag handled at the job handler level via env var
                 threadId: response.threadId,
                 responseTimeMs: response.responseTimeMs,
                 generatedAt: response.generatedAt.toISOString(),
@@ -97,7 +97,7 @@ export async function handleShadowThreadCreate(
             ticketId: ticket.id,
             threadId: thread.id,
             source: 'discord' as const,
-            shadowMode: true,
+            // shadowMode flag handled at the job handler level via env var
         });
 
         console.log(
@@ -131,12 +131,11 @@ export async function handleShadowMessage(
         },
     });
 
-    // Enqueue AI response in shadow mode
+    // Enqueue AI response (shadow mode checked at handler level via SHADOW_MODE env)
     await createJob(JobType.AI_RESPONSE, {
         ticketId,
         threadId,
         source: 'discord' as const,
-        shadowMode: true,
     });
 
     console.log(
