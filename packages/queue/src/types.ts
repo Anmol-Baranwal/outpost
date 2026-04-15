@@ -18,6 +18,8 @@ export enum JobType {
     ESCALATION = 'ESCALATION',
     /** Compile daily new member digest */
     ONBOARDING_DIGEST = 'ONBOARDING_DIGEST',
+    /** Score account sentiment and engagement */
+    ACCOUNT_SCORING = 'ACCOUNT_SCORING',
 }
 
 // ─── Payload Shapes ─────────────────────────────────────────────────────────
@@ -46,6 +48,11 @@ export interface OnboardingDigestPayload {
     date: string; // ISO date string, e.g. "2026-04-15"
 }
 
+export interface AccountScoringPayload {
+    /** If provided, only score this account. Otherwise score all accounts. */
+    accountId?: string;
+}
+
 /** Map from JobType to its specific payload shape */
 export interface JobPayload {
     [JobType.AI_RESPONSE]: AiResponsePayload;
@@ -53,6 +60,7 @@ export interface JobPayload {
     [JobType.SLA_CHECK]: SlaCheckPayload;
     [JobType.ESCALATION]: EscalationPayload;
     [JobType.ONBOARDING_DIGEST]: OnboardingDigestPayload;
+    [JobType.ACCOUNT_SCORING]: AccountScoringPayload;
 }
 
 // ─── Job Results ────────────────────────────────────────────────────────────
