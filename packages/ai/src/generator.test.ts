@@ -1,32 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { LLMock } from '@copilotkit/aimock';
 import { ResponseGenerator } from './generator.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
 
-// Mock the Anthropic SDK
-vi.mock('@anthropic-ai/sdk', () => {
-    const createMock = vi.fn();
-    const streamMock = vi.fn();
-    return {
-        default: class MockAnthropic {
-            messages = {
-                create: createMock,
-                stream: streamMock,
-            };
-        },
-        __createMock: createMock,
-        __streamMock: streamMock,
-    };
+// ─── aimock setup ───────────────────────────────────────────────────────────
+
+let mock: LLMock;
+let originalBaseUrl: string | undefined;
+
+beforeAll(async () => {
+    mock = new LLMock({ port: 0 });
+    await mock.start();
+    originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_BASE_URL = mock.url;
 });
 
-// Get references to the mocks
-async function getMocks() {
-    const mod = await import('@anthropic-ai/sdk') as unknown as {
-        __createMock: ReturnType<typeof vi.fn>;
-        __streamMock: ReturnType<typeof vi.fn>;
-    };
-    return { createMock: mod.__createMock, streamMock: mod.__streamMock };
-}
+afterAll(async () => {
+    if (originalBaseUrl === undefined) {
+        delete process.env.ANTHROPIC_BASE_URL;
+    } else {
+        process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
+    }
+    await mock.stop();
+});
+
+beforeEach(() => {
+    mock.reset();
+});
+
+// ─── Test data ──────────────────────────────────────────────────────────────
 
 const sampleSources: SearchResult[] = [
     {
@@ -43,21 +46,19 @@ const sampleSources: SearchResult[] = [
     },
 ];
 
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
 describe('ResponseGenerator', () => {
     let generator: ResponseGenerator;
 
-    beforeEach(async () => {
-        const { createMock } = await getMocks();
-        createMock.mockReset();
-
+    beforeEach(() => {
         generator = new ResponseGenerator({ apiKey: 'test-key' });
     });
 
     describe('generate', () => {
         it('should generate a response with confidence scoring', async () => {
-            const { createMock } = await getMocks();
-            createMock.mockResolvedValueOnce({
-                content: [{ type: 'text', text: 'Here is how to use CopilotKit actions...' }],
+            mock.onMessage(/./, {
+                content: 'Here is how to use CopilotKit actions...',
                 usage: { input_tokens: 500, output_tokens: 100 },
             });
 
@@ -75,9 +76,8 @@ describe('ResponseGenerator', () => {
         });
 
         it('should assign HIGH confidence for high-quality sources', async () => {
-            const { createMock } = await getMocks();
-            createMock.mockResolvedValueOnce({
-                content: [{ type: 'text', text: 'Response text' }],
+            mock.onMessage(/./, {
+                content: 'Response text',
                 usage: { input_tokens: 100, output_tokens: 50 },
             });
 
@@ -96,9 +96,8 @@ describe('ResponseGenerator', () => {
         });
 
         it('should assign LOW confidence when no sources available', async () => {
-            const { createMock } = await getMocks();
-            createMock.mockResolvedValueOnce({
-                content: [{ type: 'text', text: 'I am not sure about this...' }],
+            mock.onMessage(/./, {
+                content: 'I am not sure about this...',
                 usage: { input_tokens: 100, output_tokens: 50 },
             });
 
@@ -112,8 +111,7 @@ describe('ResponseGenerator', () => {
         });
 
         it('should return graceful fallback on API error', async () => {
-            const { createMock } = await getMocks();
-            createMock.mockRejectedValueOnce(new Error('API rate limited'));
+            mock.nextRequestError(429, { message: 'API rate limited' });
 
             const result = await generator.generate(
                 { question: 'test' },
@@ -127,9 +125,8 @@ describe('ResponseGenerator', () => {
         });
 
         it('should include conversation history for follow-ups', async () => {
-            const { createMock } = await getMocks();
-            createMock.mockResolvedValueOnce({
-                content: [{ type: 'text', text: 'Follow-up answer' }],
+            mock.onMessage(/./, {
+                content: 'Follow-up answer',
                 usage: { input_tokens: 200, output_tokens: 50 },
             });
 
@@ -142,34 +139,29 @@ describe('ResponseGenerator', () => {
                 ],
             );
 
-            expect(createMock).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    messages: expect.arrayContaining([
-                        { role: 'user', content: 'How do I use actions?' },
-                        { role: 'assistant', content: 'You use useCopilotAction...' },
-                    ]),
-                }),
-            );
+            // Verify the request contained conversation history
+            const lastReq = mock.getLastRequest();
+            expect(lastReq).not.toBeNull();
+            const body = lastReq!.body;
+            expect(body).not.toBeNull();
+            const messages = body!.messages;
+            // Should contain the history messages
+            const userMessages = messages.filter((m: { role: string; content: string | null }) => m.role === 'user');
+            const assistantMessages = messages.filter((m: { role: string; content: string | null }) => m.role === 'assistant');
+            expect(userMessages.some((m: { content: string | null }) =>
+                typeof m.content === 'string' && m.content.includes('How do I use actions?')
+            )).toBe(true);
+            expect(assistantMessages.some((m: { content: string | null }) =>
+                typeof m.content === 'string' && m.content.includes('You use useCopilotAction...')
+            )).toBe(true);
         });
     });
 
     describe('generateStream', () => {
         it('should yield text chunks from streaming response', async () => {
-            const { streamMock } = await getMocks();
-
-            // Create an async iterable that yields stream events
-            const events = [
-                { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } },
-                { type: 'content_block_delta', delta: { type: 'text_delta', text: ' world' } },
-                { type: 'message_stop' },
-            ];
-
-            streamMock.mockReturnValueOnce({
-                [Symbol.asyncIterator]: async function* () {
-                    for (const event of events) {
-                        yield event;
-                    }
-                },
+            mock.onMessage(/./, {
+                content: 'Hello world',
+                usage: { input_tokens: 100, output_tokens: 10 },
             });
 
             const chunks: string[] = [];
@@ -180,16 +172,13 @@ describe('ResponseGenerator', () => {
                 chunks.push(chunk);
             }
 
-            expect(chunks).toEqual(['Hello', ' world']);
+            // aimock streams the content in chunks; joined result should match
+            expect(chunks.join('')).toBe('Hello world');
+            expect(chunks.length).toBeGreaterThanOrEqual(1);
         });
 
         it('should yield error message on stream failure', async () => {
-            const { streamMock } = await getMocks();
-            streamMock.mockReturnValueOnce({
-                [Symbol.asyncIterator]: async function* () {
-                    throw new Error('Stream interrupted');
-                },
-            });
+            mock.nextRequestError(500, { message: 'Stream interrupted' });
 
             const chunks: string[] = [];
             for await (const chunk of generator.generateStream(

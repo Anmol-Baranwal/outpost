@@ -1,25 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { LLMock } from '@copilotkit/aimock';
 import { ConfidenceScorer } from './confidence.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
 
-// Mock the Anthropic SDK
-vi.mock('@anthropic-ai/sdk', () => {
-    const createMock = vi.fn();
-    return {
-        default: class MockAnthropic {
-            messages = { create: createMock };
-        },
-        __createMock: createMock,
-    };
+// ─── aimock setup ───────────────────────────────────────────────────────────
+
+let mock: LLMock;
+let originalBaseUrl: string | undefined;
+
+beforeAll(async () => {
+    mock = new LLMock({ port: 0 });
+    await mock.start();
+    originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_BASE_URL = mock.url;
 });
 
-async function getCreateMock() {
-    const mod = await import('@anthropic-ai/sdk') as unknown as {
-        __createMock: ReturnType<typeof vi.fn>;
-    };
-    return mod.__createMock;
-}
+afterAll(async () => {
+    if (originalBaseUrl === undefined) {
+        delete process.env.ANTHROPIC_BASE_URL;
+    } else {
+        process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
+    }
+    await mock.stop();
+});
+
+beforeEach(() => {
+    mock.reset();
+});
+
+// ─── Test data ──────────────────────────────────────────────────────────────
 
 const highQualityResults: SearchResult[] = [
     { title: 'Actions Guide', content: 'Detailed guide...', score: 0.95 },
@@ -31,27 +41,23 @@ const lowQualityResults: SearchResult[] = [
     { title: 'Unrelated', content: 'Not relevant...', score: 0.25 },
 ];
 
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
 describe('ConfidenceScorer', () => {
     let scorer: ConfidenceScorer;
 
-    beforeEach(async () => {
-        const createMock = await getCreateMock();
-        createMock.mockReset();
+    beforeEach(() => {
         scorer = new ConfidenceScorer({ apiKey: 'test-key' });
     });
 
     describe('score', () => {
         it('should return HIGH confidence for well-matched results', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockResolvedValueOnce({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify({
-                        score: 0.9,
-                        level: 'HIGH',
-                        reasoning: 'Results directly address the question',
-                    }),
-                }],
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    score: 0.9,
+                    level: 'HIGH',
+                    reasoning: 'Results directly address the question',
+                }),
                 usage: { input_tokens: 200, output_tokens: 30 },
             });
 
@@ -67,16 +73,12 @@ describe('ConfidenceScorer', () => {
         });
 
         it('should return LOW confidence for poor results', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockResolvedValueOnce({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify({
-                        score: 0.3,
-                        level: 'LOW',
-                        reasoning: 'Search results do not cover the question',
-                    }),
-                }],
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    score: 0.3,
+                    level: 'LOW',
+                    reasoning: 'Search results do not cover the question',
+                }),
                 usage: { input_tokens: 150, output_tokens: 25 },
             });
 
@@ -91,8 +93,7 @@ describe('ConfidenceScorer', () => {
         });
 
         it('should fall back to heuristic scoring on API error', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockRejectedValueOnce(new Error('API error'));
+            mock.nextRequestError(500, { message: 'API error' });
 
             const result = await scorer.score(
                 'test question',
@@ -106,9 +107,8 @@ describe('ConfidenceScorer', () => {
         });
 
         it('should handle malformed Claude response', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockResolvedValueOnce({
-                content: [{ type: 'text', text: 'This is not valid JSON' }],
+            mock.onMessage(/./, {
+                content: 'This is not valid JSON',
                 usage: { input_tokens: 100, output_tokens: 20 },
             });
 
@@ -124,12 +124,8 @@ describe('ConfidenceScorer', () => {
         });
 
         it('should handle JSON wrapped in code fences', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockResolvedValueOnce({
-                content: [{
-                    type: 'text',
-                    text: '```json\n{"score": 0.85, "level": "HIGH", "reasoning": "Good match"}\n```',
-                }],
+            mock.onMessage(/./, {
+                content: '```json\n{"score": 0.85, "level": "HIGH", "reasoning": "Good match"}\n```',
                 usage: { input_tokens: 100, output_tokens: 20 },
             });
 

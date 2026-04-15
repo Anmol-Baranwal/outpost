@@ -1,33 +1,36 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { LLMock } from '@copilotkit/aimock';
 import { SentimentLabel } from './types.js';
+import { analyzeSentiment } from './sentiment.js';
 
-// Mock the Anthropic SDK
-vi.mock('@anthropic-ai/sdk', () => {
-    const createMock = vi.fn();
-    return {
-        default: class MockAnthropic {
-            messages = { create: createMock };
-        },
-        __createMock: createMock,
-    };
+// ─── aimock setup ───────────────────────────────────────────────────────────
+
+let mock: LLMock;
+let originalBaseUrl: string | undefined;
+
+beforeAll(async () => {
+    mock = new LLMock({ port: 0 });
+    await mock.start();
+    originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_BASE_URL = mock.url;
 });
 
-async function getCreateMock() {
-    const mod = await import('@anthropic-ai/sdk') as unknown as {
-        __createMock: ReturnType<typeof vi.fn>;
-    };
-    return mod.__createMock;
-}
+afterAll(async () => {
+    if (originalBaseUrl === undefined) {
+        delete process.env.ANTHROPIC_BASE_URL;
+    } else {
+        process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
+    }
+    await mock.stop();
+});
 
-// Import after mocks
-const { analyzeSentiment } = await import('./sentiment.js');
+beforeEach(() => {
+    mock.reset();
+});
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('analyzeSentiment', () => {
-    beforeEach(async () => {
-        const createMock = await getCreateMock();
-        createMock.mockReset();
-    });
-
     it('should return NEUTRAL for empty message list', async () => {
         const result = await analyzeSentiment([]);
 
@@ -37,12 +40,8 @@ describe('analyzeSentiment', () => {
     });
 
     it('should classify positive messages correctly', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockResolvedValueOnce({
-            content: [{
-                type: 'text',
-                text: JSON.stringify({ score: 10, label: 'POSITIVE' }),
-            }],
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 10, label: 'POSITIVE' }),
             usage: { input_tokens: 150, output_tokens: 20 },
         });
 
@@ -57,12 +56,8 @@ describe('analyzeSentiment', () => {
     });
 
     it('should classify negative messages correctly', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockResolvedValueOnce({
-            content: [{
-                type: 'text',
-                text: JSON.stringify({ score: 65, label: 'NEGATIVE' }),
-            }],
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 65, label: 'NEGATIVE' }),
             usage: { input_tokens: 200, output_tokens: 20 },
         });
 
@@ -76,12 +71,8 @@ describe('analyzeSentiment', () => {
     });
 
     it('should classify critical messages correctly', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockResolvedValueOnce({
-            content: [{
-                type: 'text',
-                text: JSON.stringify({ score: 85, label: 'CRITICAL' }),
-            }],
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 85, label: 'CRITICAL' }),
             usage: { input_tokens: 180, output_tokens: 20 },
         });
 
@@ -94,8 +85,7 @@ describe('analyzeSentiment', () => {
     });
 
     it('should fall back to NEUTRAL on API failure', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockRejectedValueOnce(new Error('API rate limit'));
+        mock.nextRequestError(500, { message: 'API rate limit' });
 
         const result = await analyzeSentiment([
             'Some message content',
@@ -107,12 +97,8 @@ describe('analyzeSentiment', () => {
     });
 
     it('should clamp scores to 0-100 range', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockResolvedValueOnce({
-            content: [{
-                type: 'text',
-                text: JSON.stringify({ score: 150, label: 'CRITICAL' }),
-            }],
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 150, label: 'CRITICAL' }),
             usage: { input_tokens: 100, output_tokens: 20 },
         });
 
@@ -122,12 +108,8 @@ describe('analyzeSentiment', () => {
     });
 
     it('should derive label from score when label is missing', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockResolvedValueOnce({
-            content: [{
-                type: 'text',
-                text: JSON.stringify({ score: 15 }),
-            }],
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 15 }),
             usage: { input_tokens: 100, output_tokens: 20 },
         });
 
@@ -138,12 +120,8 @@ describe('analyzeSentiment', () => {
     });
 
     it('should handle malformed JSON response gracefully', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockResolvedValueOnce({
-            content: [{
-                type: 'text',
-                text: 'not valid json at all',
-            }],
+        mock.onMessage(/./, {
+            content: 'not valid json at all',
             usage: { input_tokens: 100, output_tokens: 20 },
         });
 
@@ -156,12 +134,8 @@ describe('analyzeSentiment', () => {
     });
 
     it('should batch multiple messages into a single API call', async () => {
-        const createMock = await getCreateMock();
-        createMock.mockResolvedValueOnce({
-            content: [{
-                type: 'text',
-                text: JSON.stringify({ score: 35, label: 'NEUTRAL' }),
-            }],
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 35, label: 'NEUTRAL' }),
             usage: { input_tokens: 300, output_tokens: 20 },
         });
 
@@ -171,11 +145,19 @@ describe('analyzeSentiment', () => {
             'Message 3',
         ], { apiKey: 'test-key' });
 
-        expect(createMock).toHaveBeenCalledTimes(1);
-        // Verify all messages are in the prompt
-        const callArgs = createMock.mock.calls[0][0];
-        expect(callArgs.messages[0].content).toContain('[Message 1]');
-        expect(callArgs.messages[0].content).toContain('[Message 2]');
-        expect(callArgs.messages[0].content).toContain('[Message 3]');
+        // Verify the request was made and contains all messages
+        const lastReq = mock.getLastRequest();
+        expect(lastReq).not.toBeNull();
+
+        const body = lastReq!.body;
+        expect(body).not.toBeNull();
+        const userMessage = body!.messages.find((m: { role: string }) => m.role === 'user');
+        expect(userMessage).toBeDefined();
+        const content = typeof userMessage!.content === 'string'
+            ? userMessage!.content
+            : '';
+        expect(content).toContain('[Message 1]');
+        expect(content).toContain('[Message 2]');
+        expect(content).toContain('[Message 3]');
     });
 });

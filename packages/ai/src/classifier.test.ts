@@ -1,47 +1,51 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { LLMock } from '@copilotkit/aimock';
 import { TicketClassifier } from './classifier.js';
 import { TicketPriority, TicketType } from './types.js';
 
-// Mock the Anthropic SDK
-vi.mock('@anthropic-ai/sdk', () => {
-    const createMock = vi.fn();
-    return {
-        default: class MockAnthropic {
-            messages = { create: createMock };
-        },
-        __createMock: createMock,
-    };
+// ─── aimock setup ───────────────────────────────────────────────────────────
+
+let mock: LLMock;
+let originalBaseUrl: string | undefined;
+
+beforeAll(async () => {
+    mock = new LLMock({ port: 0 });
+    await mock.start();
+    originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_BASE_URL = mock.url;
 });
 
-async function getCreateMock() {
-    const mod = await import('@anthropic-ai/sdk') as unknown as {
-        __createMock: ReturnType<typeof vi.fn>;
-    };
-    return mod.__createMock;
-}
+afterAll(async () => {
+    if (originalBaseUrl === undefined) {
+        delete process.env.ANTHROPIC_BASE_URL;
+    } else {
+        process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
+    }
+    await mock.stop();
+});
+
+beforeEach(() => {
+    mock.reset();
+});
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('TicketClassifier', () => {
     let classifier: TicketClassifier;
 
-    beforeEach(async () => {
-        const createMock = await getCreateMock();
-        createMock.mockReset();
+    beforeEach(() => {
         classifier = new TicketClassifier({ apiKey: 'test-key' });
     });
 
     describe('classify', () => {
         it('should classify an error report as HIGH priority ISSUE', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockResolvedValueOnce({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify({
-                        priority: 'HIGH',
-                        type: 'ISSUE',
-                        tags: ['copilotkit-runtime', 'typescript'],
-                        reasoning: 'Error report with stack trace',
-                    }),
-                }],
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    priority: 'HIGH',
+                    type: 'ISSUE',
+                    tags: ['copilotkit-runtime', 'typescript'],
+                    reasoning: 'Error report with stack trace',
+                }),
                 usage: { input_tokens: 100, output_tokens: 40 },
             });
 
@@ -56,17 +60,13 @@ describe('TicketClassifier', () => {
         });
 
         it('should classify a how-to question as REQUEST type', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockResolvedValueOnce({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify({
-                        priority: 'LOW',
-                        type: 'REQUEST',
-                        tags: ['actions', 'next.js'],
-                        reasoning: 'How-to question about setup',
-                    }),
-                }],
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    priority: 'LOW',
+                    type: 'REQUEST',
+                    tags: ['actions', 'next.js'],
+                    reasoning: 'How-to question about setup',
+                }),
                 usage: { input_tokens: 80, output_tokens: 30 },
             });
 
@@ -78,18 +78,14 @@ describe('TicketClassifier', () => {
         });
 
         it('should override to HIGH priority when heuristic detects errors', async () => {
-            const createMock = await getCreateMock();
             // Claude says MEDIUM, but heuristic should override to HIGH because of error keywords
-            createMock.mockResolvedValueOnce({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify({
-                        priority: 'MEDIUM',
-                        type: 'ISSUE',
-                        tags: ['react-ui'],
-                        reasoning: 'Minor rendering issue',
-                    }),
-                }],
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    priority: 'MEDIUM',
+                    type: 'ISSUE',
+                    tags: ['react-ui'],
+                    reasoning: 'Minor rendering issue',
+                }),
                 usage: { input_tokens: 80, output_tokens: 30 },
             });
 
@@ -102,17 +98,13 @@ describe('TicketClassifier', () => {
         });
 
         it('should merge tags from heuristic and Claude', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockResolvedValueOnce({
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify({
-                        priority: 'MEDIUM',
-                        type: 'ISSUE',
-                        tags: ['performance', 'cloud'],
-                        reasoning: 'Performance concern',
-                    }),
-                }],
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    priority: 'MEDIUM',
+                    type: 'ISSUE',
+                    tags: ['performance', 'cloud'],
+                    reasoning: 'Performance concern',
+                }),
                 usage: { input_tokens: 80, output_tokens: 30 },
             });
 
@@ -128,8 +120,7 @@ describe('TicketClassifier', () => {
         });
 
         it('should fall back to heuristic on API failure', async () => {
-            const createMock = await getCreateMock();
-            createMock.mockRejectedValueOnce(new Error('API error'));
+            mock.nextRequestError(500, { message: 'API error' });
 
             const result = await classifier.classify(
                 'Error: Cannot connect to CopilotKit runtime',
