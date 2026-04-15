@@ -43,3 +43,4 @@ coverage/
 # Package manager
 package-lock.json
 yarn.lock
+.claude/worktrees/
