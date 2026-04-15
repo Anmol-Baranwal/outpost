@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Contributing — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="/" class="nav-brand"> <span class="prompt">&#127956;&#65039;</span> Outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/docs" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Contributing</h1>
+        <p class="lead">
+          Outpost is open source under the Elastic License 2.0. We welcome contributions of all
+          kinds: bug fixes, new features, documentation improvements, and more.
+        </p>
+
+        <h2>Development Setup</h2>
+        <p>
+          Follow the <a href="/getting-started">Quick Start</a> guide to get your local development
+          environment running. Make sure all tests pass before making changes:
+        </p>
+        <div class="code-block">
+          <div class="code-block-header">terminal <span class="lang-tag">bash</span></div>
+          <pre><code><span class="fn">pnpm</span> test
+<span class="fn">pnpm</span> lint
+<span class="fn">pnpm</span> typecheck</code></pre>
+        </div>
+
+        <h2>Code Style</h2>
+        <ul>
+          <li><strong>TypeScript</strong> throughout &mdash; no plain JavaScript</li>
+          <li><strong>4-space indentation</strong> for all source files</li>
+          <li><strong>Prettier</strong> for formatting (<code>pnpm format</code> before committing)</li>
+          <li><strong>ESLint</strong> for linting (<code>pnpm lint</code>)</li>
+          <li><strong>Plain English commit messages</strong> &mdash; no conventional commit prefixes</li>
+        </ul>
+
+        <h2>Branch and PR Workflow</h2>
+        <ol>
+          <li>Fork the repository and clone your fork</li>
+          <li>Create a feature branch: <code>git checkout -b feat/my-feature</code></li>
+          <li>Make your changes with clear, descriptive commits</li>
+          <li>Ensure tests pass: <code>pnpm test && pnpm lint && pnpm typecheck</code></li>
+          <li>Push to your fork and open a Pull Request against <code>main</code></li>
+        </ol>
+
+        <div class="info-box">
+          <p>
+            <strong>Commit messages:</strong> Write plain English commit messages that describe what
+            changed and why. Example: "Add SLA breach notifications to Discord bot" rather than
+            "feat: add sla notifications".
+          </p>
+        </div>
+
+        <h2>Project Structure</h2>
+        <div class="code-block">
+          <div class="code-block-header">repository layout <span class="lang-tag">text</span></div>
+          <pre><code>outpost/
+├── apps/
+│   ├── web/              <span class="cm"># Next.js web dashboard</span>
+│   ├── discord-bot/      <span class="cm"># Discord bot</span>
+│   ├── github-app/       <span class="cm"># GitHub App webhook receiver</span>
+│   └── docs/             <span class="cm"># Documentation site (this site)</span>
+├── packages/
+│   ├── ai/               <span class="cm"># AI pipeline (Pathfinder + Claude)</span>
+│   ├── db/               <span class="cm"># Prisma schema and client</span>
+│   ├── queue/            <span class="cm"># Postgres-backed job queue</span>
+│   └── shared/           <span class="cm"># Shared types and utilities</span>
+├── docker-compose.yml    <span class="cm"># Local PostgreSQL</span>
+└── turbo.json            <span class="cm"># Turborepo config</span></code></pre>
+        </div>
+
+        <h2>Running Tests</h2>
+        <p>Tests are run per-package via Turborepo:</p>
+        <div class="code-block">
+          <div class="code-block-header">terminal <span class="lang-tag">bash</span></div>
+          <pre><code><span class="cm"># Run all tests</span>
+<span class="fn">pnpm</span> test
+
+<span class="cm"># Run tests for a specific package</span>
+<span class="fn">pnpm</span> test --filter=@outpost/queue
+
+<span class="cm"># Run tests in watch mode</span>
+<span class="fn">pnpm</span> test --filter=@outpost/web -- --watch</code></pre>
+        </div>
+
+        <h2>Database Changes</h2>
+        <p>
+          If your change requires a database schema modification:
+        </p>
+        <ol>
+          <li>Edit the Prisma schema in <code>packages/db/prisma/schema.prisma</code></li>
+          <li>Run <code>pnpm db:generate</code> to regenerate the client</li>
+          <li>Run <code>pnpm db:push</code> to apply to your local database</li>
+          <li>Include the schema changes in your PR</li>
+        </ol>
+
+        <h2>Adding an Integration</h2>
+        <p>
+          To add a new integration (e.g., Slack, Zendesk):
+        </p>
+        <ol>
+          <li>Create a new app in <code>apps/</code> following the existing bot/app patterns</li>
+          <li>Add the app to <code>pnpm-workspace.yaml</code></li>
+          <li>Implement the ticket creation interface from <code>packages/shared</code></li>
+          <li>Add configuration documentation</li>
+          <li>Add tests for the integration</li>
+        </ol>
+
+        <h2>License</h2>
+        <p>
+          Outpost is licensed under the
+          <a href="https://github.com/CopilotKit/outpost/blob/main/LICENSE" target="_blank"
+            >Elastic License 2.0 (ELv2)</a
+          >. By contributing, you agree that your contributions will be licensed under the same
+          license.
+        </p>
+
+        <div class="prev-next">
+          <a href="/deployment">
+            <span class="label">Previous</span>
+            <span class="title">Deployment</span>
+          </a>
+          <a href="/docs" class="next">
+            <span class="label">Next</span>
+            <span class="title">Documentation Home</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span>&#127956;&#65039;</span> Outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>

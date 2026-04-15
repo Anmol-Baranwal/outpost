@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deployment Guide — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="/" class="nav-brand"> <span class="prompt">&#127956;&#65039;</span> Outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/docs" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Deployment Guide</h1>
+        <p class="lead">
+          Outpost consists of three services that need to be deployed: the web dashboard, the Discord
+          bot, and the GitHub App webhook receiver. All share a single PostgreSQL database.
+        </p>
+
+        <h2>Requirements</h2>
+        <ul>
+          <li><strong>PostgreSQL 16</strong> with the pgvector extension enabled</li>
+          <li><strong>Node.js 20+</strong> runtime for all three services</li>
+          <li><strong>Persistent process manager</strong> for the Discord bot (it maintains a WebSocket connection)</li>
+          <li><strong>Public HTTPS endpoint</strong> for the GitHub App webhook receiver</li>
+        </ul>
+
+        <h2>Docker Compose (Recommended)</h2>
+        <p>
+          The included <code>docker-compose.yml</code> can be extended for production use:
+        </p>
+        <div class="code-block">
+          <div class="code-block-header">docker-compose.prod.yml <span class="lang-tag">yaml</span></div>
+          <pre><code><span class="key">version</span>: <span class="str">"3.9"</span>
+
+<span class="key">services</span>:
+  <span class="key">postgres</span>:
+    <span class="key">image</span>: <span class="str">pgvector/pgvector:pg16</span>
+    <span class="key">volumes</span>:
+      - <span class="str">pgdata:/var/lib/postgresql/data</span>
+    <span class="key">environment</span>:
+      <span class="key">POSTGRES_DB</span>: <span class="str">outpost</span>
+      <span class="key">POSTGRES_USER</span>: <span class="str">outpost</span>
+      <span class="key">POSTGRES_PASSWORD</span>: <span class="str">${DB_PASSWORD}</span>
+    <span class="key">restart</span>: <span class="str">unless-stopped</span>
+
+  <span class="key">web</span>:
+    <span class="key">build</span>:
+      <span class="key">context</span>: <span class="str">.</span>
+      <span class="key">dockerfile</span>: <span class="str">apps/web/Dockerfile</span>
+    <span class="key">ports</span>:
+      - <span class="str">"3000:3000"</span>
+    <span class="key">env_file</span>: <span class="str">.env</span>
+    <span class="key">depends_on</span>:
+      - <span class="str">postgres</span>
+    <span class="key">restart</span>: <span class="str">unless-stopped</span>
+
+  <span class="key">discord-bot</span>:
+    <span class="key">build</span>:
+      <span class="key">context</span>: <span class="str">.</span>
+      <span class="key">dockerfile</span>: <span class="str">apps/discord-bot/Dockerfile</span>
+    <span class="key">env_file</span>: <span class="str">.env</span>
+    <span class="key">depends_on</span>:
+      - <span class="str">postgres</span>
+    <span class="key">restart</span>: <span class="str">unless-stopped</span>
+
+  <span class="key">github-app</span>:
+    <span class="key">build</span>:
+      <span class="key">context</span>: <span class="str">.</span>
+      <span class="key">dockerfile</span>: <span class="str">apps/github-app/Dockerfile</span>
+    <span class="key">ports</span>:
+      - <span class="str">"3001:3001"</span>
+    <span class="key">env_file</span>: <span class="str">.env</span>
+    <span class="key">depends_on</span>:
+      - <span class="str">postgres</span>
+    <span class="key">restart</span>: <span class="str">unless-stopped</span>
+
+<span class="key">volumes</span>:
+  <span class="key">pgdata</span>:</code></pre>
+        </div>
+
+        <h2>Platform-Specific Guides</h2>
+
+        <h3>Railway</h3>
+        <ol>
+          <li>Create a new project on <a href="https://railway.app" target="_blank">Railway</a></li>
+          <li>Add a PostgreSQL service with pgvector</li>
+          <li>Deploy each app as a separate service pointing to the same repo</li>
+          <li>Set the root directory for each service (<code>apps/web</code>, <code>apps/discord-bot</code>, <code>apps/github-app</code>)</li>
+          <li>Share the <code>DATABASE_URL</code> across all services via Railway's variable references</li>
+        </ol>
+
+        <h3>Render</h3>
+        <ol>
+          <li>Create a PostgreSQL database on Render</li>
+          <li>Deploy <code>apps/web</code> as a Web Service</li>
+          <li>Deploy <code>apps/discord-bot</code> as a Background Worker</li>
+          <li>Deploy <code>apps/github-app</code> as a Web Service (needs public URL for webhooks)</li>
+          <li>Use an Environment Group to share database credentials</li>
+        </ol>
+
+        <h3>VPS / Bare Metal</h3>
+        <div class="code-block">
+          <div class="code-block-header">deploy.sh <span class="lang-tag">bash</span></div>
+          <pre><code><span class="cm">#!/bin/bash</span>
+<span class="cm"># Build all apps</span>
+<span class="fn">pnpm</span> install --frozen-lockfile
+<span class="fn">pnpm</span> build
+
+<span class="cm"># Run database migrations</span>
+<span class="fn">pnpm</span> db:generate
+<span class="fn">pnpm</span> db:push
+
+<span class="cm"># Start services (use PM2, systemd, or similar)</span>
+<span class="fn">pm2</span> start apps/web/dist/server.js --name outpost-web
+<span class="fn">pm2</span> start apps/discord-bot/dist/index.js --name outpost-discord
+<span class="fn">pm2</span> start apps/github-app/dist/index.js --name outpost-github</code></pre>
+        </div>
+
+        <h2>Database Setup</h2>
+        <p>
+          Ensure pgvector is enabled in your PostgreSQL instance:
+        </p>
+        <div class="code-block">
+          <div class="code-block-header">SQL <span class="lang-tag">sql</span></div>
+          <pre><code><span class="kw">CREATE EXTENSION IF NOT EXISTS</span> vector;</code></pre>
+        </div>
+        <p>
+          Then run the Prisma migrations:
+        </p>
+        <div class="code-block">
+          <div class="code-block-header">terminal <span class="lang-tag">bash</span></div>
+          <pre><code><span class="fn">pnpm</span> db:generate
+<span class="fn">pnpm</span> db:push</code></pre>
+        </div>
+
+        <h2>Environment Checklist</h2>
+        <p>Before deploying, verify these are all set:</p>
+        <ul>
+          <li>&#9745; <code>DATABASE_URL</code> pointing to production PostgreSQL</li>
+          <li>&#9745; <code>ANTHROPIC_API_KEY</code> for AI features</li>
+          <li>&#9745; <code>DISCORD_BOT_TOKEN</code> and related Discord vars</li>
+          <li>&#9745; <code>GITHUB_APP_ID</code>, <code>GITHUB_PRIVATE_KEY</code>, and webhook secret</li>
+          <li>&#9745; <code>NODE_ENV=production</code></li>
+          <li>&#9745; GitHub App webhook URL updated to production domain</li>
+          <li>&#9745; HTTPS configured for web dashboard and GitHub webhook endpoint</li>
+        </ul>
+
+        <h2>Health Checks</h2>
+        <p>
+          The web app exposes a health check endpoint at <code>GET /api/health</code> that verifies
+          database connectivity. Use this for your platform's health check configuration.
+        </p>
+
+        <div class="prev-next">
+          <a href="/api-reference">
+            <span class="label">Previous</span>
+            <span class="title">API Reference</span>
+          </a>
+          <a href="/contributing" class="next">
+            <span class="label">Next</span>
+            <span class="title">Contributing</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span>&#127956;&#65039;</span> Outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>

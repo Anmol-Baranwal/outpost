@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GitHub App Setup — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="/" class="nav-brand"> <span class="prompt">&#127956;&#65039;</span> Outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/docs" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>GitHub App Setup</h1>
+        <p class="lead">
+          The Outpost GitHub App tracks issues and discussions, auto-triages bug reports, syncs
+          labels, and links GitHub activity to support tickets in the Outpost dashboard.
+        </p>
+
+        <h2>Create a GitHub App</h2>
+        <ol>
+          <li>Go to your GitHub organization's <strong>Settings &rarr; Developer settings &rarr; GitHub Apps</strong></li>
+          <li>Click <strong>New GitHub App</strong></li>
+          <li>Fill in the details:
+            <ul>
+              <li><strong>App name:</strong> Outpost Support (or your preferred name)</li>
+              <li><strong>Homepage URL:</strong> Your Outpost dashboard URL</li>
+              <li><strong>Webhook URL:</strong> <code>https://your-domain.com/api/github/webhook</code></li>
+              <li><strong>Webhook secret:</strong> Generate a secure random string</li>
+            </ul>
+          </li>
+        </ol>
+
+        <h2>Required Permissions</h2>
+
+        <h3>Repository Permissions</h3>
+        <table class="env-table">
+          <thead><tr><th>Permission</th><th>Access</th><th>Reason</th></tr></thead>
+          <tbody>
+            <tr><td>Issues</td><td>Read &amp; Write</td><td>Create, update, and label issues</td></tr>
+            <tr><td>Discussions</td><td>Read &amp; Write</td><td>Track and respond to discussions</td></tr>
+            <tr><td>Pull requests</td><td>Read</td><td>Link PRs to tickets for resolution tracking</td></tr>
+            <tr><td>Metadata</td><td>Read</td><td>Basic repository information</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Organization Permissions</h3>
+        <table class="env-table">
+          <thead><tr><th>Permission</th><th>Access</th><th>Reason</th></tr></thead>
+          <tbody>
+            <tr><td>Members</td><td>Read</td><td>Identify team members for routing</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Subscribe to Events</h2>
+        <p>Enable these webhook events:</p>
+        <ul>
+          <li><strong>Issues</strong> &mdash; opened, edited, closed, reopened, labeled, assigned</li>
+          <li><strong>Issue comments</strong> &mdash; created, edited</li>
+          <li><strong>Discussion</strong> &mdash; created, answered, category changed</li>
+          <li><strong>Discussion comment</strong> &mdash; created</li>
+          <li><strong>Label</strong> &mdash; created, edited, deleted (for sync)</li>
+        </ul>
+
+        <h2>Generate a Private Key</h2>
+        <ol>
+          <li>In the GitHub App settings, scroll to <strong>Private keys</strong></li>
+          <li>Click <strong>Generate a private key</strong></li>
+          <li>Save the downloaded <code>.pem</code> file securely</li>
+          <li>Set the file path or contents as <code>GITHUB_PRIVATE_KEY</code> in your environment</li>
+        </ol>
+
+        <h2>Environment Variables</h2>
+        <div class="code-block">
+          <div class="code-block-header">.env <span class="lang-tag">env</span></div>
+          <pre><code><span class="cm"># GitHub App</span>
+<span class="key">GITHUB_APP_ID</span>=<span class="str">123456</span>
+<span class="key">GITHUB_PRIVATE_KEY</span>=<span class="str">./github-app.pem</span>
+<span class="key">GITHUB_WEBHOOK_SECRET</span>=<span class="str">your-webhook-secret</span>
+<span class="key">GITHUB_APP_PORT</span>=<span class="num">3001</span></code></pre>
+        </div>
+
+        <h2>Install the App</h2>
+        <ol>
+          <li>Go to your GitHub App's public page</li>
+          <li>Click <strong>Install</strong></li>
+          <li>Select the repositories you want Outpost to track</li>
+          <li>Confirm the installation</li>
+        </ol>
+
+        <h2>How It Works</h2>
+
+        <h3>Issue Auto-Triage</h3>
+        <p>
+          When a new issue is opened, the GitHub App webhook fires and Outpost:
+        </p>
+        <ol>
+          <li>Creates a ticket in the Outpost database linked to the GitHub issue</li>
+          <li>Runs AI triage to classify the issue (bug, feature request, question, etc.)</li>
+          <li>Assigns a priority based on content analysis</li>
+          <li>Applies labels back to the GitHub issue</li>
+          <li>Routes the ticket to the appropriate team via routing rules</li>
+        </ol>
+
+        <h3>Bidirectional Sync</h3>
+        <p>
+          Changes in either direction are synchronized:
+        </p>
+        <ul>
+          <li>Closing a GitHub issue closes the Outpost ticket</li>
+          <li>Closing an Outpost ticket closes the GitHub issue</li>
+          <li>Labels added in Outpost are applied to the GitHub issue</li>
+          <li>Comments sync between platforms</li>
+        </ul>
+
+        <h3>Discussion Tracking</h3>
+        <p>
+          GitHub Discussions are tracked separately from issues. When a discussion is created or
+          receives a new comment, Outpost creates or updates a lightweight tracking entry. Discussions
+          marked as "answered" automatically resolve the associated Outpost ticket.
+        </p>
+
+        <div class="prev-next">
+          <a href="/discord-bot">
+            <span class="label">Previous</span>
+            <span class="title">Discord Bot</span>
+          </a>
+          <a href="/api-reference" class="next">
+            <span class="label">Next</span>
+            <span class="title">API Reference</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span>&#127956;&#65039;</span> Outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>
