@@ -10,7 +10,7 @@
         "start": "node dist/index.js",
         "typecheck": "tsc --noEmit",
         "lint": "eslint src/",
-        "test": "echo 'No tests yet'",
+        "test": "vitest run",
         "register-commands": "tsx src/register-commands.ts"
     },
     "dependencies": {
@@ -22,6 +22,7 @@
     "devDependencies": {
         "@types/node": "^22.10.0",
         "tsx": "^4.19.0",
-        "typescript": "^5.7.0"
+        "typescript": "^5.7.0",
+        "vitest": "^3.0.0"
     }
 }
