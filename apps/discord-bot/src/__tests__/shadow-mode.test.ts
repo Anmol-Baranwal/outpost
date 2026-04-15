@@ -101,12 +101,12 @@ describe('shadow-mode', () => {
                     ticketId: 'ticket-1',
                     author: 'outpost-shadow',
                     content: 'Here is how to fix it...',
-                    type: 'NOTE',
+                    type: 'SYSTEM',
                     isAiGenerated: true,
                     attachments: expect.objectContaining({
-                        shadowMode: true,
                         threadId: 'thread-123',
                         responseTimeMs: 5000,
+                        generatedAt: '2024-01-15T12:00:00.000Z',
                     }),
                 }),
             });
@@ -177,7 +177,7 @@ describe('shadow-mode', () => {
             expect(thread.send).not.toHaveBeenCalled();
         });
 
-        it('enqueues an AI response job with shadowMode flag', async () => {
+        it('enqueues an AI response job for the created ticket', async () => {
             const thread = makeThread();
             await handleShadowThreadCreate(
                 thread,
@@ -192,7 +192,7 @@ describe('shadow-mode', () => {
                 expect.objectContaining({
                     ticketId: 'ticket-internal-id',
                     threadId: 'thread-123',
-                    shadowMode: true,
+                    source: 'discord',
                 }),
             );
         });
@@ -246,7 +246,7 @@ describe('shadow-mode', () => {
             });
         });
 
-        it('enqueues an AI response job with shadowMode flag', async () => {
+        it('enqueues an AI response job for the ticket', async () => {
             const message = makeMessage();
             await handleShadowMessage(message, 'ticket-1', 'thread-123');
 
@@ -255,7 +255,7 @@ describe('shadow-mode', () => {
                 expect.objectContaining({
                     ticketId: 'ticket-1',
                     threadId: 'thread-123',
-                    shadowMode: true,
+                    source: 'discord',
                 }),
             );
         });

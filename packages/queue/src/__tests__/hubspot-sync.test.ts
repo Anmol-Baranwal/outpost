@@ -23,11 +23,11 @@ vi.mock('@outpost/db', () => ({
 }));
 
 vi.mock('@outpost/shared', () => ({
-    HubSpotClient: vi.fn().mockImplementation(() => ({})),
-    HubSpotSyncService: vi.fn().mockImplementation(() => ({
-        syncAllAccounts: mockSyncAllAccounts,
-        syncSingleAccount: mockSyncSingleAccount,
-    })),
+    HubSpotClient: class MockHubSpotClient {},
+    HubSpotSyncService: class MockHubSpotSyncService {
+        syncAllAccounts = mockSyncAllAccounts;
+        syncSingleAccount = mockSyncSingleAccount;
+    },
 }));
 
 // Import after mocks
@@ -131,13 +131,35 @@ describe('handleHubSpotSync', () => {
         // Remove the API key to trigger initialization failure
         delete process.env.HUBSPOT_API_KEY;
 
-        // Re-mock HubSpotClient to throw on construction
-        const { HubSpotClient: MockClient } = await import('@outpost/shared');
-        (MockClient as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
-            throw new Error('API key is required');
-        });
+        // Reset module cache and re-mock so HubSpotClient throws on construction
+        vi.resetModules();
 
-        const result = await handleHubSpotSync({}, makeContext());
+        vi.doMock('@outpost/db', () => ({
+            prisma: {
+                account: {
+                    findFirst: vi.fn(),
+                    create: vi.fn(),
+                    update: vi.fn(),
+                },
+            },
+        }));
+
+        vi.doMock('@outpost/shared', () => ({
+            HubSpotClient: class ThrowingClient {
+                constructor() {
+                    throw new Error('API key is required');
+                }
+            },
+            HubSpotSyncService: class MockSyncService {
+                syncAllAccounts = mockSyncAllAccounts;
+                syncSingleAccount = mockSyncSingleAccount;
+            },
+        }));
+
+        // Re-import handler so it picks up the new mock
+        const { handleHubSpotSync: freshHandler } = await import('../handlers/hubspot-sync.js');
+
+        const result = await freshHandler({}, makeContext());
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('initialization failed');

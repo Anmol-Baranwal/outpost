@@ -84,7 +84,7 @@ describe('MessageInbox', () => {
 
     it('shows overdue count for messages > 4h', () => {
         render(<MessageInbox messages={mockMessages} />);
-        expect(screen.getByText(/overdue/i)).toBeInTheDocument();
+        expect(screen.getByText(/overdue \(>4h\)/i)).toBeInTheDocument();
     });
 
     it('shows source icons for Slack and Teams', () => {
