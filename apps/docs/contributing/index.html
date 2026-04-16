@@ -79,7 +79,9 @@
           <pre><code>outpost/
 ├── apps/
 │   ├── web/              <span class="cm"># Next.js web dashboard</span>
-│   ├── discord-bot/      <span class="cm"># Discord bot</span>
+│   ├── discord-bot/      <span class="cm"># Discord bot (@discord.js)</span>
+│   ├── slack-bot/        <span class="cm"># Slack bot (@slack/bolt)</span>
+│   ├── teams-bot/        <span class="cm"># Teams bot (Bot Framework SDK)</span>
 │   ├── github-app/       <span class="cm"># GitHub App webhook receiver</span>
 │   └── docs/             <span class="cm"># Documentation site (this site)</span>
 ├── packages/
@@ -87,7 +89,7 @@
 │   ├── db/               <span class="cm"># Prisma schema and client</span>
 │   ├── queue/            <span class="cm"># Postgres-backed job queue</span>
 │   └── shared/           <span class="cm"># Shared types and utilities</span>
-├── docker-compose.yml    <span class="cm"># Local PostgreSQL</span>
+├── docker-compose.yml    <span class="cm"># Local PostgreSQL + Pathfinder</span>
 └── turbo.json            <span class="cm"># Turborepo config</span></code></pre>
         </div>
 
