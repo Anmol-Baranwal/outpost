@@ -48,6 +48,9 @@ const statusLabels: Record<string, string> = {
 
 const sourceLabels: Record<string, string> = {
     [TicketSource.DISCORD]: 'Discord',
+    [TicketSource.SLACK]: 'Slack',
+    [TicketSource.TEAMS]: 'Teams',
+    [TicketSource.ORCA]: 'Orca',
     [TicketSource.GITHUB_ISSUE]: 'GitHub Issues',
     [TicketSource.GITHUB_DISCUSSION]: 'GitHub Discussions',
     [TicketSource.WEB]: 'Web',

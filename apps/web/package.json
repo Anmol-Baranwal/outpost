@@ -12,7 +12,7 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@outpost/ai": "workspace:^",
+        "@outpost/ai": "workspace:*",
         "@outpost/db": "workspace:*",
         "@outpost/shared": "workspace:*",
         "class-variance-authority": "^0.7.0",

@@ -27,6 +27,9 @@ const priorityLabels: Record<string, string> = {
 
 const sourceIcons: Record<string, string> = {
     [TicketSource.DISCORD]: 'D',
+    [TicketSource.SLACK]: 'S',
+    [TicketSource.TEAMS]: 'T',
+    [TicketSource.ORCA]: 'O',
     [TicketSource.GITHUB_ISSUE]: 'GI',
     [TicketSource.GITHUB_DISCUSSION]: 'GD',
     [TicketSource.WEB]: 'W',
