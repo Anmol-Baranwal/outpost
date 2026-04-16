@@ -116,15 +116,51 @@ nav .container { display:flex; align-items:center; justify-content:space-between
 .section-arch { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; }
 .section-arch h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); margin-bottom: 0.5rem; letter-spacing: -0.02em; text-align: center; }
 .section-arch .section-sub { color: var(--text-secondary); margin-bottom: 2rem; font-size: 16px; text-align: center; }
-.arch-diagram { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.arch-header { padding: 10px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px; color: var(--text-dim); display:flex; gap:8px; align-items:center; }
-.arch-header .dot-r { width:10px; height:10px; border-radius:50%; background:#ff5f57; }
-.arch-header .dot-y { width:10px; height:10px; border-radius:50%; background:#ffbd2e; }
-.arch-header .dot-g { width:10px; height:10px; border-radius:50%; background:#28c840; }
-.arch-body { padding: 16px; font-family: var(--mono); font-size: 13px; line-height: 1.7; overflow-x: auto; }
-.arch-body .hl { color: var(--accent); }
-.arch-body .fn { color: var(--blue); }
-.arch-body .str { color: var(--warning); }
+
+/* Architecture SVG diagram */
+.arch-svg-wrap { position: relative; width: 100%; max-width: 900px; margin: 0 auto; }
+.arch-svg-wrap svg { width: 100%; height: auto; display: block; }
+
+/* Arch node styles */
+.arch-node { cursor: pointer; }
+.arch-node rect { transition: filter 0.3s ease, stroke-opacity 0.3s ease; }
+.arch-node:hover rect { filter: drop-shadow(0 0 12px rgba(249,115,22,0.4)); stroke-opacity: 1; }
+.arch-node.db-node rect { filter: drop-shadow(0 0 8px rgba(249,115,22,0.25)); }
+.arch-node.db-node:hover rect { filter: drop-shadow(0 0 20px rgba(249,115,22,0.5)); }
+
+/* Arch node fade-in */
+.arch-node { opacity: 0; transform: translateY(20px); transition: opacity 0.6s var(--ease-out-expo), transform 0.6s var(--ease-out-expo); }
+.arch-svg-wrap.visible .arch-node { opacity: 1; transform: translateY(0); }
+.arch-svg-wrap.visible .arch-node:nth-child(1) { transition-delay: 0s; }
+.arch-svg-wrap.visible .arch-node:nth-child(2) { transition-delay: 0.1s; }
+.arch-svg-wrap.visible .arch-node:nth-child(3) { transition-delay: 0.15s; }
+.arch-svg-wrap.visible .arch-node:nth-child(4) { transition-delay: 0.2s; }
+.arch-svg-wrap.visible .arch-node:nth-child(5) { transition-delay: 0.25s; }
+.arch-svg-wrap.visible .arch-node:nth-child(6) { transition-delay: 0.3s; }
+.arch-svg-wrap.visible .arch-node:nth-child(7) { transition-delay: 0.35s; }
+.arch-svg-wrap.visible .arch-node:nth-child(8) { transition-delay: 0.4s; }
+
+/* Animated dashes */
+@keyframes dashFlow {
+    to { stroke-dashoffset: -20; }
+}
+.flow-line { stroke: #334155; stroke-width: 1.5; fill: none; }
+.flow-line-animated { stroke: var(--accent); stroke-width: 1.5; fill: none; stroke-dasharray: 6 14; stroke-dashoffset: 0; animation: dashFlow 1.2s linear infinite; opacity: 0.6; }
+
+/* DB pulse */
+@keyframes dbPulse {
+    0%, 100% { opacity: 0.15; r: 60; }
+    50% { opacity: 0.08; r: 80; }
+}
+
+/* Tooltip */
+.arch-tooltip { position: absolute; background: #1a1a2e; border: 1px solid var(--accent); border-radius: 8px; padding: 10px 14px; font-size: 0.8rem; color: #e2e8f0; pointer-events: none; opacity: 0; transition: opacity 0.2s; z-index: 10; max-width: 240px; line-height: 1.5; white-space: normal; }
+.arch-tooltip.show { opacity: 1; }
+
+/* Responsive arch */
+@media (max-width: 640px) {
+    .arch-svg-wrap { max-width: 100%; overflow-x: auto; }
+}
 
 /* Integrations section */
 .section-integrations { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; text-align: center; }
@@ -329,23 +365,119 @@ footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align:center
     <h2 class="fade-in">Three processes, one database</h2>
     <p class="section-sub fade-in">A web dashboard, a Discord bot, and a GitHub App &mdash; all sharing a single PostgreSQL database with pgvector.</p>
 
-    <div class="arch-diagram fade-in">
-        <div class="arch-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> architecture</div>
-        <div class="arch-body">
-            <pre><span class="hl">&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;</span>
-<span class="hl">&#9474;</span>                     <span class="fn">apps/web</span> (Next.js)                       <span class="hl">&#9474;</span>
-<span class="hl">&#9474;</span>   Dashboard &#183; Accounts &#183; Tickets &#183; Agents &#183; Broadcasts        <span class="hl">&#9474;</span>
-<span class="hl">&#9500;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9508;</span>
-<span class="hl">&#9474;</span>       <span class="fn">apps/discord-bot</span>       &#9474;       <span class="fn">apps/github-app</span>        <span class="hl">&#9474;</span>
-<span class="hl">&#9474;</span>   Slash commands &#183; Threads   &#9474;   Issues &#183; Discussions        <span class="hl">&#9474;</span>
-<span class="hl">&#9500;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9508;</span>
-<span class="hl">&#9474;</span>  <span class="str">pkg/ai</span>   &#9474;  <span class="str">pkg/queue</span> &#9474;  <span class="str">pkg/shared</span>  &#9474;          <span class="str">pkg/db</span>             <span class="hl">&#9474;</span>
-<span class="hl">&#9474;</span> Pathfinder &#9474;  Postgres  &#9474;  Types &amp;     &#9474;          Prisma             <span class="hl">&#9474;</span>
-<span class="hl">&#9474;</span> + Claude  &#9474;  Job Queue &#9474;  Constants   &#9474;          Schema             <span class="hl">&#9474;</span>
-<span class="hl">&#9500;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9508;</span>
-<span class="hl">&#9474;</span>                  PostgreSQL 16 + pgvector                      <span class="hl">&#9474;</span>
-<span class="hl">&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;</span></pre>
-        </div>
+    <div class="arch-svg-wrap fade-in" id="arch-diagram">
+        <div class="arch-tooltip" id="arch-tooltip"></div>
+        <svg viewBox="0 0 900 620" xmlns="http://www.w3.org/2000/svg" fill="none">
+            <defs>
+                <!-- Node gradient -->
+                <linearGradient id="nodeGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="rgba(249,115,22,0.12)" />
+                    <stop offset="100%" stop-color="rgba(249,115,22,0.04)" />
+                </linearGradient>
+                <linearGradient id="dbGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="rgba(249,115,22,0.18)" />
+                    <stop offset="100%" stop-color="rgba(249,115,22,0.06)" />
+                </linearGradient>
+            </defs>
+
+            <!-- Connection lines (behind nodes) -->
+            <!-- Web to Discord -->
+            <line x1="450" y1="118" x2="280" y2="180" class="flow-line" />
+            <line x1="450" y1="118" x2="280" y2="180" class="flow-line-animated" />
+            <!-- Web to GitHub -->
+            <line x1="450" y1="118" x2="620" y2="180" class="flow-line" />
+            <line x1="450" y1="118" x2="620" y2="180" class="flow-line-animated" style="animation-delay: -0.4s" />
+            <!-- Discord to packages -->
+            <line x1="280" y1="285" x2="155" y2="350" class="flow-line" />
+            <line x1="280" y1="285" x2="155" y2="350" class="flow-line-animated" style="animation-delay: -0.2s" />
+            <line x1="280" y1="285" x2="365" y2="350" class="flow-line" />
+            <line x1="280" y1="285" x2="365" y2="350" class="flow-line-animated" style="animation-delay: -0.6s" />
+            <!-- GitHub to packages -->
+            <line x1="620" y1="285" x2="535" y2="350" class="flow-line" />
+            <line x1="620" y1="285" x2="535" y2="350" class="flow-line-animated" style="animation-delay: -0.8s" />
+            <line x1="620" y1="285" x2="745" y2="350" class="flow-line" />
+            <line x1="620" y1="285" x2="745" y2="350" class="flow-line-animated" style="animation-delay: -0.3s" />
+            <!-- Web to packages (faint) -->
+            <line x1="400" y1="118" x2="155" y2="350" class="flow-line" opacity="0.4" />
+            <line x1="500" y1="118" x2="745" y2="350" class="flow-line" opacity="0.4" />
+            <!-- Packages to DB -->
+            <line x1="155" y1="458" x2="450" y2="520" class="flow-line" />
+            <line x1="155" y1="458" x2="450" y2="520" class="flow-line-animated" style="animation-delay: -0.5s" />
+            <line x1="365" y1="458" x2="450" y2="520" class="flow-line" />
+            <line x1="365" y1="458" x2="450" y2="520" class="flow-line-animated" style="animation-delay: -0.7s" />
+            <line x1="535" y1="458" x2="450" y2="520" class="flow-line" />
+            <line x1="535" y1="458" x2="450" y2="520" class="flow-line-animated" style="animation-delay: -0.1s" />
+            <line x1="745" y1="458" x2="450" y2="520" class="flow-line" />
+            <line x1="745" y1="458" x2="450" y2="520" class="flow-line-animated" style="animation-delay: -0.9s" />
+
+            <!-- Layer 1: apps/web -->
+            <g class="arch-node" data-tooltip="Next.js web application serving the main dashboard, account management, ticket views, AI agent configuration, and broadcast tools.">
+                <rect x="200" y="30" width="500" height="88" rx="12" fill="url(#nodeGrad)" stroke="#f97316" stroke-opacity="0.5" stroke-width="1.2" />
+                <text x="450" y="62" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.5">&#127760;  apps/web</text>
+                <text x="450" y="78" text-anchor="middle" fill="#94a3b8" font-family="Instrument Sans, sans-serif" font-size="11">(Next.js)</text>
+                <text x="450" y="102" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Dashboard  &#8226;  Accounts  &#8226;  Tickets  &#8226;  Agents  &#8226;  Broadcasts</text>
+            </g>
+
+            <!-- Layer 2: Discord bot -->
+            <g class="arch-node" data-tooltip="Discord bot handling slash commands, thread-based support conversations, auto-replies, and ticket creation from Discord messages.">
+                <rect x="80" y="180" width="400" height="105" rx="12" fill="url(#nodeGrad)" stroke="#f97316" stroke-opacity="0.35" stroke-width="1" />
+                <text x="280" y="215" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.5">&#128172;  apps/discord-bot</text>
+                <text x="280" y="255" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Slash commands  &#8226;  Threads</text>
+                <text x="280" y="272" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Auto-replies  &#8226;  Ticket creation</text>
+            </g>
+
+            <!-- Layer 2: GitHub app -->
+            <g class="arch-node" data-tooltip="GitHub App that monitors issues and discussions, syncs labels, auto-triages bug reports, and links PRs to support tickets.">
+                <rect x="420" y="180" width="400" height="105" rx="12" fill="url(#nodeGrad)" stroke="#f97316" stroke-opacity="0.35" stroke-width="1" />
+                <text x="620" y="215" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.5">&#128025;  apps/github-app</text>
+                <text x="620" y="255" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Issues  &#8226;  Discussions</text>
+                <text x="620" y="272" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Label sync  &#8226;  Auto-triage</text>
+            </g>
+
+            <!-- Layer 3: pkg/ai -->
+            <g class="arch-node" data-tooltip="AI package powered by Pathfinder semantic search and Claude for intelligent ticket triage, knowledge base lookup, and suggested responses.">
+                <rect x="50" y="350" width="210" height="108" rx="12" fill="url(#nodeGrad)" stroke="#f97316" stroke-opacity="0.3" stroke-width="1" />
+                <text x="155" y="383" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.5">&#129302;  pkg/ai</text>
+                <text x="155" y="418" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Pathfinder + Claude</text>
+                <text x="155" y="435" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Semantic search</text>
+            </g>
+
+            <!-- Layer 3: pkg/queue -->
+            <g class="arch-node" data-tooltip="Postgres-backed job queue for reliable background processing with retries, dead-letter queue, and observable job execution.">
+                <rect x="275" y="350" width="180" height="108" rx="12" fill="url(#nodeGrad)" stroke="#f97316" stroke-opacity="0.3" stroke-width="1" />
+                <text x="365" y="383" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.5">&#9881;&#65039;  pkg/queue</text>
+                <text x="365" y="418" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Job Queue</text>
+                <text x="365" y="435" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Retries &amp; DLQ</text>
+            </g>
+
+            <!-- Layer 3: pkg/shared -->
+            <g class="arch-node" data-tooltip="Shared TypeScript types, constants, enums, and utility functions used across all applications and packages.">
+                <rect x="470" y="350" width="130" height="108" rx="12" fill="url(#nodeGrad)" stroke="#f97316" stroke-opacity="0.3" stroke-width="1" />
+                <text x="535" y="383" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.5">&#128230;  pkg/shared</text>
+                <text x="535" y="418" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Types &amp;</text>
+                <text x="535" y="435" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Constants</text>
+            </g>
+
+            <!-- Layer 3: pkg/db -->
+            <g class="arch-node" data-tooltip="Prisma ORM schema and database client providing type-safe database access, migrations, and seed scripts for all services.">
+                <rect x="615" y="350" width="260" height="108" rx="12" fill="url(#nodeGrad)" stroke="#f97316" stroke-opacity="0.3" stroke-width="1" />
+                <text x="745" y="383" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.5">&#128451;  pkg/db</text>
+                <text x="745" y="418" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Prisma Schema</text>
+                <text x="745" y="435" text-anchor="middle" fill="#64748b" font-family="Instrument Sans, sans-serif" font-size="10.5">Migrations &amp; Client</text>
+            </g>
+
+            <!-- Layer 4: PostgreSQL (special treatment) -->
+            <g class="arch-node db-node" data-tooltip="Single PostgreSQL 16 database with pgvector extension for vector similarity search. The heart of Outpost -- all services connect here.">
+                <!-- Pulsing glow -->
+                <circle cx="450" cy="560" r="60" fill="#f97316" opacity="0.15">
+                    <animate attributeName="opacity" values="0.15;0.06;0.15" dur="3s" repeatCount="indefinite" />
+                    <animate attributeName="r" values="60;85;60" dur="3s" repeatCount="indefinite" />
+                </circle>
+                <rect x="175" y="520" width="550" height="80" rx="14" fill="url(#dbGrad)" stroke="#f97316" stroke-opacity="0.7" stroke-width="1.5" />
+                <text x="450" y="554" text-anchor="middle" fill="#f97316" font-family="JetBrains Mono, monospace" font-size="13" font-weight="700" letter-spacing="0.5">&#128024;  PostgreSQL 16 + pgvector</text>
+                <text x="450" y="580" text-anchor="middle" fill="#94a3b8" font-family="Instrument Sans, sans-serif" font-size="11">Single shared database  &#8226;  Vector embeddings  &#8226;  Full-text search</text>
+            </g>
+        </svg>
     </div>
 </section>
 
@@ -506,6 +638,36 @@ termObserver.observe(terminal);
 
     document.querySelectorAll(".fade-in").forEach(function (el) {
         observer.observe(el);
+    });
+})();
+
+// Architecture diagram tooltips
+(function () {
+    var tooltip = document.getElementById('arch-tooltip');
+    var wrap = document.getElementById('arch-diagram');
+    if (!tooltip || !wrap) return;
+
+    var nodes = wrap.querySelectorAll('.arch-node');
+    nodes.forEach(function (node) {
+        node.addEventListener('mouseenter', function (e) {
+            var text = node.getAttribute('data-tooltip');
+            if (!text) return;
+            tooltip.textContent = text;
+            tooltip.classList.add('show');
+        });
+        node.addEventListener('mousemove', function (e) {
+            var rect = wrap.getBoundingClientRect();
+            var x = e.clientX - rect.left + 16;
+            var y = e.clientY - rect.top - 10;
+            // Keep tooltip in bounds
+            if (x + 240 > rect.width) x = e.clientX - rect.left - 256;
+            if (y < 0) y = 10;
+            tooltip.style.left = x + 'px';
+            tooltip.style.top = y + 'px';
+        });
+        node.addEventListener('mouseleave', function () {
+            tooltip.classList.remove('show');
+        });
     });
 })();
 </script>
