@@ -7,11 +7,10 @@ settings:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
       '@linear/sdk':
         specifier: ^81.0.0
         version: 81.0.0(graphql@16.13.2)
-    devDependencies:
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.58.2
         version: 8.58.2(@typescript-eslint/parser@8.58.2(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
@@ -98,8 +97,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/outpost
       '@linear/sdk':
-        specifier: ^37.0.0
-        version: 37.0.0
+        specifier: ^81.0.0
+        version: 81.0.0(graphql@16.13.2)
+      '@prisma/client':
+        specifier: ^6.2.0
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -260,6 +262,9 @@ importers:
       '@hubspot/api-client':
         specifier: ^13.5.0
         version: 13.5.0
+      '@linear/sdk':
+        specifier: ^81.0.0
+        version: 81.0.0(graphql@16.13.2)
       '@prisma/client':
         specifier: ^6.2.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -910,10 +915,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@linear/sdk@37.0.0':
-    resolution: {integrity: sha512-EAZCXtV414Nwtvrwn7Ucu3E8BbYYKsc3HqZCGf1mHUE7FhZGtfISu295DOVv89WhhXlp2N344EMg3K0nnhLxtA==}
-    engines: {node: '>=12.x', yarn: 1.x}
 
   '@linear/sdk@81.0.0':
     resolution: {integrity: sha512-9WYd4eRbFTFNLlWU625/aKLzSu5QfOZ7cYuoxkGZbCB44/8aEOQyCzjOifeSWvYgSMCoO0jF4+XnVtZjC5bf8g==}
@@ -2696,10 +2697,6 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  graphql@15.10.2:
-    resolution: {integrity: sha512-1PRqdDPAmViWr4h1GVBT8RoPZfWSGZa7kDzleTilOfVIslsgf+cia3Nl95v1KDmR4iERPaT7WzQ+tN4MJmbg3w==}
-    engines: {node: '>= 10.x'}
-
   graphql@16.13.2:
     resolution: {integrity: sha512-5bJ+nf/UCpAjHM8i06fl7eLyVC9iuNAjm9qzkiu2ZGhM0VscSvS6WDPfAwkdkBuoXGM9FJSbKl6wylMwP9Ktig==}
     engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
@@ -2971,9 +2968,6 @@ packages:
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
-
-  isomorphic-unfetch@3.1.0:
-    resolution: {integrity: sha512-geDJjpoZ8N0kWexiwkX8F9NkTsXhetLPVbZFQ+JTW239QNOwvB0gniuR1Wc6f0AMTn7/mFGyXvHTifrCp/GH8Q==}
 
   iterator.prototype@1.1.5:
     resolution: {integrity: sha512-H0dkQoCa3b2VEeKQBOxFph+JAbcrQdE7KC0UkqwpLmv2EC4P41QXP+rqo9wYodACiG5/WM5s9oDApTU8utwj9g==}
@@ -4241,9 +4235,6 @@ packages:
     resolution: {integrity: sha512-xXnp4kTyor2Zq+J1FfPI6Eq3ew5h6Vl0F/8d9XU5zZQf1tX9s2Su1/3PiMmUANFULpmksxkClamIZcaUqryHsQ==}
     engines: {node: '>=20.18.1'}
 
-  unfetch@4.2.0:
-    resolution: {integrity: sha512-F9p7yYCn6cIW9El1zi0HI6vqpeIvBsr3dSuRO6Xuppb1u5rXpCPmMvLSyECLhybr9isec8Ohl0hPekMVrEinDA==}
-
   unified@11.0.5:
     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
 
@@ -4969,10 +4960,6 @@ snapshots:
 
   '@exodus/bytes@1.15.0': {}
 
-  '@graphql-typed-document-node/core@3.2.0(graphql@15.10.2)':
-    dependencies:
-      graphql: 15.10.2
-
   '@graphql-typed-document-node/core@3.2.0(graphql@16.13.2)':
     dependencies:
       graphql: 16.13.2
@@ -5115,14 +5102,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  '@linear/sdk@37.0.0':
-    dependencies:
-      '@graphql-typed-document-node/core': 3.2.0(graphql@15.10.2)
-      graphql: 15.10.2
-      isomorphic-unfetch: 3.1.0
-    transitivePeerDependencies:
-      - encoding
 
   '@linear/sdk@81.0.0(graphql@16.13.2)':
     dependencies:
@@ -7290,8 +7269,6 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  graphql@15.10.2: {}
-
   graphql@16.13.2: {}
 
   has-bigints@1.1.0: {}
@@ -7570,13 +7547,6 @@ snapshots:
   isarray@2.0.5: {}
 
   isexe@2.0.0: {}
-
-  isomorphic-unfetch@3.1.0:
-    dependencies:
-      node-fetch: 2.7.0
-      unfetch: 4.2.0
-    transitivePeerDependencies:
-      - encoding
 
   iterator.prototype@1.1.5:
     dependencies:
@@ -9195,8 +9165,6 @@ snapshots:
   undici@6.24.1: {}
 
   undici@7.25.0: {}
-
-  unfetch@4.2.0: {}
 
   unified@11.0.5:
     dependencies:
