@@ -1,3 +1,11 @@
 export * from './types.js';
 export { SyncEngine } from './engine.js';
 export type { SyncEngineDeps } from './engine.js';
+export { StatusMap, createGitHubStatusMap, createLinearStatusMap } from './status-map.js';
+export type { StatusMappingConfig } from './status-map.js';
+export { PriorityMap, createLinearPriorityMap, createGitHubPriorityMap } from './priority-map.js';
+export type { PriorityMappingConfig } from './priority-map.js';
+export { IdentityMapper } from './identity-map.js';
+export type { IdentityMapperDeps } from './identity-map.js';
+export { LabelMapper, createGitHubLabelMapper, createLinearLabelMapper } from './label-map.js';
+export type { LabelPrefixRule, LabelMapperConfig } from './label-map.js';
