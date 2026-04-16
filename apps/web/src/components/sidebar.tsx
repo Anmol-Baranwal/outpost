@@ -17,8 +17,10 @@ import {
     Mountain,
     ChevronLeft,
     ChevronRight,
+    Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { UserMenu } from '@/components/user-menu';
 import { useSidebar } from '@/hooks/use-sidebar';
@@ -47,9 +49,15 @@ const bottomItems: NavItem[] = [
     { name: 'Help', href: '/help', icon: HelpCircle },
 ];
 
+const adminItems: NavItem[] = [
+    { name: 'Team', href: '/settings/team', icon: Users },
+];
+
 export function Sidebar() {
     const pathname = usePathname();
     const { collapsed, toggle } = useSidebar();
+    const { data: session } = useSession();
+    const isAdmin = (session?.user as Record<string, unknown> | undefined)?.role === 'ADMIN';
 
     return (
         <aside
@@ -105,6 +113,27 @@ export function Sidebar() {
 
             {/* Bottom section */}
             <div className="border-t border-sidebar-border p-2">
+                {isAdmin && adminItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = pathname.startsWith(item.href);
+                    return (
+                        <Link
+                            key={item.href}
+                            href={item.href}
+                            title={collapsed ? item.name : undefined}
+                            className={cn(
+                                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                                collapsed && 'justify-center px-0',
+                                isActive
+                                    ? 'bg-sidebar-active text-sidebar-active-foreground font-semibold'
+                                    : 'text-sidebar-foreground hover:bg-sidebar-hover'
+                            )}
+                        >
+                            <Icon className="h-5 w-5 shrink-0" />
+                            {!collapsed && <span>{item.name}</span>}
+                        </Link>
+                    );
+                })}
                 {bottomItems.map((item) => {
                     const Icon = item.icon;
                     return (
