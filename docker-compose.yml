@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
     postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         container_name: outpost-postgres
         ports:
             - '5432:5432'
@@ -17,6 +17,18 @@ services:
             interval: 5s
             timeout: 5s
             retries: 5
+
+    pathfinder:
+        image: ghcr.io/copilotkit/pathfinder:latest
+        container_name: outpost-pathfinder
+        ports:
+            - '8787:8787'
+        environment:
+            PORT: 8787
+            DATABASE_URL: postgresql://outpost:outpost@postgres:5432/outpost
+        depends_on:
+            postgres:
+                condition: service_healthy
 
 volumes:
     postgres_data:

@@ -39,7 +39,7 @@
         <table class="env-table">
           <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
           <tbody>
-            <tr><td>DATABASE_URL</td><td>PostgreSQL connection string (must include pgvector)</td><td>&mdash;</td></tr>
+            <tr><td>DATABASE_URL</td><td>PostgreSQL connection string</td><td>&mdash;</td></tr>
             <tr><td>NODE_ENV</td><td>Environment: <code>development</code> or <code>production</code></td><td>development</td></tr>
             <tr><td>PORT</td><td>Web app port</td><td>3000</td></tr>
             <tr><td>LOG_LEVEL</td><td>Logging verbosity: <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code></td><td>info</td></tr>
@@ -52,8 +52,7 @@
           <tbody>
             <tr><td>ANTHROPIC_API_KEY</td><td>Anthropic API key for Claude</td><td>&mdash;</td></tr>
             <tr><td>AI_MODEL</td><td>Claude model to use for triage and responses</td><td>claude-sonnet-4-6</td></tr>
-            <tr><td>PATHFINDER_URL</td><td>Pathfinder server URL for knowledge base search</td><td>http://localhost:8080</td></tr>
-            <tr><td>EMBEDDING_MODEL</td><td>Model for generating vector embeddings</td><td>text-embedding-3-small</td></tr>
+            <tr><td>PATHFINDER_MCP_URL</td><td>Pathfinder MCP server URL for knowledge base search</td><td>https://mcp.copilotkit.ai</td></tr>
           </tbody>
         </table>
 
@@ -76,6 +75,29 @@
             <tr><td>GITHUB_PRIVATE_KEY</td><td>PEM-encoded private key (or path to .pem file)</td><td>&mdash;</td></tr>
             <tr><td>GITHUB_WEBHOOK_SECRET</td><td>Webhook secret for signature verification</td><td>&mdash;</td></tr>
             <tr><td>GITHUB_APP_PORT</td><td>Port for the webhook receiver</td><td>3001</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Slack Bot</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>SLACK_BOT_TOKEN</td><td>Bot User OAuth Token (<code>xoxb-...</code>)</td><td>&mdash;</td></tr>
+            <tr><td>SLACK_APP_TOKEN</td><td>App-Level Token for Socket Mode (<code>xapp-...</code>)</td><td>&mdash;</td></tr>
+            <tr><td>SLACK_SIGNING_SECRET</td><td>Signing secret for verifying webhook requests</td><td>&mdash;</td></tr>
+            <tr><td>MONITORED_CHANNEL_IDS</td><td>Comma-separated Slack channel IDs to monitor</td><td>&mdash; (all channels)</td></tr>
+            <tr><td>TEAM_MEMBER_IDS</td><td>Comma-separated Slack user IDs for team members (fast-path detection)</td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Teams Bot</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>TEAMS_APP_ID</td><td>Microsoft App ID from Azure Bot registration</td><td>&mdash;</td></tr>
+            <tr><td>TEAMS_APP_PASSWORD</td><td>Microsoft App Password (client secret)</td><td>&mdash;</td></tr>
+            <tr><td>TEAMS_TENANT_ID</td><td>Azure AD Tenant ID (optional; omit for multi-tenant)</td><td>&mdash;</td></tr>
+            <tr><td>HEALTH_PORT</td><td>Port for the health check endpoint</td><td>3003</td></tr>
           </tbody>
         </table>
 
@@ -107,7 +129,7 @@
           priority order and can match on:
         </p>
         <ul>
-          <li><strong>Source channel</strong> &mdash; Discord, GitHub, or web</li>
+          <li><strong>Source channel</strong> &mdash; Discord, Slack, Teams, GitHub, or web</li>
           <li><strong>Priority level</strong> &mdash; critical, high, medium, low</li>
           <li><strong>Tags/labels</strong> &mdash; keyword-based matching</li>
           <li><strong>Account</strong> &mdash; specific customer organizations</li>

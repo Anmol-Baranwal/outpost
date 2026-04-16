@@ -39,7 +39,7 @@
       <main class="docs-content">
         <h1>Architecture Overview</h1>
         <p class="lead">
-          Outpost follows a simple, monorepo-based architecture: three application processes sharing
+          Outpost follows a simple, monorepo-based architecture: five application processes sharing
           a single PostgreSQL database. This keeps operational complexity low while enabling
           independent scaling.
         </p>
@@ -58,7 +58,7 @@
 │Pathfinder│ Postgres │ Types &amp; │        Prisma             │
 │+ Claude │Job Queue │Constants │        Schema             │
 ├─────────┴──────────┴──────────┴───────────────────────────┤
-│              PostgreSQL 16 + pgvector                     │
+│              PostgreSQL 16                     │
 └───────────────────────────────────────────────────────────┘</code></pre>
         </div>
 
@@ -122,7 +122,7 @@
         <h3>packages/db — Database</h3>
         <p>
           Prisma schema and generated client. Defines the data model for tickets, accounts,
-          messages, SLA configurations, routing rules, and more. Uses pgvector for embedding storage
+          messages, SLA configurations, routing rules, and more. Uses Prisma for type-safe queries
           and similarity search.
         </p>
 
@@ -154,7 +154,7 @@
 
         <h2>Database</h2>
         <p>
-          PostgreSQL 16 with pgvector is the single source of truth. All three processes connect to
+          PostgreSQL 16  is the single source of truth. All five processes connect to
           the same database, which means changes are immediately visible everywhere without any
           message bus or cache invalidation complexity.
         </p>
@@ -175,7 +175,7 @@
           <tbody>
             <tr><td>Web Framework</td><td>Next.js 14 (App Router)</td></tr>
             <tr><td>Language</td><td>TypeScript</td></tr>
-            <tr><td>Database</td><td>PostgreSQL 16 + pgvector</td></tr>
+            <tr><td>Database</td><td>PostgreSQL 16</td></tr>
             <tr><td>ORM</td><td>Prisma</td></tr>
             <tr><td>AI</td><td>Claude (Anthropic) + Pathfinder</td></tr>
             <tr><td>Discord</td><td>discord.js</td></tr>
