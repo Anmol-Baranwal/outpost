@@ -10,38 +10,38 @@
     {
       title: "Getting Started",
       links: [
-        { label: "Overview", href: base + "docs/" },
-        { label: "Quick Start", href: base + "getting-started/" },
-        { label: "Architecture", href: base + "architecture/" },
+        { label: "Overview", href: base + "docs/index.html" },
+        { label: "Quick Start", href: base + "getting-started/index.html" },
+        { label: "Architecture", href: base + "architecture/index.html" },
       ],
     },
     {
       title: "Integrations",
       links: [
-        { label: "Discord Bot", href: base + "discord-bot/" },
-        { label: "GitHub App", href: base + "github-app/" },
+        { label: "Discord Bot", href: base + "discord-bot/index.html" },
+        { label: "GitHub App", href: base + "github-app/index.html" },
       ],
     },
     {
       title: "Configuration",
       links: [
-        { label: "Environment Variables", href: base + "configuration/" },
-        { label: "SLA Targets", href: base + "configuration/#sla-targets" },
-        { label: "Routing Rules", href: base + "configuration/#routing-rules" },
+        { label: "Environment Variables", href: base + "configuration/index.html" },
+        { label: "SLA Targets", href: base + "configuration/index.html#sla-targets" },
+        { label: "Routing Rules", href: base + "configuration/index.html#routing-rules" },
       ],
     },
     {
       title: "API Reference",
       links: [
-        { label: "REST Endpoints", href: base + "api-reference/" },
-        { label: "Webhooks", href: base + "api-reference/#webhooks" },
+        { label: "REST Endpoints", href: base + "api-reference/index.html" },
+        { label: "Webhooks", href: base + "api-reference/index.html#webhooks" },
       ],
     },
     {
       title: "Operations",
       links: [
-        { label: "Deployment Guide", href: base + "deployment/" },
-        { label: "Contributing", href: base + "contributing/" },
+        { label: "Deployment Guide", href: base + "deployment/index.html" },
+        { label: "Contributing", href: base + "contributing/index.html" },
       ],
     },
   ];
