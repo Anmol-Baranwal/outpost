@@ -20,6 +20,10 @@ export function mockPrisma() {
             teamMember: {
                 findUnique: vi.fn(),
             },
+            ticketExternalLink: {
+                create: vi.fn(),
+                findUnique: vi.fn(),
+            },
         },
     };
 }

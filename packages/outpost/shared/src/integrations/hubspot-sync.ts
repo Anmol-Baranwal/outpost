@@ -14,11 +14,11 @@ export interface SyncReport {
     created: number;
     updated: number;
     skipped: number;
-    errors: SyncError[];
+    errors: HubSpotSyncError[];
     syncedAt: string;
 }
 
-export interface SyncError {
+export interface HubSpotSyncError {
     companyId: string;
     companyName: string | undefined;
     message: string;
