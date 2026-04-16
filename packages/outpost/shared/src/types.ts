@@ -97,9 +97,13 @@ export enum AccountEngagement {
 
 export enum TeamMemberRole {
     ADMIN = 'ADMIN',
-    SUPPORT = 'SUPPORT',
-    ENGINEER = 'ENGINEER',
-    VIEWER = 'VIEWER',
+    MEMBER = 'MEMBER',
+}
+
+export enum TeamMemberStatus {
+    INVITED = 'INVITED',
+    ACTIVE = 'ACTIVE',
+    DISABLED = 'DISABLED',
 }
 
 /** Unified platform target for message formatting and job routing */
