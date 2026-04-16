@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/slack-bot",
+    "name": "@copilotkit/outpost-slack-bot",
     "version": "0.1.0",
     "private": true,
     "type": "module",
@@ -13,9 +13,9 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@outpost/db": "workspace:*",
-        "@outpost/queue": "workspace:*",
-        "@outpost/shared": "workspace:*",
+        "@copilotkit/outpost-db": "workspace:*",
+        "@copilotkit/outpost-queue": "workspace:*",
+        "@copilotkit/outpost-shared": "workspace:*",
         "@slack/bolt": "^4.1.0",
         "@slack/web-api": "^7.8.0"
     },

@@ -1,5 +1,5 @@
-import { prisma } from '@outpost/db';
-import { MAX_JOB_ATTEMPTS } from '@outpost/shared';
+import { prisma } from '@copilotkit/outpost-db';
+import { MAX_JOB_ATTEMPTS } from '@copilotkit/outpost-shared';
 import type { JobType, JobPayload, CreateJobOptions } from './types.js';
 
 /**

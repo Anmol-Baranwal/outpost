@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/db",
+    "name": "@copilotkit/outpost-db",
     "version": "0.1.0",
     "private": true,
     "type": "module",

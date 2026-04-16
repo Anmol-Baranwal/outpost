@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FunnelStage, isValidTransition, flagsForStage } from '@outpost/shared';
+import { FunnelStage, isValidTransition, flagsForStage } from '@copilotkit/outpost-shared';
 
 /**
  * PATCH /api/onboarding/members/[id]

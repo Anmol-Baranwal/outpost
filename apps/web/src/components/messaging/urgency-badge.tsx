@@ -1,6 +1,6 @@
 'use client';
 
-import { UrgencyLevel } from '@outpost/shared';
+import { UrgencyLevel } from '@copilotkit/outpost-shared';
 import { cn } from '@/lib/utils';
 
 interface UrgencyBadgeProps {

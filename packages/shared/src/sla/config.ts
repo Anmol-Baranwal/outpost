@@ -45,7 +45,7 @@ export interface SlaBreachEvent {
 /** Complete map of priority → SlaTarget. */
 export type SlaTargetMap = Record<TicketPriority, SlaTarget>;
 
-/** Minimal interface for the SlaConfig query — avoids depending on @outpost/db. */
+/** Minimal interface for the SlaConfig query — avoids depending on @copilotkit/outpost-db. */
 export interface SlaConfigRow {
     metric: string;
     priority: string;

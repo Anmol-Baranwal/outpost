@@ -1,5 +1,5 @@
 import type { App } from '@slack/bolt';
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 
 const VALID_PRIORITIES = ['critical', 'high', 'medium', 'low'] as const;
 type PriorityLevel = (typeof VALID_PRIORITIES)[number];

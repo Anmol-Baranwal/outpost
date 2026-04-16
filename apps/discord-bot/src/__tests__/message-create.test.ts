@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ChannelType } from 'discord.js';
 
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: {
         ticket: {
             create: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('@outpost/db', () => ({
     },
 }));
 
-vi.mock('@outpost/queue', () => ({
+vi.mock('@copilotkit/outpost-queue', () => ({
     createJob: vi.fn().mockResolvedValue('job-123'),
     JobType: {
         AI_RESPONSE: 'AI_RESPONSE',
@@ -42,13 +42,13 @@ vi.mock('../lib/shadow-mode.js', () => ({
     handleShadowMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('@outpost/shared', () => ({
+vi.mock('@copilotkit/outpost-shared', () => ({
     truncate: vi.fn((str: string, _len: number) => str),
 }));
 
 import { handleMessageCreate } from '../events/message-create.js';
-import { prisma } from '@outpost/db';
-import { createJob, JobType } from '@outpost/queue';
+import { prisma } from '@copilotkit/outpost-db';
+import { createJob, JobType } from '@copilotkit/outpost-queue';
 
 const TICKET = {
     id: 'ticket-1',

@@ -1,5 +1,5 @@
-import { prisma } from '@outpost/db';
-import { calculateBackoff } from '@outpost/shared';
+import { prisma } from '@copilotkit/outpost-db';
+import { calculateBackoff } from '@copilotkit/outpost-shared';
 import { updateJobProgress } from './create-job.js';
 import type {
     JobType,

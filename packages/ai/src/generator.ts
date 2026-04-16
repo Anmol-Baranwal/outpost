@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { AI_CONFIDENCE } from '@outpost/shared';
+import { AI_CONFIDENCE } from '@copilotkit/outpost-shared';
 import type { GeneratedResponse, PipelineContext, SearchResult, TokenUsage } from './types.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
 import { config } from './config.js';

@@ -1,6 +1,6 @@
 import { type TurnContext, CardFactory, MessageFactory } from 'botbuilder';
-import { prisma } from '@outpost/db';
-import { createJob, JobType } from '@outpost/queue';
+import { prisma } from '@copilotkit/outpost-db';
+import { createJob, JobType } from '@copilotkit/outpost-queue';
 import { findTicketByConversationId } from '../lib/tickets.js';
 import { buildEscalationCard } from '../cards/escalation-card.js';
 

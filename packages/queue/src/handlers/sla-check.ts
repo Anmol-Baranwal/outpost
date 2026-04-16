@@ -8,12 +8,12 @@
  *   3. Returns a summary of { checked, breached, newBreaches }
  */
 
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 import {
     loadSlaConfig,
     checkSlaCompliance,
     formatDuration,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 import type { JobHandler } from '../types.js';
 import { JobType } from '../types.js';
 

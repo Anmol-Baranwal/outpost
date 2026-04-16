@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ChannelType } from 'discord.js';
 
 // Mock dependencies before importing
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: {
         ticket: {
             create: vi.fn(),
@@ -15,14 +15,14 @@ vi.mock('@outpost/db', () => ({
     },
 }));
 
-vi.mock('@outpost/queue', () => ({
+vi.mock('@copilotkit/outpost-queue', () => ({
     createJob: vi.fn().mockResolvedValue('job-123'),
     JobType: {
         AI_RESPONSE: 'AI_RESPONSE',
     },
 }));
 
-vi.mock('@outpost/shared', () => ({
+vi.mock('@copilotkit/outpost-shared', () => ({
     truncate: vi.fn((str: string, _len: number) => str),
 }));
 
@@ -32,8 +32,8 @@ import {
     handleShadowThreadCreate,
     handleShadowMessage,
 } from '../lib/shadow-mode.js';
-import { prisma } from '@outpost/db';
-import { createJob, JobType } from '@outpost/queue';
+import { prisma } from '@copilotkit/outpost-db';
+import { createJob, JobType } from '@copilotkit/outpost-queue';
 
 function makeThread(overrides: Record<string, unknown> = {}) {
     return {

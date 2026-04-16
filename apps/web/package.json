@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/web",
+    "name": "@copilotkit/outpost-web",
     "version": "0.1.0",
     "private": true,
     "type": "module",
@@ -12,9 +12,9 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@outpost/ai": "workspace:*",
-        "@outpost/db": "workspace:*",
-        "@outpost/shared": "workspace:*",
+        "@copilotkit/outpost-ai": "workspace:*",
+        "@copilotkit/outpost-db": "workspace:*",
+        "@copilotkit/outpost-shared": "workspace:*",
         "class-variance-authority": "^0.7.0",
         "clsx": "^2.1.0",
         "lucide-react": "^0.468.0",

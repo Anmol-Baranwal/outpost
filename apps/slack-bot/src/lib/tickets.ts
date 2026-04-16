@@ -1,4 +1,4 @@
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 import { config } from '../config.js';
 
 /**

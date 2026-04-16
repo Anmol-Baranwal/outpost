@@ -1,4 +1,4 @@
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 import { createJob } from './create-job.js';
 import { JobType } from './types.js';
 import type { ScheduledJobDefinition } from './types.js';

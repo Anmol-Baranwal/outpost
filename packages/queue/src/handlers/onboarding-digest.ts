@@ -8,9 +8,9 @@
  * or DM Nathan directly.
  */
 
-import { prisma } from '@outpost/db';
-import { computeFunnelMetrics } from '@outpost/shared';
-import type { OnboardingMember } from '@outpost/shared';
+import { prisma } from '@copilotkit/outpost-db';
+import { computeFunnelMetrics } from '@copilotkit/outpost-shared';
+import type { OnboardingMember } from '@copilotkit/outpost-shared';
 import type { OnboardingDigestPayload, JobResult, JobHandlerContext } from '../types.js';
 
 /**

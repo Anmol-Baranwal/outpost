@@ -1,6 +1,6 @@
 import { ChannelType, type ButtonInteraction } from 'discord.js';
-import { prisma } from '@outpost/db';
-import { createJob, JobType } from '@outpost/queue';
+import { prisma } from '@copilotkit/outpost-db';
+import { createJob, JobType } from '@copilotkit/outpost-queue';
 import { findTicketByThreadId } from '../lib/tickets.js';
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {

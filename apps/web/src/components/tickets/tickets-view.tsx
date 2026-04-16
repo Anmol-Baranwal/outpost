@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { TicketStatus, MessageType } from '@outpost/shared';
+import { TicketStatus, MessageType } from '@copilotkit/outpost-shared';
 import { cn } from '@/lib/utils';
 import { MOCK_TICKETS, filterMockTickets, findMockTicket } from '@/lib/mock-tickets';
 import type { MockTicket, MockMessage } from '@/lib/mock-tickets';

@@ -5,7 +5,7 @@ import {
     MessageStatus,
     type MessageSortKey,
     type MessageFilters,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 
 interface MessageFiltersBarProps {
     filters: MessageFilters;

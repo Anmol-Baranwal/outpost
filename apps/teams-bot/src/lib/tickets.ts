@@ -1,4 +1,4 @@
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 
 /**
  * Find a ticket by its Teams conversation ID (stored as sourceId with source=TEAMS).

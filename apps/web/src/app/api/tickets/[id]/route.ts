@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findMockTicket } from '@/lib/mock-tickets';
-import { TicketStatus, TicketPriority, TicketType } from '@outpost/shared';
+import { TicketStatus, TicketPriority, TicketType } from '@copilotkit/outpost-shared';
 
 /**
  * GET /api/tickets/[id]

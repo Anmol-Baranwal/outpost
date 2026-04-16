@@ -5,7 +5,7 @@ import {
     type PendingMessage,
     MessageSource,
     MessageStatus,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 
 // Mock next/navigation
 vi.mock('next/navigation', () => ({

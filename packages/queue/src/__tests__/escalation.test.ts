@@ -28,13 +28,13 @@ const mockPrisma = {
     teamMember: mockPrismaTeamMember,
 };
 
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: mockPrisma,
 }));
 
 // Mock the shared package routing
 const mockEvaluateRouting = vi.fn();
-vi.mock('@outpost/shared', () => ({
+vi.mock('@copilotkit/outpost-shared', () => ({
     evaluateRouting: (...args: unknown[]) => mockEvaluateRouting(...args),
     TeamMemberRole: {
         ADMIN: 'ADMIN',

@@ -7,7 +7,7 @@ import {
     getUrgencyLevel,
     getUnansweredDurationMs,
     formatMessageDuration,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 import { cn } from '@/lib/utils';
 import { UrgencyBadge } from './urgency-badge';
 

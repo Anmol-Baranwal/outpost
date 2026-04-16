@@ -1,9 +1,9 @@
 'use client';
 
 import { useRouter, useParams } from 'next/navigation';
-import { TicketPriority, TicketSource } from '@outpost/shared';
+import { TicketPriority, TicketSource } from '@copilotkit/outpost-shared';
 import { cn } from '@/lib/utils';
-import { truncate } from '@outpost/shared';
+import { truncate } from '@copilotkit/outpost-shared';
 import type { MockTicket } from '@/lib/mock-tickets';
 
 interface TicketListProps {

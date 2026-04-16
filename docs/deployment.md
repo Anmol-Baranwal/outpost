@@ -83,7 +83,7 @@ On merge to main, Railway auto-deploys via its GitHub integration — no deploy 
 
 ### Structured Logging
 
-All services use `@outpost/shared`'s `createLogger()` for JSON-structured logs:
+All services use `@copilotkit/outpost-shared`'s `createLogger()` for JSON-structured logs:
 
 ```
 {"timestamp":"2026-04-15T...","level":"info","service":"web","message":"Request processed","requestId":"abc123"}
@@ -91,7 +91,7 @@ All services use `@outpost/shared`'s `createLogger()` for JSON-structured logs:
 
 ### Alerts
 
-`AlertManager` from `@outpost/shared` detects SLA breaches and bot failures. The default handler logs alerts; swap in a Slack webhook or PagerDuty handler for production.
+`AlertManager` from `@copilotkit/outpost-shared` detects SLA breaches and bot failures. The default handler logs alerts; swap in a Slack webhook or PagerDuty handler for production.
 
 ### Error Tracking
 

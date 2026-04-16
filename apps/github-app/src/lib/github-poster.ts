@@ -1,5 +1,5 @@
-import { ResponseFormatter } from '@outpost/ai';
-import { AI_CONFIDENCE } from '@outpost/shared';
+import { ResponseFormatter } from '@copilotkit/outpost-ai';
+import { AI_CONFIDENCE } from '@copilotkit/outpost-shared';
 import { postIssueComment, postDiscussionComment } from './github-client.js';
 
 const formatter = new ResponseFormatter();

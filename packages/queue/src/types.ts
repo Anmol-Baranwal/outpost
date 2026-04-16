@@ -5,7 +5,7 @@
  * the typed payload and must return a JobResult.
  */
 
-import type { PlatformTarget } from '@outpost/shared';
+import type { PlatformTarget } from '@copilotkit/outpost-shared';
 
 // ─── Job Types ──────────────────────────────────────────────────────────────
 

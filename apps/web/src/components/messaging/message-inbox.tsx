@@ -7,7 +7,7 @@ import {
     type MessageFilters,
     MessageStatus,
     checkUnansweredMessages,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 import { MessageCard } from './message-card';
 import { MessageFiltersBar } from './message-filters';
 import { Mail } from 'lucide-react';

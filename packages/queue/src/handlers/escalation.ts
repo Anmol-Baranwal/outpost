@@ -6,15 +6,15 @@
  * and creates a note on the ticket documenting the routing decision.
  */
 
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 import {
     evaluateRouting,
     TeamMemberRole,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 import type {
     RoutingTicket,
     RoutingTeamMember,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 import type { EscalationPayload, JobResult, JobHandlerContext } from '../types.js';
 
 /**

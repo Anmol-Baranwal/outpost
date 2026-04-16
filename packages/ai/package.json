@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/ai",
+    "name": "@copilotkit/outpost-ai",
     "version": "0.1.0",
     "private": true,
     "type": "module",
@@ -19,7 +19,7 @@
     },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.89.0",
-        "@outpost/shared": "workspace:*"
+        "@copilotkit/outpost-shared": "workspace:*"
     },
     "devDependencies": {
         "@copilotkit/aimock": "^1.14.0",

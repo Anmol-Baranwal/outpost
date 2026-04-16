@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FunnelStage } from '@outpost/shared';
-import type { OnboardingMember } from '@outpost/shared';
+import { FunnelStage } from '@copilotkit/outpost-shared';
+import type { OnboardingMember } from '@copilotkit/outpost-shared';
 
 /**
  * Mock onboarding members for development.

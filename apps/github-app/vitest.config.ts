@@ -4,10 +4,10 @@ import path from 'path';
 export default defineConfig({
     resolve: {
         alias: {
-            '@outpost/db': path.resolve(__dirname, '../../packages/db/src/index.ts'),
-            '@outpost/queue': path.resolve(__dirname, '../../packages/queue/src/index.ts'),
-            '@outpost/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
-            '@outpost/ai': path.resolve(__dirname, '../../packages/ai/src/index.ts'),
+            '@copilotkit/outpost-db': path.resolve(__dirname, '../../packages/db/src/index.ts'),
+            '@copilotkit/outpost-queue': path.resolve(__dirname, '../../packages/queue/src/index.ts'),
+            '@copilotkit/outpost-shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
+            '@copilotkit/outpost-ai': path.resolve(__dirname, '../../packages/ai/src/index.ts'),
         },
     },
     test: {

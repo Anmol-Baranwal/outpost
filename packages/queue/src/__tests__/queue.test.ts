@@ -31,11 +31,11 @@ const mockPrisma = {
     $queryRaw: vi.fn(),
 };
 
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: mockPrisma,
 }));
 
-vi.mock('@outpost/shared', () => ({
+vi.mock('@copilotkit/outpost-shared', () => ({
     MAX_JOB_ATTEMPTS: 5,
     BACKOFF_BASE_MS: 1000,
     BACKOFF_MAX_MS: 300_000,

@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/docs",
+    "name": "@copilotkit/outpost-docs",
     "version": "0.1.0",
     "private": true,
     "scripts": {

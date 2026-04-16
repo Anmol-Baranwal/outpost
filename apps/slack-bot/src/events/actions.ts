@@ -1,6 +1,6 @@
 import type { App } from '@slack/bolt';
-import { prisma } from '@outpost/db';
-import { createJob, JobType } from '@outpost/queue';
+import { prisma } from '@copilotkit/outpost-db';
+import { createJob, JobType } from '@copilotkit/outpost-queue';
 import { findTicketByThreadTs } from '../lib/tickets.js';
 
 /**

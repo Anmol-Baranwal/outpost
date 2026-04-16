@@ -8,9 +8,9 @@
  * Runs daily via the scheduler, or on-demand for a specific account.
  */
 
-import { prisma } from '@outpost/db';
-import { analyzeSentiment, scoreEngagement } from '@outpost/ai';
-import type { AccountMetrics } from '@outpost/ai';
+import { prisma } from '@copilotkit/outpost-db';
+import { analyzeSentiment, scoreEngagement } from '@copilotkit/outpost-ai';
+import type { AccountMetrics } from '@copilotkit/outpost-ai';
 import type { AccountScoringPayload, JobResult, JobHandlerContext } from '../types.js';
 
 /** How far back to look for messages when scoring (30 days) */

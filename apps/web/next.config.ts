@@ -2,7 +2,7 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
     output: 'standalone',
-    transpilePackages: ['@outpost/db', '@outpost/shared', '@outpost/ai'],
+    transpilePackages: ['@copilotkit/outpost-db', '@copilotkit/outpost-shared', '@copilotkit/outpost-ai'],
 };
 
 export default nextConfig;

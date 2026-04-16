@@ -1,4 +1,4 @@
-# ── Stage 1: prune the monorepo to only what @outpost/web needs ──────────────
+# ── Stage 1: prune the monorepo to only what @copilotkit/outpost-web needs ──────────────
 FROM node:20-alpine AS pruner
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
@@ -7,7 +7,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 RUN npm install -g turbo@2
 
 COPY . .
-RUN turbo prune @outpost/web --docker
+RUN turbo prune @copilotkit/outpost-web --docker
 
 # ── Stage 2: install dependencies ────────────────────────────────────────────
 FROM node:20-alpine AS installer
@@ -22,7 +22,7 @@ RUN pnpm install --frozen-lockfile
 
 # Copy pruned source and build
 COPY --from=pruner /app/out/full/ .
-RUN pnpm turbo run build --filter=@outpost/web
+RUN pnpm turbo run build --filter=@copilotkit/outpost-web
 
 # ── Stage 3: production image ────────────────────────────────────────────────
 FROM node:20-alpine AS runner

@@ -13,8 +13,8 @@ export default defineConfig({
     resolve: {
         alias: {
             '@': path.resolve(__dirname, './src'),
-            '@outpost/shared': path.resolve(__dirname, '../../packages/shared/src'),
-            '@outpost/ai': path.resolve(__dirname, '../../packages/ai/src'),
+            '@copilotkit/outpost-shared': path.resolve(__dirname, '../../packages/shared/src'),
+            '@copilotkit/outpost-ai': path.resolve(__dirname, '../../packages/ai/src'),
         },
     },
 });

@@ -5,7 +5,7 @@
  * confidence thresholds, and Pathfinder connection params.
  */
 
-import { AI_CONFIDENCE } from '@outpost/shared';
+import { AI_CONFIDENCE } from '@copilotkit/outpost-shared';
 
 export const config = {
     /** Anthropic API key — required for Claude calls */
@@ -53,7 +53,7 @@ export const config = {
     /** Temperature for classification */
     classifierTemperature: 0.1,
 
-    /** Confidence thresholds (sourced from @outpost/shared) */
+    /** Confidence thresholds (sourced from @copilotkit/outpost-shared) */
     confidence: {
         /** Above this: HIGH confidence (auto-post) */
         highThreshold: AI_CONFIDENCE.HIGH_THRESHOLD,

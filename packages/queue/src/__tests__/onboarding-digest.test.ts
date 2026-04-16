@@ -5,13 +5,13 @@ const mockOnboardingMember = {
     findMany: vi.fn(),
 };
 
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: {
         onboardingMember: mockOnboardingMember,
     },
 }));
 
-vi.mock('@outpost/shared', () => ({
+vi.mock('@copilotkit/outpost-shared', () => ({
     computeFunnelMetrics: vi.fn().mockReturnValue({
         stageCounts: { JOINED: 3, CONTACTED: 2, RESPONDED: 1, MEETING_BOOKED: 0 },
         conversionRates: {

@@ -1,5 +1,5 @@
 import type { App } from '@slack/bolt';
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 
 export function registerCloseCommand(app: App): void {
     app.command('/outpost-close', async ({ ack, command, client }) => {

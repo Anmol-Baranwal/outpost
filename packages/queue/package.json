@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/queue",
+    "name": "@copilotkit/outpost-queue",
     "version": "0.1.0",
     "private": true,
     "type": "module",
@@ -18,9 +18,9 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@outpost/ai": "workspace:*",
-        "@outpost/db": "workspace:*",
-        "@outpost/shared": "workspace:*"
+        "@copilotkit/outpost-ai": "workspace:*",
+        "@copilotkit/outpost-db": "workspace:*",
+        "@copilotkit/outpost-shared": "workspace:*"
     },
     "devDependencies": {
         "@types/node": "^22.10.0",

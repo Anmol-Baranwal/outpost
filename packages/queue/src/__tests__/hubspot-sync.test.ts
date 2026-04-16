@@ -12,7 +12,7 @@ import type { JobHandlerContext } from '../types.js';
 const mockSyncAllAccounts = vi.fn();
 const mockSyncSingleAccount = vi.fn();
 
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: {
         account: {
             findFirst: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('@outpost/db', () => ({
     },
 }));
 
-vi.mock('@outpost/shared', () => ({
+vi.mock('@copilotkit/outpost-shared', () => ({
     HubSpotClient: class MockHubSpotClient {},
     HubSpotSyncService: class MockHubSpotSyncService {
         syncAllAccounts = mockSyncAllAccounts;
@@ -134,7 +134,7 @@ describe('handleHubSpotSync', () => {
         // Reset module cache and re-mock so HubSpotClient throws on construction
         vi.resetModules();
 
-        vi.doMock('@outpost/db', () => ({
+        vi.doMock('@copilotkit/outpost-db', () => ({
             prisma: {
                 account: {
                     findFirst: vi.fn(),
@@ -144,7 +144,7 @@ describe('handleHubSpotSync', () => {
             },
         }));
 
-        vi.doMock('@outpost/shared', () => ({
+        vi.doMock('@copilotkit/outpost-shared', () => ({
             HubSpotClient: class ThrowingClient {
                 constructor() {
                     throw new Error('API key is required');

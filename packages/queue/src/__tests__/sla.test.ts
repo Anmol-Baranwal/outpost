@@ -5,8 +5,8 @@
  * All Prisma calls are mocked.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TicketPriority, SlaMetric } from '@outpost/shared';
-import type { TicketForSla, SlaTargetMap, SlaCheckResult } from '@outpost/shared';
+import { TicketPriority, SlaMetric } from '@copilotkit/outpost-shared';
+import type { TicketForSla, SlaTargetMap, SlaCheckResult } from '@copilotkit/outpost-shared';
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
 
@@ -20,14 +20,14 @@ const mockPrisma = {
     $transaction: vi.fn(),
 };
 
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: mockPrisma,
 }));
 
 // Import after mocks
-const { checkSlaCompliance, buildBreachEvents } = await import('@outpost/shared');
-const { loadSlaConfig, DEFAULT_SLA_TARGETS } = await import('@outpost/shared');
-const { getSlaMetrics } = await import('@outpost/shared');
+const { checkSlaCompliance, buildBreachEvents } = await import('@copilotkit/outpost-shared');
+const { loadSlaConfig, DEFAULT_SLA_TARGETS } = await import('@copilotkit/outpost-shared');
+const { getSlaMetrics } = await import('@copilotkit/outpost-shared');
 const { handleSlaCheck } = await import('../handlers/sla-check.js');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

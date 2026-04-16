@@ -9,7 +9,7 @@ export default defineConfig({
     },
     resolve: {
         alias: {
-            '@outpost/shared': path.resolve(__dirname, '../shared/src/index.ts'),
+            '@copilotkit/outpost-shared': path.resolve(__dirname, '../shared/src/index.ts'),
         },
     },
 });

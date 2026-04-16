@@ -2,7 +2,7 @@ import {
     type PendingMessage,
     MessageSource,
     MessageStatus,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 
 /**
  * Mock pending messages across Slack Connect and MS Teams channels.

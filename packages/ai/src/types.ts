@@ -2,10 +2,10 @@
  * Types for the Outpost AI pipeline.
  */
 
-import { AI_CONFIDENCE, TicketPriority, TicketType } from '@outpost/shared';
-import type { PlatformTarget } from '@outpost/shared';
-export { TicketPriority, TicketType } from '@outpost/shared';
-export type { PlatformTarget } from '@outpost/shared';
+import { AI_CONFIDENCE, TicketPriority, TicketType } from '@copilotkit/outpost-shared';
+import type { PlatformTarget } from '@copilotkit/outpost-shared';
+export { TicketPriority, TicketType } from '@copilotkit/outpost-shared';
+export type { PlatformTarget } from '@copilotkit/outpost-shared';
 
 export enum ConfidenceLevel {
     HIGH = 'HIGH',

@@ -8,12 +8,12 @@
  * Otherwise, syncs all HubSpot companies.
  */
 
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 import {
     HubSpotClient,
     HubSpotSyncService,
-} from '@outpost/shared';
-import type { AccountStore } from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
+import type { AccountStore } from '@copilotkit/outpost-shared';
 import type { JobHandler } from '../types.js';
 import { JobType } from '../types.js';
 

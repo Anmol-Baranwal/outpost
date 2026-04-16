@@ -1,6 +1,6 @@
 import type { App } from '@slack/bolt';
-import { prisma } from '@outpost/db';
-import { createJob, JobType } from '@outpost/queue';
+import { prisma } from '@copilotkit/outpost-db';
+import { createJob, JobType } from '@copilotkit/outpost-queue';
 
 export function registerEscalateCommand(app: App): void {
     app.command('/outpost-escalate', async ({ ack, command, client }) => {

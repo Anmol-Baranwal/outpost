@@ -27,14 +27,14 @@ const mockPrisma = {
     ticket: mockPrismaTicket,
 };
 
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: mockPrisma,
 }));
 
 const mockAnalyzeSentiment = vi.fn();
 const mockScoreEngagement = vi.fn();
 
-vi.mock('@outpost/ai', () => ({
+vi.mock('@copilotkit/outpost-ai', () => ({
     analyzeSentiment: (...args: unknown[]) => mockAnalyzeSentiment(...args),
     scoreEngagement: (...args: unknown[]) => mockScoreEngagement(...args),
 }));

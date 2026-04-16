@@ -1,7 +1,7 @@
 import { type TurnContext, CardFactory, MessageFactory } from 'botbuilder';
-import { prisma } from '@outpost/db';
-import { createJob, JobType } from '@outpost/queue';
-import { generateTicketId, truncate } from '@outpost/shared';
+import { prisma } from '@copilotkit/outpost-db';
+import { createJob, JobType } from '@copilotkit/outpost-queue';
+import { generateTicketId, truncate } from '@copilotkit/outpost-shared';
 import { findTicketByConversationId, isTeamMember } from '../lib/tickets.js';
 import { buildTicketCreatedCard } from '../cards/ticket-created-card.js';
 import { config } from '../config.js';

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies before importing the handler
-vi.mock('@outpost/db', () => ({
+vi.mock('@copilotkit/outpost-db', () => ({
     prisma: {
         onboardingMember: {
             upsert: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock('../config.js', () => ({
 }));
 
 import { handleGuildMemberAdd } from '../events/guild-member-add.js';
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 
 function makeMember(overrides: Record<string, unknown> = {}) {
     return {

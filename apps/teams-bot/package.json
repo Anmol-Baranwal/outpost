@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/teams-bot",
+    "name": "@copilotkit/outpost-teams-bot",
     "version": "0.1.0",
     "private": true,
     "type": "module",
@@ -13,9 +13,9 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@outpost/db": "workspace:*",
-        "@outpost/queue": "workspace:*",
-        "@outpost/shared": "workspace:*",
+        "@copilotkit/outpost-db": "workspace:*",
+        "@copilotkit/outpost-queue": "workspace:*",
+        "@copilotkit/outpost-shared": "workspace:*",
         "botbuilder": "^4.23.0",
         "botframework-connector": "^4.23.0"
     },

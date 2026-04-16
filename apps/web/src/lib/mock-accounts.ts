@@ -5,7 +5,7 @@ import {
     AccountSentiment,
     AccountEngagement,
     TicketStatus,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 import { MOCK_TICKETS } from './mock-tickets';
 
 export interface MockAccountFull {

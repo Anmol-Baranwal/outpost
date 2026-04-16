@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { filterMockTickets, MOCK_TICKETS } from '@/lib/mock-tickets';
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, generateTicketId } from '@outpost/shared';
-import { TicketStatus, TicketPriority, TicketType, TicketSource } from '@outpost/shared';
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, generateTicketId } from '@copilotkit/outpost-shared';
+import { TicketStatus, TicketPriority, TicketType, TicketSource } from '@copilotkit/outpost-shared';
 
 /**
  * GET /api/tickets

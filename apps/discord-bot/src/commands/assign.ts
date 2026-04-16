@@ -1,5 +1,5 @@
 import { ChannelType, type ChatInputCommandInteraction } from 'discord.js';
-import { prisma } from '@outpost/db';
+import { prisma } from '@copilotkit/outpost-db';
 import { findTicketByThreadId } from '../lib/tickets.js';
 
 export async function handleAssign(interaction: ChatInputCommandInteraction): Promise<void> {

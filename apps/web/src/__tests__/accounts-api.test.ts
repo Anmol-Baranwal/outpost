@@ -5,7 +5,7 @@ import {
     findMockAccountFull,
     getAccountsWithTicketCounts,
 } from '@/lib/mock-accounts';
-import { AccountSentiment, AccountEngagement } from '@outpost/shared';
+import { AccountSentiment, AccountEngagement } from '@copilotkit/outpost-shared';
 
 describe('Accounts API logic', () => {
     describe('MOCK_ACCOUNTS_FULL', () => {

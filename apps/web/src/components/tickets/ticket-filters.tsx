@@ -6,7 +6,7 @@ import {
     TicketPriority,
     TicketType,
     TicketSource,
-} from '@outpost/shared';
+} from '@copilotkit/outpost-shared';
 import { cn } from '@/lib/utils';
 import { MOCK_ACCOUNTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-tickets';
 

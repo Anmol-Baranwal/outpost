@@ -1,5 +1,5 @@
 {
-    "name": "@outpost/github-app",
+    "name": "@copilotkit/outpost-github-app",
     "version": "0.1.0",
     "private": true,
     "type": "module",
@@ -16,10 +16,10 @@
         "@octokit/auth-app": "^7.1.0",
         "@octokit/rest": "^21.1.0",
         "@octokit/webhooks": "^13.4.0",
-        "@outpost/ai": "workspace:*",
-        "@outpost/db": "workspace:*",
-        "@outpost/queue": "workspace:*",
-        "@outpost/shared": "workspace:*",
+        "@copilotkit/outpost-ai": "workspace:*",
+        "@copilotkit/outpost-db": "workspace:*",
+        "@copilotkit/outpost-queue": "workspace:*",
+        "@copilotkit/outpost-shared": "workspace:*",
         "octokit": "^4.1.0"
     },
     "devDependencies": {
