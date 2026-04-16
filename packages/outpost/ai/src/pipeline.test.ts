@@ -1,4 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('./config.js', () => ({
+    config: {
+        anthropicApiKey: 'test-key',
+        pathfinderMcpUrl: 'http://localhost:8787',
+        responseModel: 'claude-sonnet-4-6',
+        confidenceModel: 'claude-haiku-4-5-20251001',
+        classifierModel: 'claude-haiku-4-5-20251001',
+        sentimentModel: 'claude-haiku-4-5-20251001',
+        maxResponseTokens: 2048,
+        responseTemperature: 0.3,
+        confidence: { highThreshold: 0.8, mediumThreshold: 0.5 },
+    },
+    validateConfig: vi.fn(),
+}));
+
 import { AIPipeline } from './pipeline.js';
 import { ConfidenceLevel, TicketPriority, TicketType } from './types.js';
 import type { SearchResult, GeneratedResponse } from './types.js';
