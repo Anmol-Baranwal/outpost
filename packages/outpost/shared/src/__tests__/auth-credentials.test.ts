@@ -34,7 +34,7 @@ describe('credentials auth validation', () => {
         adminHash = await hashPassword('outpost-dev');
         dbMembers = [
             { id: 'cm1', email: 'admin@test.com', passwordHash: adminHash, name: 'Admin', role: 'ADMIN' },
-            { id: 'cm2', email: 'nopw@test.com', passwordHash: null, name: 'No Password', role: 'VIEWER' },
+            { id: 'cm2', email: 'nopw@test.com', passwordHash: null, name: 'No Password', role: 'MEMBER' },
         ];
     });
 

@@ -38,9 +38,7 @@ vi.mock('@copilotkit/outpost/shared', () => ({
     evaluateRouting: (...args: unknown[]) => mockEvaluateRouting(...args),
     TeamMemberRole: {
         ADMIN: 'ADMIN',
-        SUPPORT: 'SUPPORT',
-        ENGINEER: 'ENGINEER',
-        VIEWER: 'VIEWER',
+        MEMBER: 'MEMBER',
     },
 }));
 
@@ -96,7 +94,7 @@ describe('handleEscalation', () => {
         mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
         mockPrismaTeamMember.findMany.mockResolvedValue([
             { id: 'admin-1', name: 'Alice', role: 'ADMIN' },
-            { id: 'eng-1', name: 'Bob', role: 'ENGINEER' },
+            { id: 'eng-1', name: 'Bob', role: 'MEMBER' },
         ]);
         mockEvaluateRouting.mockReturnValue({
             targetMemberId: 'admin-1',

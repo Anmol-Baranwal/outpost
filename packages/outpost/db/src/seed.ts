@@ -24,7 +24,7 @@ async function main() {
             data: {
                 name: 'Sam Rivera',
                 email: 'sam@copilotkit.ai',
-                role: 'SUPPORT',
+                role: 'MEMBER',
                 avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=sam',
                 passwordHash: devPasswordHash,
             },
@@ -33,7 +33,7 @@ async function main() {
             data: {
                 name: 'Jordan Lee',
                 email: 'jordan@copilotkit.ai',
-                role: 'ENGINEER',
+                role: 'MEMBER',
                 avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=jordan',
                 passwordHash: devPasswordHash,
             },
