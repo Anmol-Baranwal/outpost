@@ -3,14 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ─── Mock Prisma ────────────────────────────────────────────────────────────
 
 const mockCount = vi.fn();
-const mockCreate = vi.fn();
+const mockTransaction = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
         teamMember: {
             count: () => mockCount(),
-            create: (args: unknown) => mockCreate(args),
         },
+        $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockTransaction(fn),
     },
 }));
 
@@ -34,20 +34,43 @@ function makeRequest(body: Record<string, unknown>): Request {
 describe('POST /api/setup', () => {
     beforeEach(() => {
         mockCount.mockReset();
-        mockCreate.mockReset();
+        mockTransaction.mockReset();
     });
 
-    it('creates an admin when no team members exist', async () => {
+    it('creates an organization and admin when no team members exist', async () => {
         mockCount.mockResolvedValue(0);
-        mockCreate.mockResolvedValue({
+
+        const mockOrg = {
+            id: 'org-123',
+            name: 'Acme Corp',
+            email: 'support@acme.com',
+            logoUrl: null,
+            tagline: null,
+        };
+        const mockMember = {
             id: 'cuid-123',
             name: 'Admin User',
             email: 'admin@example.com',
             role: 'ADMIN',
+            status: 'ACTIVE',
             createdAt: new Date('2025-01-01'),
+        };
+
+        mockTransaction.mockImplementation(async (fn) => {
+            const tx = {
+                organization: {
+                    create: vi.fn().mockResolvedValue(mockOrg),
+                },
+                teamMember: {
+                    create: vi.fn().mockResolvedValue(mockMember),
+                },
+            };
+            return fn(tx);
         });
 
         const res = await POST(makeRequest({
+            orgName: 'Acme Corp',
+            orgEmail: 'support@acme.com',
             name: 'Admin User',
             email: 'admin@example.com',
             password: 'securepass123',
@@ -56,25 +79,19 @@ describe('POST /api/setup', () => {
 
         expect(res.status).toBe(200);
         const body = await res.json();
-        expect(body.name).toBe('Admin User');
-        expect(body.email).toBe('admin@example.com');
-        expect(body.role).toBe('ADMIN');
-        expect(body.passwordHash).toBeUndefined();
-
-        expect(mockCreate).toHaveBeenCalledWith({
-            data: {
-                name: 'Admin User',
-                email: 'admin@example.com',
-                passwordHash: 'hashed-password-123',
-                role: 'ADMIN',
-            },
-        });
+        expect(body.organization.name).toBe('Acme Corp');
+        expect(body.admin.name).toBe('Admin User');
+        expect(body.admin.email).toBe('admin@example.com');
+        expect(body.admin.role).toBe('ADMIN');
+        expect(body.admin.passwordHash).toBeUndefined();
     });
 
     it('returns 403 when team members already exist', async () => {
         mockCount.mockResolvedValue(1);
 
         const res = await POST(makeRequest({
+            orgName: 'Evil Corp',
+            orgEmail: 'evil@corp.com',
             name: 'Hacker',
             email: 'hacker@evil.com',
             password: 'password123',
@@ -84,10 +101,10 @@ describe('POST /api/setup', () => {
         expect(res.status).toBe(403);
         const body = await res.json();
         expect(body.error).toContain('already exists');
-        expect(mockCreate).not.toHaveBeenCalled();
+        expect(mockTransaction).not.toHaveBeenCalled();
     });
 
-    it('validates required fields', async () => {
+    it('validates required fields including org fields', async () => {
         mockCount.mockResolvedValue(0);
 
         const res = await POST(makeRequest({}));
@@ -96,6 +113,8 @@ describe('POST /api/setup', () => {
         const body = await res.json();
         expect(body.errors).toEqual(
             expect.arrayContaining([
+                expect.stringContaining('Organization name'),
+                expect.stringContaining('Organization email'),
                 expect.stringContaining('Name'),
                 expect.stringContaining('Email'),
                 expect.stringContaining('Password'),
@@ -107,6 +126,8 @@ describe('POST /api/setup', () => {
         mockCount.mockResolvedValue(0);
 
         const res = await POST(makeRequest({
+            orgName: 'Acme',
+            orgEmail: 'bad-email',
             name: 'Test',
             email: 'not-an-email',
             password: 'password123',
@@ -117,6 +138,7 @@ describe('POST /api/setup', () => {
         const body = await res.json();
         expect(body.errors).toEqual(
             expect.arrayContaining([
+                expect.stringContaining('Organization email must be a valid'),
                 expect.stringContaining('valid email'),
             ]),
         );
@@ -126,6 +148,8 @@ describe('POST /api/setup', () => {
         mockCount.mockResolvedValue(0);
 
         const res = await POST(makeRequest({
+            orgName: 'Acme',
+            orgEmail: 'support@acme.com',
             name: 'Test',
             email: 'test@example.com',
             password: 'short',
@@ -145,6 +169,8 @@ describe('POST /api/setup', () => {
         mockCount.mockResolvedValue(0);
 
         const res = await POST(makeRequest({
+            orgName: 'Acme',
+            orgEmail: 'support@acme.com',
             name: 'Test',
             email: 'test@example.com',
             password: 'password123',
