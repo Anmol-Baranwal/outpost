@@ -28,7 +28,7 @@ export async function handleDiscussionCreated(
                 priority: 'MEDIUM',
                 type: 'QUESTION',
                 source: 'GITHUB_DISCUSSION',
-                sourceId: String(discussion.number),
+                sourceId: `${repository.full_name}#${discussion.number}`,
                 sourceUrl: discussionUrl,
                 channel: repository.full_name,
             },

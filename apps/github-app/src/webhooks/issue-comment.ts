@@ -18,8 +18,8 @@ export async function handleIssueComment(
     if (sender.type === 'Bot') return;
 
     try {
-        // Look up the ticket by GitHub issue number
-        const ticket = await findTicketBySourceId(String(issue.number));
+        // Look up the ticket by composite sourceId (owner/repo#number)
+        const ticket = await findTicketBySourceId(`${repository.full_name}#${issue.number}`);
         if (!ticket) {
             // This issue isn't tracked as a ticket, ignore it
             return;
