@@ -133,6 +133,15 @@
           ticket status enums, priority levels, SLA calculation helpers, and validation schemas.
         </p>
 
+        <h2>Sync Engine</h2>
+        <p>
+          Outpost includes a <strong>SyncEngine</strong> that orchestrates bidirectional
+          synchronization between Outpost tickets and external issue trackers (GitHub Issues,
+          Linear, and more). The sync system uses an adapter plugin pattern &mdash; each tracker
+          has a dedicated adapter that handles field mapping, webhook processing, and outbound
+          API calls. See the <a href="../sync/">Sync documentation</a> for details.
+        </p>
+
         <h2>Data Flow</h2>
 
         <h3>Incoming Ticket</h3>

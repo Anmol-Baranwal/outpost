@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sync Overview — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="../" class="nav-brand"> <span class="prompt">$</span> outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="../docs/" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Bidirectional Sync</h1>
+        <p class="lead">
+          Outpost acts as a hub for bidirectional synchronization between your support tickets and
+          external issue trackers. Changes flow in both directions &mdash; updates in Outpost propagate
+          to the tracker, and changes in the tracker propagate back to Outpost.
+        </p>
+
+        <h2>How It Works</h2>
+        <p>
+          The sync system uses an <strong>adapter plugin pattern</strong>. Each external tracker
+          (GitHub Issues, Linear, etc.) has a dedicated sync adapter that knows how to:
+        </p>
+        <ul>
+          <li>Map Outpost ticket fields to the tracker's data model (and back)</li>
+          <li>Receive webhook events from the tracker and apply changes to Outpost</li>
+          <li>Push Outpost changes to the tracker via its API</li>
+          <li>Handle conflict resolution when both sides change simultaneously</li>
+        </ul>
+
+        <h2>Architecture</h2>
+        <div class="code-block" style="width: 100%; max-width: none; margin: 2rem 0;">
+          <div class="code-block-header">sync architecture <span class="lang-tag">diagram</span></div>
+          <pre style="padding: 2rem; overflow-x: auto; display: flex; justify-content: center;"><code style="text-align: left; flex-shrink: 0;">                        ┌─────────────────────┐
+                        │   External Tracker   │
+                        │  (GitHub / Linear)   │
+                        └─────────┬───────────┘
+                                  │
+                         webhooks │ ▲ API calls
+                                  ▼ │
+                        ┌─────────────────────┐
+                        │    Sync Adapter      │
+                        │  (per-tracker plugin)│
+                        └─────────┬───────────┘
+                                  │
+                       map fields │ ▲ map fields
+                                  ▼ │
+                        ┌─────────────────────┐
+                        │    <span class="fn">SyncEngine</span>         │
+                        │  (orchestrator)      │
+                        └─────────┬───────────┘
+                                  │
+                          read/write │
+                                  ▼
+                        ┌─────────────────────┐
+                        │  Outpost Database    │
+                        │  (tickets, messages) │
+                        └─────────────────────┘</code></pre>
+        </div>
+
+        <p>
+          The <strong>SyncEngine</strong> is the orchestrator that coordinates all sync operations.
+          It processes incoming webhook events from trackers, applies field mappings, and writes
+          changes to the Outpost database. When Outpost tickets change, the SyncEngine notifies
+          the appropriate adapter to push updates back to the external tracker.
+        </p>
+
+        <h2>Adapter Plugin Pattern</h2>
+        <p>
+          Each sync adapter implements a standard interface that the SyncEngine calls. This makes
+          it straightforward to add support for new trackers without modifying the core sync logic.
+          An adapter is responsible for:
+        </p>
+        <ol>
+          <li><strong>Field mapping</strong> &mdash; translating between the tracker's data model and Outpost's ticket model (status, priority, assignee, labels)</li>
+          <li><strong>Webhook handling</strong> &mdash; parsing incoming webhook payloads from the tracker and converting them to Outpost-compatible change events</li>
+          <li><strong>Outbound sync</strong> &mdash; pushing Outpost ticket changes to the tracker's API</li>
+          <li><strong>Identity mapping</strong> &mdash; associating tracker user accounts with Outpost TeamMembers</li>
+          <li><strong>Bulk import</strong> &mdash; importing existing issues from the tracker into Outpost on initial setup</li>
+        </ol>
+
+        <h2>What Syncs</h2>
+        <p>The following fields are synchronized bidirectionally:</p>
+        <table class="env-table">
+          <thead><tr><th>Field</th><th>Outpost &rarr; Tracker</th><th>Tracker &rarr; Outpost</th></tr></thead>
+          <tbody>
+            <tr><td>Status</td><td>Mapped via status mapping config</td><td>Mapped via status mapping config</td></tr>
+            <tr><td>Priority</td><td>Mapped to tracker priority levels</td><td>Mapped to Outpost priority levels</td></tr>
+            <tr><td>Assignee</td><td>Mapped via identity mapping</td><td>Mapped via identity mapping</td></tr>
+            <tr><td>Labels / Tags</td><td>Applied as tracker labels</td><td>Applied as Outpost tags</td></tr>
+            <tr><td>Comments</td><td>Posted as tracker comments</td><td>Added as ticket messages</td></tr>
+            <tr><td>Title</td><td>Updated in tracker</td><td>Updated in Outpost</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Conflict Resolution</h2>
+        <p>
+          When the same field is changed on both sides between sync cycles, Outpost uses a
+          <strong>last-write-wins</strong> strategy based on timestamps. Each sync event carries a
+          timestamp, and the most recent change takes precedence. Conflict events are logged for
+          audit purposes.
+        </p>
+
+        <h2>Supported Trackers</h2>
+        <table class="env-table">
+          <thead><tr><th>Tracker</th><th>Status</th><th>Docs</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>GitHub Issues</td>
+              <td>Built-in (via GitHub App)</td>
+              <td><a href="../github-app/">GitHub App Setup</a></td>
+            </tr>
+            <tr>
+              <td>Linear</td>
+              <td>Available</td>
+              <td><a href="../linear/">Linear Integration</a></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="info-box">
+          <p>
+            <strong>Adding more trackers:</strong> The adapter pattern makes it straightforward to
+            add support for Jira, Asana, or any other issue tracker. See the
+            <a href="../contributing/">Contributing guide</a> for details on implementing a new
+            sync adapter.
+          </p>
+        </div>
+
+        <div class="prev-next">
+          <a href="../github-app/">
+            <span class="label">Previous</span>
+            <span class="title">GitHub App</span>
+          </a>
+          <a href="../linear/" class="next">
+            <span class="label">Next</span>
+            <span class="title">Linear Integration</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span class="prompt">$</span> outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>
