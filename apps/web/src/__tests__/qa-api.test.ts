@@ -81,7 +81,7 @@ describe('POST /api/qa', () => {
         expect(streamText).toContain('CopilotKit');
         // Should contain metadata event
         expect(streamText).toContain('"type":"metadata"');
-        expect(streamText).toContain('"confidence":"HIGH"');
+        expect(streamText).toContain('"confidenceLevel":"HIGH"');
         // Should end with [DONE]
         expect(streamText).toContain('[DONE]');
     });
