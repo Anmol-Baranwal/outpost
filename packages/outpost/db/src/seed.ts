@@ -1,9 +1,13 @@
 import { PrismaClient } from '@prisma/client';
+import { hashPassword } from '@copilotkit/outpost/shared';
 
 const prisma = new PrismaClient();
 
 async function main() {
     console.log('Seeding database...');
+
+    // Hash the dev password once, reuse for all seed team members
+    const devPasswordHash = await hashPassword('outpost-dev');
 
     // ─── Team Members ───────────────────────────────────────────────────
     const teamMembers = await Promise.all([
@@ -13,6 +17,7 @@ async function main() {
                 email: 'alex@copilotkit.ai',
                 role: 'ADMIN',
                 avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=alex',
+                passwordHash: devPasswordHash,
             },
         }),
         prisma.teamMember.create({
@@ -21,6 +26,7 @@ async function main() {
                 email: 'sam@copilotkit.ai',
                 role: 'SUPPORT',
                 avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=sam',
+                passwordHash: devPasswordHash,
             },
         }),
         prisma.teamMember.create({
@@ -29,6 +35,7 @@ async function main() {
                 email: 'jordan@copilotkit.ai',
                 role: 'ENGINEER',
                 avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=jordan',
+                passwordHash: devPasswordHash,
             },
         }),
     ]);
