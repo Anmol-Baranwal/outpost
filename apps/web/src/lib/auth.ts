@@ -150,7 +150,7 @@ function buildAuthOptions(): NextAuthOptions {
             async jwt({ token, user }) {
                 // On initial sign-in, persist role and member ID into the JWT
                 if (user) {
-                    token.role = (user as unknown as Record<string, unknown>).role ?? 'SUPPORT';
+                    token.role = (user as unknown as Record<string, unknown>).role ?? 'MEMBER';
                     token.memberId = user.id;
                 }
                 return token;

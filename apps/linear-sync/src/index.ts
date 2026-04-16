@@ -159,9 +159,9 @@ async function bootstrap(): Promise<void> {
 
     setSyncDeps({
         prisma: {
-            ticket: prisma.ticket,
-            ticketExternalLink: prisma.ticketExternalLink,
-            message: prisma.message,
+            ticket: prisma.ticket as unknown as SyncHandlerDeps['prisma']['ticket'],
+            ticketExternalLink: prisma.ticketExternalLink as unknown as SyncHandlerDeps['prisma']['ticketExternalLink'],
+            message: prisma.message as unknown as SyncHandlerDeps['prisma']['message'],
         },
     });
 

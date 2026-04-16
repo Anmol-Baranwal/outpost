@@ -297,7 +297,7 @@ describe('SyncEngine edge cases and failure paths', () => {
 
     describe('recordSyncEvent edge cases', () => {
         it('handles Prisma failure during recordSyncEvent', async () => {
-            vi.mocked(deps.prisma.syncEvent.create).mockRejectedValue(
+            vi.mocked(deps.prisma.syncEvent!.create).mockRejectedValue(
                 new Error('DB write failed'),
             );
 

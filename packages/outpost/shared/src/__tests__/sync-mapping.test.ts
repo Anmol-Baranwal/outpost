@@ -193,6 +193,7 @@ describe('IdentityMapper', () => {
         mockPrisma = {
             externalIdentity: {
                 findUnique: vi.fn(),
+                findFirst: vi.fn().mockResolvedValue(null),
                 findMany: vi.fn(),
                 create: vi.fn(),
             },

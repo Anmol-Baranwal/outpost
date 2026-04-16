@@ -406,6 +406,7 @@ describe('initializeSyncEngine', () => {
         const identityDeps = {
             externalIdentity: {
                 findUnique: vi.fn().mockResolvedValue(null),
+                findFirst: vi.fn().mockResolvedValue(null),
                 findMany: vi.fn().mockResolvedValue([]),
                 create: vi.fn().mockResolvedValue({ id: 'id-1', plugin: 'linear', externalId: 'ext-1', memberId: 'mem-1' }),
             },

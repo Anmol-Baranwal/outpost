@@ -77,8 +77,8 @@ export interface MockTicket {
 }
 
 export const MOCK_TEAM_MEMBERS: MockTeamMember[] = [
-    { id: 'tm-1', name: 'Atai Barkai', email: 'atai@copilotkit.ai', role: 'ENGINEER', avatarUrl: null },
-    { id: 'tm-2', name: 'Markus Ecker', email: 'markus@copilotkit.ai', role: 'SUPPORT', avatarUrl: null },
+    { id: 'tm-1', name: 'Atai Barkai', email: 'atai@copilotkit.ai', role: 'MEMBER', avatarUrl: null },
+    { id: 'tm-2', name: 'Markus Ecker', email: 'markus@copilotkit.ai', role: 'MEMBER', avatarUrl: null },
     { id: 'tm-3', name: 'Jordan Ritter', email: 'jordan@copilotkit.ai', role: 'ADMIN', avatarUrl: null },
 ];
 

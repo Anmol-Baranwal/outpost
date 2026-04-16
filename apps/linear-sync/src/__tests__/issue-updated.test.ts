@@ -57,10 +57,11 @@ describe('parseIssueUpdated', () => {
         expect(result.updatedFields).toEqual([]);
     });
 
-    it('includes labels when present', () => {
-        const payload = makeIssueUpdatedPayload({
-            labels: [{ id: 'l1', name: 'feature' }],
-        });
+    it('includes labels when labelIds changed in updatedFrom', () => {
+        const payload = makeIssueUpdatedPayload(
+            { labels: [{ id: 'l1', name: 'feature' }] },
+            { labelIds: ['old-label-id'] },
+        );
         const result = parseIssueUpdated(payload);
 
         expect(result.labels).toEqual([{ id: 'l1', name: 'feature' }]);

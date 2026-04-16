@@ -29,9 +29,9 @@ import type {
 
 const teamMembers: RoutingTeamMember[] = [
     { id: 'admin-1', name: 'Alice Admin', role: TeamMemberRole.ADMIN },
-    { id: 'eng-1', name: 'Bob Engineer', role: TeamMemberRole.ENGINEER },
-    { id: 'support-1', name: 'Carol Support', role: TeamMemberRole.SUPPORT },
-    { id: 'eng-2', name: 'Dave Engineer', role: TeamMemberRole.ENGINEER },
+    { id: 'eng-1', name: 'Bob Engineer', role: TeamMemberRole.MEMBER },
+    { id: 'support-1', name: 'Carol Support', role: TeamMemberRole.MEMBER },
+    { id: 'eng-2', name: 'Dave Engineer', role: TeamMemberRole.MEMBER },
 ];
 
 function makeTicket(overrides: Partial<RoutingTicket> = {}): RoutingTicket {
@@ -356,7 +356,7 @@ describe('evaluateRouting', () => {
                 name: 'enabled-rule',
                 description: 'This rule is enabled',
                 condition: { type: 'keyword', keywords: ['billing'] },
-                targetRole: TeamMemberRole.ENGINEER,
+                targetRole: TeamMemberRole.MEMBER,
                 priority: 2,
                 enabled: true,
             },

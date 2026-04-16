@@ -305,19 +305,15 @@ enum SlaMetric {
     RESOLUTION
 }
 
-// ─── Organization (singleton) ───────────────────────────────────────────────
+// ─── Team ───────────────────────────────────────────────────────────────────
 
 model Organization {
     id        String   @id @default(cuid())
     name      String
-    email     String
     logoUrl   String?
-    tagline   String?
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 }
-
-// ─── Team ───────────────────────────────────────────────────────────────────
 
 model TeamMember {
     id                 String             @id @default(cuid())
@@ -331,6 +327,7 @@ model TeamMember {
     invitedAt          DateTime?
     joinedAt           DateTime?
     tickets            Ticket[]
+    inviteTokens       InviteToken[]
     externalIdentities ExternalIdentity[]
     createdAt          DateTime           @default(now())
     updatedAt          DateTime           @updatedAt
@@ -339,15 +336,22 @@ model TeamMember {
 enum TeamMemberRole {
     ADMIN
     MEMBER
-    SUPPORT
-    ENGINEER
-    VIEWER
 }
 
 enum TeamMemberStatus {
     INVITED
     ACTIVE
     DISABLED
+}
+
+model InviteToken {
+    id        String     @id @default(cuid())
+    memberId  String     @unique
+    token     String     @unique
+    expiresAt DateTime
+    usedAt    DateTime?
+    createdAt DateTime   @default(now())
+    member    TeamMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }
 
 // ─── Onboarding ─────────────────────────────────────────────────────────────

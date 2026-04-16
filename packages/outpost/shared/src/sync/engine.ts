@@ -25,6 +25,13 @@ import { EchoGuard } from './echo-guard.js';
  */
 export interface SyncEngineDeps {
     prisma: {
+        syncEvent?: {
+            findFirst: (args: {
+                where: Record<string, unknown>;
+                orderBy?: Record<string, unknown>;
+            }) => Promise<{ id: string; createdAt: Date } | null>;
+            create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
+        };
         ticketExternalLink: {
             findMany: (args: {
                 where: Record<string, unknown>;
@@ -59,7 +66,7 @@ export interface SyncEngineDeps {
         };
     };
     createJob: (type: string, payload: Record<string, unknown>) => Promise<string>;
-    echoGuard: EchoGuard;
+    echoGuard?: EchoGuard;
 }
 
 // ─── SyncEngine ────────────────────────────────────────────────────────────
@@ -68,9 +75,18 @@ export class SyncEngine {
     private externalTrackers: Map<string, ExternalTracker> = new Map();
     private internalTrackers: Map<string, InternalTracker> = new Map();
     private deps: SyncEngineDeps;
+    private echoGuard: EchoGuard;
 
     constructor(deps: SyncEngineDeps) {
         this.deps = deps;
+        // Use injected EchoGuard, or construct one from prisma.syncEvent for backward compat
+        if (deps.echoGuard) {
+            this.echoGuard = deps.echoGuard;
+        } else if (deps.prisma.syncEvent) {
+            this.echoGuard = new EchoGuard({ prisma: { syncEvent: deps.prisma.syncEvent } });
+        } else {
+            throw new Error('SyncEngineDeps must provide either echoGuard or prisma.syncEvent');
+        }
     }
 
     // ─── Plugin Registry ───────────────────────────────────────────────
@@ -143,7 +159,7 @@ export class SyncEngine {
             });
 
             // Echo detection: skip if we recently synced this exact change
-            const shouldSync = await this.deps.echoGuard.shouldSync(
+            const shouldSync = await this.echoGuard.shouldSync(
                 sourcePlugin,
                 pluginName,
                 ticketId,
@@ -251,7 +267,7 @@ export class SyncEngine {
         targetPlugin: string,
         payloadHash: string,
     ): Promise<boolean> {
-        const shouldSync = await this.deps.echoGuard.shouldSync(
+        const shouldSync = await this.echoGuard.shouldSync(
             sourcePlugin,
             targetPlugin,
             entityId,
@@ -273,7 +289,7 @@ export class SyncEngine {
         status: 'success' | 'failure',
         error?: string,
     ): Promise<void> {
-        await this.deps.echoGuard.recordSync(
+        await this.echoGuard.recordSync(
             sourcePlugin,
             targetPlugin,
             entityId,

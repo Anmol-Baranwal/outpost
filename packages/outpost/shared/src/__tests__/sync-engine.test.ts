@@ -5,7 +5,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SyncEngine } from '../sync/engine.js';
 import type { SyncEngineDeps } from '../sync/engine.js';
-import { EchoGuard } from '../sync/echo-guard.js';
 import type {
     ExternalTracker,
     InternalTracker,
@@ -18,17 +17,13 @@ import { TicketStatus, TicketPriority } from '../types.js';
 
 // ─── Mock Factories ────────────────────────────────────────────────────────
 
-function makeMockEchoGuard(): EchoGuard {
-    const guard = {
-        shouldSync: vi.fn().mockResolvedValue(true),
-        recordSync: vi.fn().mockResolvedValue(undefined),
-    } as unknown as EchoGuard;
-    return guard;
-}
-
 function makeMockDeps(): SyncEngineDeps {
     return {
         prisma: {
+            syncEvent: {
+                findFirst: vi.fn().mockResolvedValue(null),
+                create: vi.fn().mockResolvedValue({ id: 'se-1' }),
+            },
             ticketExternalLink: {
                 findMany: vi.fn().mockResolvedValue([]),
                 findUnique: vi.fn().mockResolvedValue(null),
@@ -39,7 +34,6 @@ function makeMockDeps(): SyncEngineDeps {
             },
         },
         createJob: vi.fn().mockResolvedValue('job-1'),
-        echoGuard: makeMockEchoGuard(),
     };
 }
 
@@ -192,12 +186,15 @@ describe('SyncEngine', () => {
     // ─── Echo Detection ────────────────────────────────────────────
 
     describe('echo detection', () => {
-        it('skips fan-out when EchoGuard detects echo', async () => {
+        it('skips fan-out when a matching SyncEvent exists', async () => {
             engine.registerExternalTracker(makeExternalTracker('github'));
             engine.registerExternalTracker(makeExternalTracker('gitlab'));
 
-            // Simulate echo detected (shouldSync returns false)
-            vi.mocked(deps.echoGuard.shouldSync).mockResolvedValue(false);
+            // Simulate a recent SyncEvent matching the reverse direction
+            vi.mocked(deps.prisma.syncEvent!.findFirst).mockResolvedValue({
+                id: 'se-existing',
+                createdAt: new Date(),
+            });
 
             const change: TicketChange = {
                 externalId: 'ext-1',
@@ -213,11 +210,11 @@ describe('SyncEngine', () => {
             expect(deps.createJob).not.toHaveBeenCalled();
         });
 
-        it('does not skip when EchoGuard allows sync', async () => {
+        it('does not skip when no matching SyncEvent exists', async () => {
             engine.registerExternalTracker(makeExternalTracker('github'));
             engine.registerExternalTracker(makeExternalTracker('gitlab'));
 
-            vi.mocked(deps.echoGuard.shouldSync).mockResolvedValue(true);
+            vi.mocked(deps.prisma.syncEvent!.findFirst).mockResolvedValue(null);
 
             const change: TicketChange = {
                 externalId: 'ext-1',
@@ -234,7 +231,7 @@ describe('SyncEngine', () => {
     // ─── SyncEvent Recording ───────────────────────────────────────
 
     describe('recordSyncEvent', () => {
-        it('delegates to EchoGuard.recordSync for success', async () => {
+        it('creates a success SyncEvent via EchoGuard', async () => {
             await engine.recordSyncEvent(
                 'outpost',
                 'github',
@@ -245,18 +242,21 @@ describe('SyncEngine', () => {
                 'success',
             );
 
-            expect(deps.echoGuard.recordSync).toHaveBeenCalledWith(
-                'outpost',
-                'github',
-                'tkt-1',
-                'status_change',
-                'abc123',
-                'success',
-                undefined,
-            );
+            expect(deps.prisma.syncEvent!.create).toHaveBeenCalledWith({
+                data: {
+                    sourcePlugin: 'outpost',
+                    targetPlugin: 'github',
+                    entityType: 'ticket',
+                    entityId: 'tkt-1',
+                    action: 'status_change',
+                    payloadHash: 'abc123',
+                    status: 'success',
+                    error: null,
+                },
+            });
         });
 
-        it('delegates to EchoGuard.recordSync for failure with error', async () => {
+        it('creates a failure SyncEvent with error message via EchoGuard', async () => {
             await engine.recordSyncEvent(
                 'outpost',
                 'github',
@@ -268,15 +268,12 @@ describe('SyncEngine', () => {
                 'API rate limited',
             );
 
-            expect(deps.echoGuard.recordSync).toHaveBeenCalledWith(
-                'outpost',
-                'github',
-                'tkt-1',
-                'comment',
-                'def456',
-                'failure',
-                'API rate limited',
-            );
+            expect(deps.prisma.syncEvent!.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    status: 'failure',
+                    error: 'API rate limited',
+                }),
+            });
         });
     });
 
