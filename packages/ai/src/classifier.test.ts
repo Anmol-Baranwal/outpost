@@ -42,7 +42,7 @@ describe('TicketClassifier', () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({
                     priority: 'HIGH',
-                    type: 'ISSUE',
+                    type: 'BUG',
                     tags: ['copilotkit-runtime', 'typescript'],
                     reasoning: 'Error report with stack trace',
                 }),
@@ -54,16 +54,16 @@ describe('TicketClassifier', () => {
             );
 
             expect(result.priority).toBe(TicketPriority.HIGH);
-            expect(result.type).toBe(TicketType.ISSUE);
+            expect(result.type).toBe(TicketType.BUG);
             expect(result.tags).toContain('copilotkit-runtime');
             expect(result.tokenUsage.inputTokens).toBe(100);
         });
 
-        it('should classify a how-to question as REQUEST type', async () => {
+        it('should classify a how-to question as FEATURE_REQUEST type', async () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({
                     priority: 'LOW',
-                    type: 'REQUEST',
+                    type: 'FEATURE_REQUEST',
                     tags: ['actions', 'next.js'],
                     reasoning: 'How-to question about setup',
                 }),
@@ -74,7 +74,7 @@ describe('TicketClassifier', () => {
                 'How do I set up useCopilotAction in my Next.js app?',
             );
 
-            expect(result.type).toBe(TicketType.REQUEST);
+            expect(result.type).toBe(TicketType.FEATURE_REQUEST);
         });
 
         it('should override to HIGH priority when heuristic detects errors', async () => {
@@ -82,7 +82,7 @@ describe('TicketClassifier', () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({
                     priority: 'MEDIUM',
-                    type: 'ISSUE',
+                    type: 'BUG',
                     tags: ['react-ui'],
                     reasoning: 'Minor rendering issue',
                 }),
@@ -101,7 +101,7 @@ describe('TicketClassifier', () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({
                     priority: 'MEDIUM',
-                    type: 'ISSUE',
+                    type: 'BUG',
                     tags: ['performance', 'cloud'],
                     reasoning: 'Performance concern',
                 }),
@@ -127,7 +127,7 @@ describe('TicketClassifier', () => {
             );
 
             expect(result.priority).toBe(TicketPriority.HIGH); // Error keyword triggers HIGH
-            expect(result.type).toBe(TicketType.ISSUE);
+            expect(result.type).toBe(TicketType.BUG);
             expect(result.tokenUsage.inputTokens).toBe(0);
         });
     });
@@ -138,7 +138,7 @@ describe('TicketClassifier', () => {
                 'TypeError: Cannot read property of undefined',
             );
             expect(result.priority).toBe(TicketPriority.HIGH);
-            expect(result.type).toBe(TicketType.ISSUE);
+            expect(result.type).toBe(TicketType.BUG);
         });
 
         it('should detect feature requests as LOW priority', () => {
@@ -146,15 +146,15 @@ describe('TicketClassifier', () => {
                 'Feature request: It would be nice to have dark mode in the chat widget',
             );
             expect(result.priority).toBe(TicketPriority.LOW);
-            expect(result.type).toBe(TicketType.REQUEST);
+            expect(result.type).toBe(TicketType.FEATURE_REQUEST);
         });
 
-        it('should detect how-to questions as LOW priority REQUEST', () => {
+        it('should detect how-to questions as LOW priority FEATURE_REQUEST', () => {
             const result = classifier.heuristicClassify(
                 'How do I configure authentication for my copilot?',
             );
             expect(result.priority).toBe(TicketPriority.LOW);
-            expect(result.type).toBe(TicketType.REQUEST);
+            expect(result.type).toBe(TicketType.FEATURE_REQUEST);
         });
 
         it('should detect CopilotKit-specific tags', () => {

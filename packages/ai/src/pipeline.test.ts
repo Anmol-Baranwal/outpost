@@ -62,6 +62,7 @@ const sampleConfidence: ConfidenceAssessment = {
     score: 0.88,
     reasoning: 'Good match',
     tokenUsage: { inputTokens: 200, outputTokens: 30 },
+    degraded: false,
 };
 
 describe('AIPipeline', () => {
@@ -207,7 +208,7 @@ describe('AIPipeline', () => {
         it('should classify a ticket', async () => {
             mockClassify.mockResolvedValue({
                 priority: TicketPriority.HIGH,
-                type: TicketType.ISSUE,
+                type: TicketType.BUG,
                 tags: ['copilotkit-runtime'],
                 reasoning: 'Error report',
                 tokenUsage: { inputTokens: 80, outputTokens: 30 },
@@ -218,14 +219,14 @@ describe('AIPipeline', () => {
             );
 
             expect(result.priority).toBe(TicketPriority.HIGH);
-            expect(result.type).toBe(TicketType.ISSUE);
+            expect(result.type).toBe(TicketType.BUG);
         });
 
         it('should fall back to heuristic on failure', async () => {
             mockClassify.mockRejectedValueOnce(new Error('API error'));
             mockHeuristicClassify.mockReturnValue({
                 priority: TicketPriority.HIGH,
-                type: TicketType.ISSUE,
+                type: TicketType.BUG,
                 tags: [],
                 reasoning: 'Heuristic',
             });

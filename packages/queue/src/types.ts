@@ -5,6 +5,8 @@
  * the typed payload and must return a JobResult.
  */
 
+import type { PlatformTarget } from '@outpost/shared';
+
 // ─── Job Types ──────────────────────────────────────────────────────────────
 
 export enum JobType {
@@ -29,7 +31,7 @@ export enum JobType {
 export interface AiResponsePayload {
     ticketId: string;
     threadId?: string;
-    source: 'discord' | 'github' | 'slack' | 'teams';
+    source: PlatformTarget;
 }
 
 export interface TicketClassifyPayload {

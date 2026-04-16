@@ -1,4 +1,5 @@
-import type { FormattedResponse, PlatformTarget } from './types.js';
+import type { FormattedResponse } from './types.js';
+import type { PlatformTarget } from '@outpost/shared';
 
 const DISCORD_MAX_LENGTH = 2000;
 
@@ -35,6 +36,8 @@ export class ResponseFormatter {
                 return this.formatDiscord(fullText);
             case 'github':
                 return this.formatGitHub(fullText);
+            case 'slack':
+            case 'teams':
             case 'web':
                 return this.formatWeb(fullText);
         }

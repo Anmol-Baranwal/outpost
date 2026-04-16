@@ -2,21 +2,15 @@
  * Types for the Outpost AI pipeline.
  */
 
+import { TicketPriority, TicketType } from '@outpost/shared';
+import type { PlatformTarget } from '@outpost/shared';
+export { TicketPriority, TicketType } from '@outpost/shared';
+export type { PlatformTarget } from '@outpost/shared';
+
 export enum ConfidenceLevel {
     HIGH = 'HIGH',
     MEDIUM = 'MEDIUM',
     LOW = 'LOW',
-}
-
-export enum TicketPriority {
-    LOW = 'LOW',
-    MEDIUM = 'MEDIUM',
-    HIGH = 'HIGH',
-}
-
-export enum TicketType {
-    ISSUE = 'ISSUE',
-    REQUEST = 'REQUEST',
 }
 
 export interface SearchResult {
@@ -157,8 +151,6 @@ export interface SentimentTrendResult {
     /** Change in score from first to last period (negative = improving, positive = worsening) */
     delta: number;
 }
-
-export type PlatformTarget = 'discord' | 'github' | 'web';
 
 export interface PipelineOptions {
     /** Platform target for response formatting */
