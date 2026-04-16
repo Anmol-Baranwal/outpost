@@ -86,6 +86,21 @@
           Runs as an Express server that GitHub sends webhooks to.
         </p>
 
+        <h3>apps/slack-bot — Slack Integration</h3>
+        <p>
+          A Slack bot using <code>@slack/bolt</code>. Monitors Slack Connect channels for new
+          messages and threads, creates tickets, enqueues AI responses, and handles feedback via
+          Block Kit action buttons. Supports slash commands (<code>/outpost-assign</code>,
+          <code>/outpost-close</code>, <code>/outpost-escalate</code>, <code>/outpost-priority</code>).
+        </p>
+
+        <h3>apps/teams-bot — Microsoft Teams Integration</h3>
+        <p>
+          A Microsoft Teams bot using the Bot Framework SDK (<code>botbuilder</code>). Receives
+          webhook posts from Azure Bot Service, creates tickets from channel messages, and responds
+          with Adaptive Cards that include action buttons for feedback and escalation.
+        </p>
+
         <h2>Shared Packages</h2>
 
         <h3>packages/ai — AI Pipeline</h3>

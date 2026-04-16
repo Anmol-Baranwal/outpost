@@ -3,6 +3,7 @@ import { prisma } from '@outpost/db';
 import { createJob, JobType } from '@outpost/queue';
 import { truncate } from '@outpost/shared';
 import { findTicketByThreadId, isTeamMember } from '../lib/tickets.js';
+import { isShadowMode, handleShadowMessage } from '../lib/shadow-mode.js';
 
 export async function handleMessageCreate(message: Message): Promise<void> {
     // Ignore messages from bots
@@ -21,6 +22,11 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     try {
         // Look up the ticket associated with this thread
         const ticket = await findTicketByThreadId(threadId);
+
+        // In shadow mode, record the message silently without triggering visible responses
+        if (isShadowMode() && ticket) {
+            return await handleShadowMessage(message, ticket.id, threadId);
+        }
         if (!ticket) {
             // This thread isn't tracked as a ticket, ignore it
             return;

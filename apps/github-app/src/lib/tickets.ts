@@ -2,7 +2,8 @@ import { prisma } from '@outpost/db';
 import { config } from '../config.js';
 
 /**
- * Find a ticket by its GitHub issue/discussion number (stored as sourceId).
+ * Find a ticket by its GitHub issue/discussion source ID.
+ * The sourceId format is "owner/repo#number" (e.g. "CopilotKit/CopilotKit#123").
  * Matches both GITHUB_ISSUE and GITHUB_DISCUSSION sources.
  */
 export async function findTicketBySourceId(sourceId: string) {

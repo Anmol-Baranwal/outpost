@@ -20,10 +20,15 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
                 await handler(interaction);
             } catch (error) {
                 console.error(`[Discord Bot] Error handling command /${interaction.commandName}:`, error);
-                const reply = interaction.replied || interaction.deferred
-                    ? interaction.followUp.bind(interaction)
-                    : interaction.reply.bind(interaction);
-                await reply({ content: 'An error occurred while processing this command.', ephemeral: true });
+                try {
+                    const reply = interaction.replied || interaction.deferred
+                        ? interaction.followUp.bind(interaction)
+                        : interaction.reply.bind(interaction);
+                    await reply({ content: 'An error occurred while processing this command.', ephemeral: true });
+                } catch (replyError) {
+                    // Interaction may have timed out or already been acknowledged — nothing more we can do
+                    console.error(`[Discord Bot] Failed to send error reply for /${interaction.commandName}:`, replyError);
+                }
             }
         }
     } else if (interaction.isButton()) {

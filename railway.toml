@@ -32,3 +32,24 @@ restartPolicy = "always"
 [services.github-app.deploy]
 startCommand = ""
 region = "us-west1"
+
+# ── Slack bot (background worker, no public port) ──────────────────────────
+[services.slack-bot]
+name = "outpost-slack-bot"
+dockerfile = "apps/slack-bot/Dockerfile"
+restartPolicy = "always"
+
+[services.slack-bot.deploy]
+startCommand = ""
+region = "us-west1"
+
+# ── Teams bot (webhook receiver, needs public port) ─────────────────────────
+[services.teams-bot]
+name = "outpost-teams-bot"
+dockerfile = "apps/teams-bot/Dockerfile"
+healthcheck = "/health"
+restartPolicy = "always"
+
+[services.teams-bot.deploy]
+startCommand = ""
+region = "us-west1"

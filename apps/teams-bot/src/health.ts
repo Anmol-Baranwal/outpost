@@ -6,7 +6,7 @@ const startedAt = Date.now();
  * Lightweight HTTP health-check server for the Teams bot.
  * Railway (and other orchestrators) hit this to know the worker is alive.
  */
-export function startHealthServer(port: number = 3001): Server {
+export function startHealthServer(port: number = 3003): Server {
     const server = createServer((req, res) => {
         if (req.method === 'GET' && req.url === '/health') {
             res.writeHead(200, { 'Content-Type': 'application/json' });

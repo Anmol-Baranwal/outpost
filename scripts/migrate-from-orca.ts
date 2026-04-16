@@ -320,19 +320,22 @@ async function rollback(prisma: PrismaClient, confirm: boolean): Promise<void> {
     });
     const ticketIds = orcaTickets.map(t => t.id);
 
-    const messagesDeleted = await prisma.message.deleteMany({
-        where: { ticketId: { in: ticketIds } },
-    });
+    // Wrap all deletes in a transaction for atomicity — either everything
+    // rolls back or nothing does.
+    const [messagesDeleted, ticketsDeleted, usersDeleted] = await prisma.$transaction([
+        prisma.message.deleteMany({
+            where: { ticketId: { in: ticketIds } },
+        }),
+        prisma.ticket.deleteMany({
+            where: { source: 'ORCA' },
+        }),
+        prisma.user.deleteMany({
+            where: { source: 'ORCA' },
+        }),
+    ]);
+
     console.log(`  Deleted ${messagesDeleted.count} messages`);
-
-    const ticketsDeleted = await prisma.ticket.deleteMany({
-        where: { source: 'ORCA' },
-    });
     console.log(`  Deleted ${ticketsDeleted.count} tickets`);
-
-    const usersDeleted = await prisma.user.deleteMany({
-        where: { source: 'ORCA' },
-    });
     console.log(`  Deleted ${usersDeleted.count} users`);
 
     console.log('\n  Rollback complete.\n');

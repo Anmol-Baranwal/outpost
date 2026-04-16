@@ -22,20 +22,24 @@ vi.mock('@outpost/db', () => ({
 vi.mock('@outpost/queue', () => ({
     createJob: vi.fn().mockResolvedValue('job-123'),
     JobType: {
-        PROCESS_TICKET: 'PROCESS_TICKET',
-        GENERATE_RESPONSE: 'GENERATE_RESPONSE',
-        SEND_NOTIFICATION: 'SEND_NOTIFICATION',
-        CHECK_SLA: 'CHECK_SLA',
-        ANALYZE_SENTIMENT: 'ANALYZE_SENTIMENT',
-        SYNC_DOCS: 'SYNC_DOCS',
-        SEND_BROADCAST: 'SEND_BROADCAST',
-        INDEX_CONTENT: 'INDEX_CONTENT',
+        AI_RESPONSE: 'AI_RESPONSE',
+        TICKET_CLASSIFY: 'TICKET_CLASSIFY',
+        SLA_CHECK: 'SLA_CHECK',
+        ESCALATION: 'ESCALATION',
+        ONBOARDING_DIGEST: 'ONBOARDING_DIGEST',
+        ACCOUNT_SCORING: 'ACCOUNT_SCORING',
+        HUBSPOT_SYNC: 'HUBSPOT_SYNC',
     },
 }));
 
 vi.mock('@outpost/shared', () => ({
     generateTicketId: vi.fn().mockReturnValue('TKT-AB12'),
     truncate: vi.fn((str: string, _len: number) => str),
+}));
+
+vi.mock('../lib/shadow-mode.js', () => ({
+    isShadowMode: vi.fn().mockReturnValue(false),
+    handleShadowThreadCreate: vi.fn().mockResolvedValue('shadow-ticket-id'),
 }));
 
 vi.mock('../config.js', () => ({

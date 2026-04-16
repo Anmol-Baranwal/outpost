@@ -3,6 +3,7 @@ import { prisma } from '@outpost/db';
 import { createJob, JobType } from '@outpost/queue';
 import { generateTicketId, truncate } from '@outpost/shared';
 import { config } from '../config.js';
+import { isShadowMode, handleShadowThreadCreate } from '../lib/shadow-mode.js';
 
 export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: boolean): Promise<void> {
     if (!newlyCreated) return;
@@ -25,6 +26,16 @@ export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: bo
         thread.type !== ChannelType.PrivateThread
     ) {
         return;
+    }
+
+    // In shadow mode, create the ticket silently without posting to Discord
+    if (isShadowMode()) {
+        const starterMessage = await thread.fetchStarterMessage();
+        const content = starterMessage?.content ?? '';
+        const authorTag = starterMessage?.author.tag ?? 'Unknown';
+        const authorId = starterMessage?.author.id ?? '';
+        const displayId = generateTicketId();
+        return void await handleShadowThreadCreate(thread, displayId, content, authorTag, authorId);
     }
 
     console.log(

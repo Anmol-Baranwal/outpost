@@ -1,13 +1,14 @@
 import { TICKET_ID_PREFIX, BACKOFF_BASE_MS, BACKOFF_MAX_MS } from './constants.js';
 
 /**
- * Generate a unique ticket ID in the format TKT-XXXX.
- * Uses a combination of timestamp and random characters for uniqueness.
+ * Generate a unique ticket ID in the format TKT-XXXXXXXX.
+ * Uses 8 random characters from a 30-char alphabet (~656 billion keyspace)
+ * to make collisions negligible at scale.
  */
 export function generateTicketId(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Omit ambiguous chars
     let id = '';
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 8; i++) {
         id += chars[Math.floor(Math.random() * chars.length)];
     }
     return `${TICKET_ID_PREFIX}-${id}`;

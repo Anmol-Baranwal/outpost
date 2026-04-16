@@ -36,11 +36,11 @@ COPY --from=installer --chown=outpost:outpost /app/ ./
 
 USER outpost
 ENV NODE_ENV=production
-ENV HEALTH_PORT=3001
+ENV HEALTH_PORT=3003
 ENV PORT=3978
-EXPOSE 3001 3978
+EXPOSE 3003 3978
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:3001/health || exit 1
+    CMD wget -qO- http://localhost:3003/health || exit 1
 
 CMD ["node", "apps/teams-bot/dist/index.js"]

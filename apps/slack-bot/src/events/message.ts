@@ -35,7 +35,15 @@ export function registerMessageHandler(app: App): void {
             const user = 'user' in event ? event.user : undefined;
             if (!text || !user) return;
 
-            if (event.thread_ts) {
+            // Determine if this is a threaded reply or a top-level message.
+            // In Slack, thread_ts is set for replies within a thread. When
+            // thread_ts equals ts, it's the parent message of the thread
+            // (i.e. a top-level message), not a reply. We only create tickets
+            // for true top-level messages — threaded replies are appended to
+            // an existing ticket if one exists, and ignored otherwise.
+            const isThreadReply = event.thread_ts && event.thread_ts !== event.ts;
+
+            if (isThreadReply) {
                 // This is a threaded reply — handle as follow-up message
                 await handleThreadReply(
                     { user, text, thread_ts: event.thread_ts, ts: event.ts },

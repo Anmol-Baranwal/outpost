@@ -28,7 +28,7 @@ export async function handleIssueOpened(
                 priority: 'MEDIUM',
                 type: 'QUESTION',
                 source: 'GITHUB_ISSUE',
-                sourceId: String(issue.number),
+                sourceId: `${repository.full_name}#${issue.number}`,
                 sourceUrl: issueUrl,
                 channel: repository.full_name,
             },
