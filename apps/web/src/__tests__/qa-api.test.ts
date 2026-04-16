@@ -55,7 +55,7 @@ describe('POST /api/qa', () => {
     it('calls pipeline and streams response', async () => {
         mockGenerateSupportResponse.mockResolvedValue({
             response: 'CopilotKit is great.',
-            confidence: 'HIGH',
+            confidenceLevel: 'HIGH',
             confidenceScore: 0.92,
             searchResults: [
                 {
@@ -81,7 +81,7 @@ describe('POST /api/qa', () => {
         expect(streamText).toContain('CopilotKit');
         // Should contain metadata event
         expect(streamText).toContain('"type":"metadata"');
-        expect(streamText).toContain('"confidenceLevel":"HIGH"');
+        expect(streamText).toContain('"confidence":"HIGH"');
         // Should end with [DONE]
         expect(streamText).toContain('[DONE]');
     });
