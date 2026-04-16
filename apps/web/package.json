@@ -12,9 +12,7 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@copilotkit/outpost-ai": "workspace:*",
-        "@copilotkit/outpost-db": "workspace:*",
-        "@copilotkit/outpost-shared": "workspace:*",
+        "@copilotkit/outpost": "workspace:*",
         "class-variance-authority": "^0.7.0",
         "clsx": "^2.1.0",
         "lucide-react": "^0.468.0",

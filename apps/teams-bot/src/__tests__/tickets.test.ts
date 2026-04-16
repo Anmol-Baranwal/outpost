@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@copilotkit/outpost-db', () => ({
+vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
         ticket: {
             findFirst: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock('@copilotkit/outpost-db', () => ({
 }));
 
 import { findTicketByConversationId, isTeamMember } from '../lib/tickets.js';
-import { prisma } from '@copilotkit/outpost-db';
+import { prisma } from '@copilotkit/outpost/db';
 
 describe('findTicketByConversationId', () => {
     beforeEach(() => {

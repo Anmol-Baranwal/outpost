@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { dryRunRouting, DEFAULT_ROUTING_RULES } from '@copilotkit/outpost-shared';
-import type { RoutingTicket, RoutingTeamMember } from '@copilotkit/outpost-shared';
+import { dryRunRouting, DEFAULT_ROUTING_RULES } from '@copilotkit/outpost/shared';
+import type { RoutingTicket, RoutingTeamMember } from '@copilotkit/outpost/shared';
 
 /**
  * POST /api/dispatch/evaluate

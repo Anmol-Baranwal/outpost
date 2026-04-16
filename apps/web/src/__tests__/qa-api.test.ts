@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockGenerateSupportResponse = vi.fn();
 const mockDestroy = vi.fn();
 
-vi.mock('@copilotkit/outpost-ai', () => ({
+vi.mock('@copilotkit/outpost/ai', () => ({
     AIPipeline: class MockAIPipeline {
         generateSupportResponse = mockGenerateSupportResponse;
         destroy = mockDestroy;

@@ -7,7 +7,7 @@ import {
     TicketType,
     TicketSource,
     MessageType,
-} from '@copilotkit/outpost-shared';
+} from '@copilotkit/outpost/shared';
 
 export interface MockMessage {
     id: string;

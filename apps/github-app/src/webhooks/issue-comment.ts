@@ -1,7 +1,7 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
-import { prisma } from '@copilotkit/outpost-db';
-import { createJob, JobType } from '@copilotkit/outpost-queue';
-import { truncate } from '@copilotkit/outpost-shared';
+import { prisma } from '@copilotkit/outpost/db';
+import { createJob, JobType } from '@copilotkit/outpost/queue';
+import { truncate } from '@copilotkit/outpost/shared';
 import { findTicketBySourceId, isTeamMember } from '../lib/tickets.js';
 
 export async function handleIssueComment(

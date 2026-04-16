@@ -1,6 +1,6 @@
 'use client';
 
-import { AccountEngagement } from '@copilotkit/outpost-shared';
+import { AccountEngagement } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
 
 interface EngagementBadgeProps {

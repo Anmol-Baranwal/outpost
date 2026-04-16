@@ -4,7 +4,7 @@ import {
     filterMockTickets,
     findMockTicket,
 } from '@/lib/mock-tickets';
-import { TicketStatus, TicketPriority } from '@copilotkit/outpost-shared';
+import { TicketStatus, TicketPriority } from '@copilotkit/outpost/shared';
 
 describe('Ticket API logic', () => {
     describe('filterMockTickets', () => {

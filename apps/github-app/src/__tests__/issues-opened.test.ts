@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies before importing the handler
-vi.mock('@copilotkit/outpost-db', () => ({
+vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
         ticket: {
             create: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock('@copilotkit/outpost-db', () => ({
     },
 }));
 
-vi.mock('@copilotkit/outpost-queue', () => ({
+vi.mock('@copilotkit/outpost/queue', () => ({
     createJob: vi.fn().mockResolvedValue('job-123'),
     JobType: {
         AI_RESPONSE: 'AI_RESPONSE',
@@ -22,7 +22,7 @@ vi.mock('@copilotkit/outpost-queue', () => ({
     },
 }));
 
-vi.mock('@copilotkit/outpost-shared', () => ({
+vi.mock('@copilotkit/outpost/shared', () => ({
     generateTicketId: vi.fn().mockReturnValue('TKT-GH01'),
     truncate: vi.fn((str: string, _len: number) => str),
 }));
@@ -43,8 +43,8 @@ vi.mock('../config.js', () => ({
 }));
 
 import { handleIssueOpened } from '../webhooks/issues-opened.js';
-import { prisma } from '@copilotkit/outpost-db';
-import { createJob, JobType } from '@copilotkit/outpost-queue';
+import { prisma } from '@copilotkit/outpost/db';
+import { createJob, JobType } from '@copilotkit/outpost/queue';
 import { postIssueComment } from '../lib/github-client.js';
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 

@@ -7,13 +7,13 @@ const { mockFormat } = vi.hoisted(() => ({
     }),
 }));
 
-vi.mock('@copilotkit/outpost-ai', () => ({
+vi.mock('@copilotkit/outpost/ai', () => ({
     ResponseFormatter: class MockResponseFormatter {
         format = mockFormat;
     },
 }));
 
-vi.mock('@copilotkit/outpost-shared', () => ({
+vi.mock('@copilotkit/outpost/shared', () => ({
     AI_CONFIDENCE: {
         AUTO_RESPOND: 0.9,
         SUGGEST: 0.7,

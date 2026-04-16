@@ -1,5 +1,5 @@
 import { ChannelType, type ChatInputCommandInteraction } from 'discord.js';
-import { prisma } from '@copilotkit/outpost-db';
+import { prisma } from '@copilotkit/outpost/db';
 import { findTicketByThreadId } from '../lib/tickets.js';
 
 const VALID_PRIORITIES = ['critical', 'high', 'medium', 'low'] as const;

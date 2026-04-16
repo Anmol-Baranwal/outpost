@@ -1,8 +1,8 @@
 import type { App } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
-import { prisma } from '@copilotkit/outpost-db';
-import { createJob, JobType } from '@copilotkit/outpost-queue';
-import { generateTicketId, truncate } from '@copilotkit/outpost-shared';
+import { prisma } from '@copilotkit/outpost/db';
+import { createJob, JobType } from '@copilotkit/outpost/queue';
+import { generateTicketId, truncate } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
 import { findTicketByThreadTs, isTeamMember, buildPermalink } from '../lib/tickets.js';
 

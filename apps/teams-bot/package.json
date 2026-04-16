@@ -13,9 +13,7 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@copilotkit/outpost-db": "workspace:*",
-        "@copilotkit/outpost-queue": "workspace:*",
-        "@copilotkit/outpost-shared": "workspace:*",
+        "@copilotkit/outpost": "workspace:*",
         "botbuilder": "^4.23.0",
         "botframework-connector": "^4.23.0"
     },

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { MessageType } from '@copilotkit/outpost-shared';
+import { MessageType } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
 import type { MockMessage } from '@/lib/mock-tickets';
 

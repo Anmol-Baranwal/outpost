@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { DEFAULT_ROUTING_RULES } from '@copilotkit/outpost-shared';
+import { DEFAULT_ROUTING_RULES } from '@copilotkit/outpost/shared';
 
 /**
  * GET /api/dispatch/rules

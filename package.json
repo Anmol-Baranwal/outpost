@@ -9,9 +9,9 @@
         "lint": "turbo run lint",
         "test": "turbo run test",
         "typecheck": "turbo run typecheck",
-        "db:generate": "turbo run db:generate --filter=@copilotkit/outpost-db",
-        "db:push": "turbo run db:push --filter=@copilotkit/outpost-db",
-        "db:seed": "turbo run db:seed --filter=@copilotkit/outpost-db",
+        "db:generate": "turbo run db:generate --filter=@copilotkit/outpost",
+        "db:push": "turbo run db:push --filter=@copilotkit/outpost",
+        "db:seed": "turbo run db:seed --filter=@copilotkit/outpost",
         "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
         "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\""
     },

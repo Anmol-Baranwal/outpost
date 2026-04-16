@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findMockTicket } from '@/lib/mock-tickets';
-import { MessageType } from '@copilotkit/outpost-shared';
+import { MessageType } from '@copilotkit/outpost/shared';
 
 /**
  * POST /api/tickets/[id]/messages

@@ -1,6 +1,6 @@
 'use client';
 
-import { AccountSentiment } from '@copilotkit/outpost-shared';
+import { AccountSentiment } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
 
 interface SentimentBadgeProps {

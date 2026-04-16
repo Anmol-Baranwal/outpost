@@ -1,5 +1,5 @@
 import type { GuildMember } from 'discord.js';
-import { prisma } from '@copilotkit/outpost-db';
+import { prisma } from '@copilotkit/outpost/db';
 
 /**
  * Handle a new member joining the Discord guild.

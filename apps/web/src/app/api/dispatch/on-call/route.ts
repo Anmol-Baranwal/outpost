@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { peekOnCall, getOnCallMembers } from '@copilotkit/outpost-shared';
+import { peekOnCall, getOnCallMembers } from '@copilotkit/outpost/shared';
 
 /**
  * GET /api/dispatch/on-call

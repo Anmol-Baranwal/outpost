@@ -1,5 +1,5 @@
-import { AIPipeline } from '@copilotkit/outpost-ai';
-import type { ConfidenceLevel, SearchResult } from '@copilotkit/outpost-ai';
+import { AIPipeline } from '@copilotkit/outpost/ai';
+import type { ConfidenceLevel, SearchResult } from '@copilotkit/outpost/ai';
 
 /**
  * POST /api/qa

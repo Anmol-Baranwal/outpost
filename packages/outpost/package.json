@@ -1,0 +1,55 @@
+{
+    "name": "@copilotkit/outpost",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        "./db": {
+            "types": "./db/dist/index.d.ts",
+            "import": "./db/dist/index.js"
+        },
+        "./ai": {
+            "types": "./ai/dist/index.d.ts",
+            "import": "./ai/dist/index.js"
+        },
+        "./queue": {
+            "types": "./queue/dist/index.d.ts",
+            "import": "./queue/dist/index.js"
+        },
+        "./shared": {
+            "types": "./shared/dist/index.d.ts",
+            "import": "./shared/dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "pnpm run build:shared && pnpm run build:db && pnpm run build:ai && pnpm run build:queue",
+        "build:db": "prisma generate --schema=db/prisma/schema.prisma && tsc --project db/tsconfig.json",
+        "build:ai": "tsc --project ai/tsconfig.json",
+        "build:queue": "tsc --project queue/tsconfig.json",
+        "build:shared": "tsc --project shared/tsconfig.json",
+        "typecheck": "tsc --project db/tsconfig.json --noEmit && tsc --project ai/tsconfig.json --noEmit && tsc --project queue/tsconfig.json --noEmit && tsc --project shared/tsconfig.json --noEmit",
+        "lint": "eslint db/src/ ai/src/ queue/src/ shared/src/",
+        "test": "vitest run",
+        "db:generate": "prisma generate --schema=db/prisma/schema.prisma",
+        "db:push": "prisma db push --schema=db/prisma/schema.prisma",
+        "db:seed": "tsx db/src/seed.ts",
+        "db:studio": "prisma studio --schema=db/prisma/schema.prisma"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.89.0",
+        "@hubspot/api-client": "^13.5.0",
+        "@prisma/client": "^6.2.0"
+    },
+    "devDependencies": {
+        "@copilotkit/aimock": "^1.14.0",
+        "@types/node": "^22.10.0",
+        "prisma": "^6.2.0",
+        "tsx": "^4.19.0",
+        "typescript": "^5.7.0",
+        "vitest": "^4.1.4"
+    },
+    "prisma": {
+        "schema": "db/prisma/schema.prisma",
+        "seed": "tsx db/src/seed.ts"
+    }
+}

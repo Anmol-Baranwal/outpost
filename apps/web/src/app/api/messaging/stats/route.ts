@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { MOCK_PENDING_MESSAGES } from '@/lib/mock-messages';
-import { MessageStatus, MessageSource, checkUnansweredMessages } from '@copilotkit/outpost-shared';
+import { MessageStatus, MessageSource, checkUnansweredMessages } from '@copilotkit/outpost/shared';
 
 /**
  * GET /api/messaging/stats

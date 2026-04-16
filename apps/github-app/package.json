@@ -16,10 +16,7 @@
         "@octokit/auth-app": "^7.1.0",
         "@octokit/rest": "^21.1.0",
         "@octokit/webhooks": "^13.4.0",
-        "@copilotkit/outpost-ai": "workspace:*",
-        "@copilotkit/outpost-db": "workspace:*",
-        "@copilotkit/outpost-queue": "workspace:*",
-        "@copilotkit/outpost-shared": "workspace:*",
+        "@copilotkit/outpost": "workspace:*",
         "octokit": "^4.1.0"
     },
     "devDependencies": {

@@ -101,7 +101,7 @@
 <span class="fn">pnpm</span> test
 
 <span class="cm"># Run tests for a specific package</span>
-<span class="fn">pnpm</span> test --filter=@copilotkit/outpost-queue
+<span class="fn">pnpm</span> test --filter=@copilotkit/outpost
 
 <span class="cm"># Run tests in watch mode</span>
 <span class="fn">pnpm</span> test --filter=@copilotkit/outpost-web -- --watch</code></pre>
@@ -112,7 +112,7 @@
           If your change requires a database schema modification:
         </p>
         <ol>
-          <li>Edit the Prisma schema in <code>packages/db/prisma/schema.prisma</code></li>
+          <li>Edit the Prisma schema in <code>packages/outpost/db/prisma/schema.prisma</code></li>
           <li>Run <code>pnpm db:generate</code> to regenerate the client</li>
           <li>Run <code>pnpm db:push</code> to apply to your local database</li>
           <li>Include the schema changes in your PR</li>
@@ -125,7 +125,7 @@
         <ol>
           <li>Create a new app in <code>apps/</code> following the existing bot/app patterns</li>
           <li>Add the app to <code>pnpm-workspace.yaml</code></li>
-          <li>Implement the ticket creation interface from <code>packages/shared</code></li>
+          <li>Implement the ticket creation interface from <code>packages/outpost/shared</code></li>
           <li>Add configuration documentation</li>
           <li>Add tests for the integration</li>
         </ol>

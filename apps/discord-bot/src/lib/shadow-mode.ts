@@ -1,6 +1,6 @@
-import { prisma } from '@copilotkit/outpost-db';
-import { createJob, JobType } from '@copilotkit/outpost-queue';
-import { truncate } from '@copilotkit/outpost-shared';
+import { prisma } from '@copilotkit/outpost/db';
+import { createJob, JobType } from '@copilotkit/outpost/queue';
+import { truncate } from '@copilotkit/outpost/shared';
 import type { ThreadChannel, Message } from 'discord.js';
 
 /**

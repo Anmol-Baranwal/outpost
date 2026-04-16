@@ -35,15 +35,9 @@ importers:
 
   apps/discord-bot:
     dependencies:
-      '@copilotkit/outpost-db':
+      '@copilotkit/outpost':
         specifier: workspace:*
-        version: link:../../packages/db
-      '@copilotkit/outpost-queue':
-        specifier: workspace:*
-        version: link:../../packages/queue
-      '@copilotkit/outpost-shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../packages/outpost
       discord.js:
         specifier: ^14.16.0
         version: 14.26.3
@@ -65,18 +59,9 @@ importers:
 
   apps/github-app:
     dependencies:
-      '@copilotkit/outpost-ai':
+      '@copilotkit/outpost':
         specifier: workspace:*
-        version: link:../../packages/ai
-      '@copilotkit/outpost-db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@copilotkit/outpost-queue':
-        specifier: workspace:*
-        version: link:../../packages/queue
-      '@copilotkit/outpost-shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../packages/outpost
       '@octokit/auth-app':
         specifier: ^7.1.0
         version: 7.2.2
@@ -105,15 +90,9 @@ importers:
 
   apps/slack-bot:
     dependencies:
-      '@copilotkit/outpost-db':
+      '@copilotkit/outpost':
         specifier: workspace:*
-        version: link:../../packages/db
-      '@copilotkit/outpost-queue':
-        specifier: workspace:*
-        version: link:../../packages/queue
-      '@copilotkit/outpost-shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../packages/outpost
       '@slack/bolt':
         specifier: ^4.1.0
         version: 4.7.0(@types/express@5.0.6)
@@ -136,15 +115,9 @@ importers:
 
   apps/teams-bot:
     dependencies:
-      '@copilotkit/outpost-db':
+      '@copilotkit/outpost':
         specifier: workspace:*
-        version: link:../../packages/db
-      '@copilotkit/outpost-queue':
-        specifier: workspace:*
-        version: link:../../packages/queue
-      '@copilotkit/outpost-shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../packages/outpost
       botbuilder:
         specifier: ^4.23.0
         version: 4.23.3
@@ -167,15 +140,9 @@ importers:
 
   apps/web:
     dependencies:
-      '@copilotkit/outpost-ai':
+      '@copilotkit/outpost':
         specifier: workspace:*
-        version: link:../../packages/ai
-      '@copilotkit/outpost-db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@copilotkit/outpost-shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../packages/outpost
       class-variance-authority:
         specifier: ^0.7.0
         version: 0.7.1
@@ -259,34 +226,21 @@ importers:
         specifier: ^4.1.4
         version: 4.1.4(@types/node@22.19.17)(jsdom@29.0.2)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@1.21.7)(tsx@4.21.0))
 
-  packages/ai:
+  packages/outpost:
     dependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.89.0
         version: 0.89.0(zod@4.3.6)
-      '@copilotkit/outpost-shared':
-        specifier: workspace:*
-        version: link:../shared
-    devDependencies:
-      '@copilotkit/aimock':
-        specifier: ^1.14.0
-        version: 1.14.0
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.17
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.4
-        version: 4.1.4(@types/node@22.19.17)(jsdom@29.0.2)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0))
-
-  packages/db:
-    dependencies:
+      '@hubspot/api-client':
+        specifier: ^13.5.0
+        version: 13.5.0
       '@prisma/client':
         specifier: ^6.2.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
+      '@copilotkit/aimock':
+        specifier: ^1.14.0
+        version: 1.14.0
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.17
@@ -296,41 +250,6 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/queue:
-    dependencies:
-      '@copilotkit/outpost-ai':
-        specifier: workspace:*
-        version: link:../ai
-      '@copilotkit/outpost-db':
-        specifier: workspace:*
-        version: link:../db
-      '@copilotkit/outpost-shared':
-        specifier: workspace:*
-        version: link:../shared
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.17
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.4
-        version: 4.1.4(@types/node@22.19.17)(jsdom@29.0.2)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0))
-
-  packages/shared:
-    dependencies:
-      '@hubspot/api-client':
-        specifier: ^13.5.0
-        version: 13.5.0
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.17
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

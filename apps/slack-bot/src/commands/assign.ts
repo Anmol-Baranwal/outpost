@@ -1,5 +1,5 @@
 import type { App } from '@slack/bolt';
-import { prisma } from '@copilotkit/outpost-db';
+import { prisma } from '@copilotkit/outpost/db';
 import { findTicketByThreadTs } from '../lib/tickets.js';
 
 export function registerAssignCommand(app: App): void {

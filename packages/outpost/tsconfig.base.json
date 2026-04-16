@@ -1,0 +1,12 @@
+{
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "baseUrl": ".",
+        "paths": {
+            "@copilotkit/outpost/db": ["./db/dist/index.d.ts"],
+            "@copilotkit/outpost/ai": ["./ai/dist/index.d.ts"],
+            "@copilotkit/outpost/queue": ["./queue/dist/index.d.ts"],
+            "@copilotkit/outpost/shared": ["./shared/dist/index.d.ts"]
+        }
+    }
+}

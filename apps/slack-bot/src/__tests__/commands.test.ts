@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@copilotkit/outpost-db', () => ({
+vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
         ticket: {
             create: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock('@copilotkit/outpost-db', () => ({
     },
 }));
 
-vi.mock('@copilotkit/outpost-queue', () => ({
+vi.mock('@copilotkit/outpost/queue', () => ({
     createJob: vi.fn().mockResolvedValue('job-123'),
     JobType: {
         AI_RESPONSE: 'AI_RESPONSE',
@@ -32,8 +32,8 @@ vi.mock('@copilotkit/outpost-queue', () => ({
 }));
 
 import { registerCommands } from '../commands/index.js';
-import { prisma } from '@copilotkit/outpost-db';
-import { createJob, JobType } from '@copilotkit/outpost-queue';
+import { prisma } from '@copilotkit/outpost/db';
+import { createJob, JobType } from '@copilotkit/outpost/queue';
 
 const TICKET = {
     id: 'ticket-1',

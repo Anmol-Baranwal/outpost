@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ChannelType } from 'discord.js';
 
-vi.mock('@copilotkit/outpost-db', () => ({
+vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
         ticket: {
             create: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('@copilotkit/outpost-db', () => ({
     },
 }));
 
-vi.mock('@copilotkit/outpost-queue', () => ({
+vi.mock('@copilotkit/outpost/queue', () => ({
     createJob: vi.fn().mockResolvedValue('job-123'),
     JobType: {
         AI_RESPONSE: 'AI_RESPONSE',
@@ -41,8 +41,8 @@ import { handleAssign } from '../commands/assign.js';
 import { handleClose } from '../commands/close.js';
 import { handleEscalate } from '../commands/escalate.js';
 import { handlePriority } from '../commands/priority.js';
-import { prisma } from '@copilotkit/outpost-db';
-import { createJob, JobType } from '@copilotkit/outpost-queue';
+import { prisma } from '@copilotkit/outpost/db';
+import { createJob, JobType } from '@copilotkit/outpost/queue';
 
 const TICKET = {
     id: 'ticket-1',

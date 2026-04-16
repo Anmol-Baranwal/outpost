@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { MOCK_TICKETS } from '@/lib/mock-tickets';
-import { TicketStatus } from '@copilotkit/outpost-shared';
+import { TicketStatus } from '@copilotkit/outpost/shared';
 
 /**
  * GET /api/dashboard/stats
