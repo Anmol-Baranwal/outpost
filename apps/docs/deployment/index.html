@@ -39,8 +39,8 @@
         <ul>
           <li><strong>PostgreSQL 16</strong> with pgvector extension (required by Pathfinder for embeddings)</li>
           <li><strong>Node.js 20+</strong> runtime for all three services</li>
-          <li><strong>Persistent process manager</strong> for the Discord bot (it maintains a WebSocket connection)</li>
-          <li><strong>Public HTTPS endpoint</strong> for the GitHub App webhook receiver</li>
+          <li><strong>Persistent process manager</strong> for the Discord and Slack bots (they maintain WebSocket connections)</li>
+          <li><strong>Public HTTPS endpoint</strong> for the GitHub App and Teams bot webhook receivers</li>
         </ul>
 
         <h2>Docker Compose (Recommended)</h2>
@@ -82,6 +82,26 @@
       - <span class="str">postgres</span>
     <span class="key">restart</span>: <span class="str">unless-stopped</span>
 
+  <span class="key">slack-bot</span>:
+    <span class="key">build</span>:
+      <span class="key">context</span>: <span class="str">.</span>
+      <span class="key">dockerfile</span>: <span class="str">apps/slack-bot/Dockerfile</span>
+    <span class="key">env_file</span>: <span class="str">.env</span>
+    <span class="key">depends_on</span>:
+      - <span class="str">postgres</span>
+    <span class="key">restart</span>: <span class="str">unless-stopped</span>
+
+  <span class="key">teams-bot</span>:
+    <span class="key">build</span>:
+      <span class="key">context</span>: <span class="str">.</span>
+      <span class="key">dockerfile</span>: <span class="str">apps/teams-bot/Dockerfile</span>
+    <span class="key">ports</span>:
+      - <span class="str">"3003:3003"</span>
+    <span class="key">env_file</span>: <span class="str">.env</span>
+    <span class="key">depends_on</span>:
+      - <span class="str">postgres</span>
+    <span class="key">restart</span>: <span class="str">unless-stopped</span>
+
   <span class="key">github-app</span>:
     <span class="key">build</span>:
       <span class="key">context</span>: <span class="str">.</span>
@@ -102,16 +122,18 @@
         <h3>Railway (Recommended)</h3>
         <p>
           Railway auto-deploys from GitHub and natively supports Docker-based services.
-          The repo includes a <code>railway.toml</code> config for all three services.
+          The repo includes a <code>railway.toml</code> config for all five services.
         </p>
         <ol>
           <li>Fork or push the repo to GitHub</li>
           <li>Create a new project on <a href="https://railway.app" target="_blank">Railway</a></li>
           <li>Add a <strong>PostgreSQL</strong> service (enable pgvector via <code>CREATE EXTENSION vector</code> for Pathfinder)</li>
-          <li>Add three services from the repo, each pointing to its Dockerfile:
+          <li>Add five services from the repo, each pointing to its Dockerfile:
             <ul>
               <li><strong>outpost-web</strong> &mdash; <code>apps/web/Dockerfile</code> (port 3000, health check <code>/api/health</code>)</li>
               <li><strong>outpost-discord-bot</strong> &mdash; <code>apps/discord-bot/Dockerfile</code> (background worker)</li>
+              <li><strong>outpost-slack-bot</strong> &mdash; <code>apps/slack-bot/Dockerfile</code> (background worker, Socket Mode)</li>
+              <li><strong>outpost-teams-bot</strong> &mdash; <code>apps/teams-bot/Dockerfile</code> (port 3003, needs public URL for webhooks)</li>
               <li><strong>outpost-github-app</strong> &mdash; <code>apps/github-app/Dockerfile</code> (port 3200, needs public URL for webhooks)</li>
             </ul>
           </li>
@@ -135,6 +157,8 @@
 <span class="cm"># Start services (use PM2, systemd, or similar)</span>
 <span class="fn">pm2</span> start apps/web/dist/server.js --name outpost-web
 <span class="fn">pm2</span> start apps/discord-bot/dist/index.js --name outpost-discord
+<span class="fn">pm2</span> start apps/slack-bot/dist/index.js --name outpost-slack
+<span class="fn">pm2</span> start apps/teams-bot/dist/index.js --name outpost-teams
 <span class="fn">pm2</span> start apps/github-app/dist/index.js --name outpost-github</code></pre>
         </div>
 

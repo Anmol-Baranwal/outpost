@@ -47,19 +47,20 @@
         <h2>System Diagram</h2>
         <div class="code-block" style="width: 100%; max-width: none; margin: 2rem 0;">
           <div class="code-block-header">architecture <span class="lang-tag">diagram</span></div>
-          <pre style="padding: 2rem; overflow-x: auto; display: flex; justify-content: center;"><code style="text-align: left; flex-shrink: 0;">┌───────────────────────────────────────────────────────────┐
-│                  <span class="fn">apps/web</span> (Next.js)                       │
-│  Dashboard · Accounts · Tickets · Agents · Broadcasts     │
-├───────────────────────────────┬───────────────────────────┤
-│       <span class="fn">apps/discord-bot</span>        │      <span class="fn">apps/github-app</span>      │
-│  Slash commands · Threads     │  Issues · Discussions     │
-├─────────┬──────────┬──────────┼───────────────────────────┤
-│ <span class="str">pkg/ai</span>  │<span class="str">pkg/queue</span> │<span class="str">pkg/shared</span>│         <span class="str">pkg/db</span>            │
-│Pathfinder│ Postgres │ Types &amp; │        Prisma             │
-│+ Claude │Job Queue │Constants │        Schema             │
-├─────────┴──────────┴──────────┴───────────────────────────┤
-│              PostgreSQL 16                     │
-└───────────────────────────────────────────────────────────┘</code></pre>
+          <pre style="padding: 2rem; overflow-x: auto; display: flex; justify-content: center;"><code style="text-align: left; flex-shrink: 0;">┌──────────────────────────────────────────────────────────────────────────────┐
+│                          <span class="fn">apps/web</span> (Next.js)                                  │
+│       Dashboard · Accounts · Tickets · Agents · Broadcasts                   │
+├──────────────────┬──────────────────┬──────────────────┬────────────────────┤
+│ <span class="fn">apps/discord-bot</span> │  <span class="fn">apps/slack-bot</span>  │  <span class="fn">apps/teams-bot</span>  │  <span class="fn">apps/github-app</span>  │
+│ Slash cmds       │  Channels        │  Adaptive Cards  │  Issues            │
+│ Threads          │  Block Kit       │  Webhooks        │  Discussions       │
+├─────────┬────────┴──┬───────────┬───┴──────────────────┴────────────────────┤
+│ <span class="str">pkg/ai</span>  │<span class="str">pkg/queue</span>  │<span class="str">pkg/shared</span> │              <span class="str">pkg/db</span>                        │
+│Pathfinder│ Postgres  │ Types &amp;   │              Prisma                       │
+│+ Claude │ Job Queue │ Constants │              Schema                       │
+├─────────┴───────────┴───────────┴───────────────────────────────────────────┤
+│                          PostgreSQL 16                                        │
+└──────────────────────────────────────────────────────────────────────────────┘</code></pre>
         </div>
 
         <h2>Applications</h2>
@@ -136,7 +137,7 @@
 
         <h3>Incoming Ticket</h3>
         <ol>
-          <li>A message arrives via Discord, GitHub, or the web form</li>
+          <li>A message arrives via Discord, Slack, Teams, GitHub, or the web form</li>
           <li>The integration creates a raw ticket in the database</li>
           <li>A job is enqueued for AI triage</li>
           <li>The AI pipeline classifies priority, assigns tags, and suggests routing</li>
@@ -179,6 +180,8 @@
             <tr><td>ORM</td><td>Prisma</td></tr>
             <tr><td>AI</td><td>Claude (Anthropic) + Pathfinder</td></tr>
             <tr><td>Discord</td><td>discord.js</td></tr>
+            <tr><td>Slack</td><td>@slack/bolt</td></tr>
+            <tr><td>Teams</td><td>Bot Framework SDK (botbuilder)</td></tr>
             <tr><td>GitHub</td><td>Octokit / Probot</td></tr>
             <tr><td>Monorepo</td><td>Turborepo + pnpm workspaces</td></tr>
           </tbody>
