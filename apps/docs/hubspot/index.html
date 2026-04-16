@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HubSpot CRM Integration — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="../" class="nav-brand"> <span class="prompt">$</span> outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="../docs/" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>HubSpot CRM Integration</h1>
+        <p class="lead">
+          The HubSpot integration syncs account data &mdash; company name, domain, ACV, close dates,
+          and deal owner &mdash; from HubSpot CRM into the Outpost Account model. This keeps your
+          support dashboard enriched with up-to-date CRM context without manual data entry.
+        </p>
+
+        <h2>Overview</h2>
+        <p>
+          Outpost pulls company records from HubSpot and maps them to Outpost accounts. Each sync
+          matches companies by domain, creating new accounts for first-seen domains and updating
+          ACV, close date, and owner for existing ones. Companies without a domain are skipped.
+        </p>
+
+        <h2>Setup</h2>
+        <ol>
+          <li>Log in to your <a href="https://app.hubspot.com" target="_blank">HubSpot account</a></li>
+          <li>Navigate to <strong>Settings &rarr; Integrations &rarr; Private Apps</strong></li>
+          <li>Click <strong>Create a private app</strong></li>
+          <li>Under <strong>Scopes</strong>, grant at least:
+            <ul>
+              <li><code>crm.objects.companies.read</code></li>
+              <li><code>crm.objects.owners.read</code></li>
+            </ul>
+          </li>
+          <li>Copy the generated <strong>Access token</strong> &mdash; this is your <code>HUBSPOT_API_KEY</code></li>
+        </ol>
+
+        <h2>Environment Variables</h2>
+        <p>Add this to your <code>.env</code> file:</p>
+        <div class="code-block">
+          <div class="code-block-header">.env <span class="lang-tag">env</span></div>
+          <pre><code><span class="cm"># HubSpot CRM</span>
+<span class="key">HUBSPOT_API_KEY</span>=<span class="str">your-hubspot-private-app-access-token</span></code></pre>
+        </div>
+
+        <div class="info-box">
+          <p>
+            <strong>Security note:</strong> Use a HubSpot <em>private app</em> access token, not a
+            legacy API key. Private apps support granular scoping so you only grant the read
+            permissions Outpost actually needs.
+          </p>
+        </div>
+
+        <h2>What Syncs</h2>
+        <p>
+          The integration maps HubSpot Company fields to the Outpost Account model:
+        </p>
+        <table class="endpoint-table">
+          <thead><tr><th>HubSpot Field</th><th>Outpost Field</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Company name</td><td>name</td><td>Falls back to "HubSpot Company {id}" if blank</td></tr>
+            <tr><td>Domain</td><td>domain</td><td>Used as the match key; companies without a domain are skipped</td></tr>
+            <tr><td>Amount (deal)</td><td>acv</td><td>Parsed as float for annual contract value</td></tr>
+            <tr><td>Close date</td><td>closeDate</td><td>ISO date parsed to Date object</td></tr>
+            <tr><td>Owner ID</td><td>owner</td><td>Resolved to owner display name (first + last name, or email)</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Sync Modes</h2>
+        <p>Outpost supports three ways to trigger a HubSpot sync:</p>
+
+        <h3>Full Sync (Daily Scheduled)</h3>
+        <p>
+          A full sync fetches every company from HubSpot (paginating through the full list) and
+          upserts them all into Outpost. This runs daily via the job queue and handles creates,
+          updates, and skips. A sync report is generated with counts of each.
+        </p>
+
+        <h3>Single Account Sync</h3>
+        <p>
+          Searches HubSpot for a single company by domain and syncs just that record. Useful
+          when a new account comes in and you want immediate CRM enrichment without waiting for
+          the next full sync.
+        </p>
+
+        <h3>Manual Trigger</h3>
+        <p>
+          From the Settings page in the Outpost dashboard, the HubSpot card shows connection
+          status and the last sync timestamp. Click <strong>"Sync Now"</strong> to trigger an
+          immediate full sync on demand.
+        </p>
+
+        <h2>Settings Page</h2>
+        <p>
+          In the Outpost dashboard under <strong>Settings &rarr; Integrations</strong>, the HubSpot
+          card displays:
+        </p>
+        <ul>
+          <li><strong>Connection status</strong> &mdash; whether the API key is configured and valid</li>
+          <li><strong>Last sync</strong> &mdash; timestamp and results (created/updated/skipped/errors) of the most recent sync</li>
+          <li><strong>"Sync Now" button</strong> &mdash; triggers an immediate full sync</li>
+        </ul>
+
+        <h2>How It Works</h2>
+        <p>Under the hood, the integration follows this flow:</p>
+        <ol>
+          <li>The <code>HubSpotClient</code> authenticates with the <code>HUBSPOT_API_KEY</code> access token</li>
+          <li>It fetches companies from the HubSpot CRM API, requesting <code>name</code>, <code>domain</code>, <code>amount</code>, <code>closedate</code>, and <code>hubspot_owner_id</code> properties</li>
+          <li>For each company, <code>syncCompanyToAccount()</code> maps HubSpot fields to the Outpost Account data model</li>
+          <li>Owner IDs are resolved to display names via the HubSpot Owners API (with an in-memory cache)</li>
+          <li>The <code>HubSpotSyncService</code> upserts each mapped account &mdash; matching by domain, creating or updating as needed</li>
+          <li>A <code>SyncReport</code> is returned with counts of created, updated, skipped, and errored records</li>
+        </ol>
+
+        <div class="info-box">
+          <p>
+            <strong>Note:</strong> Companies without a <code>domain</code> property are skipped
+            during sync because Outpost uses domain as the matching key between HubSpot companies
+            and Outpost accounts.
+          </p>
+        </div>
+
+        <div class="prev-next">
+          <a href="../github-app/">
+            <span class="label">Previous</span>
+            <span class="title">GitHub App</span>
+          </a>
+          <a href="../sync/" class="next">
+            <span class="label">Next</span>
+            <span class="title">Sync Overview</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span class="prompt">$</span> outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>
