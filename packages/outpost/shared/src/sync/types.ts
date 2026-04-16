@@ -62,10 +62,10 @@ export interface SyncResult {
     /** Number of plugins that were notified */
     pluginsNotified: number;
     /** Errors from individual plugins */
-    errors: SyncError[];
+    errors: SyncEngineError[];
 }
 
-export interface SyncError {
+export interface SyncEngineError {
     plugin: string;
     action: string;
     error: string;
