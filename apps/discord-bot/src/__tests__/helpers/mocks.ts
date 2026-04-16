@@ -7,7 +7,7 @@ import { vi } from 'vitest';
  * of each test file. This keeps the mock shape in one place so all tests
  * stay consistent when the schema changes.
  */
-export function mockPrisma() {
+export function mockPrisma(): Record<string, unknown> {
     return {
         prisma: {
             ticket: {
@@ -39,7 +39,7 @@ export function mockPrisma() {
 /**
  * Shared mock for @copilotkit/outpost/queue used across discord-bot tests.
  */
-export function mockQueue() {
+export function mockQueue(): Record<string, unknown> {
     return {
         createJob: vi.fn().mockResolvedValue('job-123'),
         JobType: {

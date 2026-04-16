@@ -3,7 +3,7 @@ import { vi } from 'vitest';
 /**
  * Shared mock for @copilotkit/outpost/db used across github-app tests.
  */
-export function mockPrisma() {
+export function mockPrisma(): Record<string, unknown> {
     return {
         prisma: {
             ticket: {
@@ -31,7 +31,7 @@ export function mockPrisma() {
 /**
  * Shared mock for @copilotkit/outpost/queue used across github-app tests.
  */
-export function mockQueue() {
+export function mockQueue(): Record<string, unknown> {
     return {
         createJob: vi.fn().mockResolvedValue('job-123'),
         JobType: {

@@ -72,7 +72,7 @@ describe('handleIssueComment', () => {
             plugin: 'github',
             externalId: 'CopilotKit/CopilotKit#42',
             ticket: TICKET,
-        } as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
+        } as unknown as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
 
         // Legacy fallback (should not be reached when link exists)
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(
@@ -161,7 +161,7 @@ describe('handleIssueComment', () => {
             plugin: 'github',
             externalId: 'CopilotKit/CopilotKit#42',
             ticket: resolvedTicket,
-        } as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
+        } as unknown as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
 
         const event = makeEvent();
         await handleIssueComment(event);
@@ -180,7 +180,7 @@ describe('handleIssueComment', () => {
             plugin: 'github',
             externalId: 'CopilotKit/CopilotKit#42',
             ticket: waitingTicket,
-        } as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
+        } as unknown as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
 
         const event = makeEvent({
             sender: { login: 'teambot', id: 777, type: 'User' },
