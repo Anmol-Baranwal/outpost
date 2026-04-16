@@ -5,6 +5,23 @@ import { verifyWebhookSignature } from './lib/verify-webhook.js';
 import { parseIssueCreated } from './webhooks/issue-created.js';
 import { parseIssueUpdated } from './webhooks/issue-updated.js';
 import { parseCommentCreated } from './webhooks/comment-created.js';
+import {
+    handleIssueCreated,
+    handleIssueUpdated,
+    handleCommentCreated,
+    type SyncHandlerDeps,
+} from './webhooks/sync-handler.js';
+
+/**
+ * Sync handler deps — in production these are wired to the real Prisma client.
+ * Declared here so the webhook handler can reference them. The deps are set
+ * via setSyncDeps() from the app bootstrap (or tests).
+ */
+let syncDeps: SyncHandlerDeps | null = null;
+
+export function setSyncDeps(deps: SyncHandlerDeps): void {
+    syncDeps = deps;
+}
 
 /**
  * Read the full request body as a Buffer.
@@ -61,19 +78,39 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse): Promise
         if (type === 'Issue' && action === 'create') {
             const parsed = parseIssueCreated(payload);
             console.log(`[Linear Sync] Issue created: ${parsed.title} (${parsed.issueId})`);
-            // TODO: feed to SyncEngine
+
+            if (syncDeps) {
+                const result = await handleIssueCreated(syncDeps, parsed);
+                console.log(`[Linear Sync] Created Outpost ticket ${result.ticketId} for Linear issue ${parsed.issueId}`);
+            }
         } else if (type === 'Issue' && action === 'update') {
             const parsed = parseIssueUpdated(payload);
             console.log(
                 `[Linear Sync] Issue updated: ${parsed.issueId}, fields: ${parsed.updatedFields.join(', ')}`,
             );
-            // TODO: feed to SyncEngine
+
+            if (syncDeps) {
+                const result = await handleIssueUpdated(syncDeps, parsed);
+                if (result.updated) {
+                    console.log(`[Linear Sync] Updated Outpost ticket ${result.ticketId} from Linear issue ${parsed.issueId}`);
+                } else {
+                    console.log(`[Linear Sync] No linked ticket found for Linear issue ${parsed.issueId}`);
+                }
+            }
         } else if (type === 'Comment' && action === 'create') {
             const parsed = parseCommentCreated(payload);
             console.log(
                 `[Linear Sync] Comment created on issue ${parsed.issueId} by ${parsed.userName ?? parsed.userId ?? 'unknown'}`,
             );
-            // TODO: feed to SyncEngine
+
+            if (syncDeps) {
+                const result = await handleCommentCreated(syncDeps, parsed);
+                if (result.created) {
+                    console.log(`[Linear Sync] Created message ${result.messageId} on ticket ${result.ticketId}`);
+                } else {
+                    console.log(`[Linear Sync] No linked ticket found for Linear issue ${parsed.issueId}`);
+                }
+            }
         } else {
             console.log(`[Linear Sync] Ignoring unhandled event: ${type} ${action}`);
         }
