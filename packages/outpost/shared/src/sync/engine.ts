@@ -13,7 +13,7 @@ import type {
     WebhookEvent,
     TicketChange,
     SyncResult,
-    SyncError,
+    SyncEngineError,
     TicketChangeAction,
 } from './types.js';
 
@@ -133,7 +133,7 @@ export class SyncEngine {
         change: TicketChange,
         sourcePlugin: string,
     ): Promise<SyncResult> {
-        const errors: SyncError[] = [];
+        const errors: SyncEngineError[] = [];
         let pluginsNotified = 0;
 
         const allPluginNames = this.getPluginNames();

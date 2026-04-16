@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@linear/sdk':
+        specifier: ^81.0.0
+        version: 81.0.0(graphql@16.13.2)
     devDependencies:
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.58.2
@@ -904,6 +908,10 @@ packages:
   '@linear/sdk@37.0.0':
     resolution: {integrity: sha512-EAZCXtV414Nwtvrwn7Ucu3E8BbYYKsc3HqZCGf1mHUE7FhZGtfISu295DOVv89WhhXlp2N344EMg3K0nnhLxtA==}
     engines: {node: '>=12.x', yarn: 1.x}
+
+  '@linear/sdk@81.0.0':
+    resolution: {integrity: sha512-9WYd4eRbFTFNLlWU625/aKLzSu5QfOZ7cYuoxkGZbCB44/8aEOQyCzjOifeSWvYgSMCoO0jF4+XnVtZjC5bf8g==}
+    engines: {node: '>=18.x'}
 
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
@@ -2677,6 +2685,10 @@ packages:
   graphql@15.10.2:
     resolution: {integrity: sha512-1PRqdDPAmViWr4h1GVBT8RoPZfWSGZa7kDzleTilOfVIslsgf+cia3Nl95v1KDmR4iERPaT7WzQ+tN4MJmbg3w==}
     engines: {node: '>= 10.x'}
+
+  graphql@16.13.2:
+    resolution: {integrity: sha512-5bJ+nf/UCpAjHM8i06fl7eLyVC9iuNAjm9qzkiu2ZGhM0VscSvS6WDPfAwkdkBuoXGM9FJSbKl6wylMwP9Ktig==}
+    engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
 
   has-bigints@1.1.0:
     resolution: {integrity: sha512-R3pbpkcIqv2Pm3dUwgjclDRVmWpTJW2DcMzcIhEXEx1oh/CEMObMm3KLmRJOdvhM7o4uQBnwr8pzRK2sJWIqfg==}
@@ -4947,6 +4959,10 @@ snapshots:
     dependencies:
       graphql: 15.10.2
 
+  '@graphql-typed-document-node/core@3.2.0(graphql@16.13.2)':
+    dependencies:
+      graphql: 16.13.2
+
   '@hubspot/api-client@13.5.0':
     dependencies:
       '@types/node': 22.19.17
@@ -5093,6 +5109,12 @@ snapshots:
       isomorphic-unfetch: 3.1.0
     transitivePeerDependencies:
       - encoding
+
+  '@linear/sdk@81.0.0(graphql@16.13.2)':
+    dependencies:
+      '@graphql-typed-document-node/core': 3.2.0(graphql@16.13.2)
+    transitivePeerDependencies:
+      - graphql
 
   '@napi-rs/wasm-runtime@0.2.12':
     dependencies:
@@ -7249,6 +7271,8 @@ snapshots:
   graceful-fs@4.2.11: {}
 
   graphql@15.10.2: {}
+
+  graphql@16.13.2: {}
 
   has-bigints@1.1.0: {}
 

@@ -1,2 +1,2 @@
-export { GitHubAdapter } from './github.js';
-export type { GitHubAdapterConfig } from './github.js';
+export { LinearAdapter } from './linear.js';
+export type { LinearAdapterConfig, LinearClientLike } from './linear.js';
