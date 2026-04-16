@@ -46,7 +46,7 @@ export function registerMessageHandler(app: App): void {
             if (isThreadReply) {
                 // This is a threaded reply — handle as follow-up message
                 await handleThreadReply(
-                    { user, text, thread_ts: event.thread_ts, ts: event.ts },
+                    { user, text, thread_ts: event.thread_ts!, ts: event.ts },
                     channelId,
                     client,
                 );
