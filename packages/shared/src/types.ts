@@ -30,6 +30,8 @@ export enum TicketType {
 export enum TicketSource {
     DISCORD = 'DISCORD',
     SLACK = 'SLACK',
+    TEAMS = 'TEAMS',
+    ORCA = 'ORCA',
     GITHUB_ISSUE = 'GITHUB_ISSUE',
     GITHUB_DISCUSSION = 'GITHUB_DISCUSSION',
     WEB = 'WEB',
@@ -48,6 +50,7 @@ export enum JobStatus {
     PROCESSING = 'PROCESSING',
     COMPLETED = 'COMPLETED',
     FAILED = 'FAILED',
+    DEAD_LETTER = 'DEAD_LETTER',
 }
 
 export enum AgentStatus {
@@ -97,3 +100,6 @@ export enum TeamMemberRole {
     ENGINEER = 'ENGINEER',
     VIEWER = 'VIEWER',
 }
+
+/** Unified platform target for message formatting and job routing */
+export type PlatformTarget = 'discord' | 'github' | 'slack' | 'teams' | 'web';

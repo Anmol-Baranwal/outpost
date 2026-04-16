@@ -27,8 +27,12 @@ export const DEFAULT_SLA_RESOLUTION: Record<string, number> = {
 export const AI_CONFIDENCE = {
     /** Above this threshold, auto-respond */
     AUTO_RESPOND: 0.9,
+    /** Above this threshold: HIGH confidence (auto-post) */
+    HIGH_THRESHOLD: 0.8,
     /** Above this threshold, suggest response */
     SUGGEST: 0.7,
+    /** Above this threshold: MEDIUM confidence (post with disclaimer) */
+    MEDIUM_THRESHOLD: 0.5,
     /** Below this threshold, escalate to human */
     ESCALATE: 0.4,
 } as const;
