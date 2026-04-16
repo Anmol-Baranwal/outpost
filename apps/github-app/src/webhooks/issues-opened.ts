@@ -31,6 +31,9 @@ export async function handleIssueOpened(
                 sourceId: `${repository.full_name}#${issue.number}`,
                 sourceUrl: issueUrl,
                 channel: repository.full_name,
+                externalTracker: 'github',
+                externalId: `${repository.full_name}#${issue.number}`,
+                externalUrl: issueUrl,
             },
         });
 

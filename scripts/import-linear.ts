@@ -220,7 +220,10 @@ export async function importLinearIssues(
                         status: outpostStatus,
                         priority: outpostPriority,
                         type: 'OTHER',
-                        source: 'MANUAL', // LINEAR not in TicketSource enum yet
+                        source: 'LINEAR',
+                        internalTracker: 'linear',
+                        internalId: issue.id,
+                        internalUrl: issue.url,
                         additionalInfo: {
                             linearIdentifier: issue.identifier,
                             linearUrl: issue.url,

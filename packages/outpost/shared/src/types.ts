@@ -36,6 +36,7 @@ export enum TicketSource {
     GITHUB_DISCUSSION = 'GITHUB_DISCUSSION',
     WEB = 'WEB',
     EMAIL = 'EMAIL',
+    LINEAR = 'LINEAR',
     MANUAL = 'MANUAL',
 }
 

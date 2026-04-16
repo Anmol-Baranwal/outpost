@@ -21,6 +21,12 @@ model Ticket {
     sourceId        String? // External ID for lookups (Discord thread ID, GitHub issue number, etc.)
     sourceUrl       String?
     channel         String? // Discord channel ID, GitHub repo, etc.
+    externalTracker  String?
+    externalId       String?
+    externalUrl      String?
+    internalTracker  String?
+    internalId       String?
+    internalUrl      String?
     additionalInfo  Json?
     suggestedResponse String?
 
@@ -46,6 +52,8 @@ model Ticket {
     @@index([priority])
     @@index([accountId])
     @@index([source, sourceId])
+    @@index([externalTracker, externalId])
+    @@index([internalTracker, internalId])
 }
 
 enum TicketStatus {
@@ -81,6 +89,7 @@ enum TicketSource {
     GITHUB_DISCUSSION
     WEB
     EMAIL
+    LINEAR
     MANUAL
     ORCA
 }
