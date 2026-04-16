@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Teams Bot Setup — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="../" class="nav-brand"> <span class="prompt">$</span> outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="../docs/" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Teams Bot Setup</h1>
+        <p class="lead">
+          The Outpost Teams bot uses the Bot Framework SDK (<code>botbuilder</code>) and Azure Bot
+          Service webhooks to monitor conversations, create support tickets, and deliver AI-powered
+          responses with Adaptive Cards in Microsoft Teams.
+        </p>
+
+        <h2>Overview</h2>
+        <p>
+          The Teams integration registers as an Azure Bot Service application that receives
+          messages via webhooks. When a customer sends a message in a monitored channel or
+          chat, the bot triages it with AI, searches the knowledge base, and replies with
+          rich Adaptive Cards &mdash; all while syncing tickets to the Outpost dashboard.
+        </p>
+
+        <h2>Register an Azure Bot</h2>
+        <ol>
+          <li>Go to the <a href="https://portal.azure.com/" target="_blank">Azure Portal</a> and create a new <strong>Azure Bot</strong> resource</li>
+          <li>Choose <strong>Multi Tenant</strong> for the bot type</li>
+          <li>Under <strong>Configuration</strong>, note the <strong>Microsoft App ID</strong> &mdash; this is <code>TEAMS_APP_ID</code></li>
+          <li>Click <strong>Manage Password</strong> and create a new client secret &mdash; this is <code>TEAMS_APP_PASSWORD</code></li>
+          <li>Note your <strong>Azure AD Tenant ID</strong> &mdash; this is <code>TEAMS_TENANT_ID</code></li>
+          <li>Set the <strong>Messaging endpoint</strong> to <code>https://your-domain.com/api/teams/messages</code></li>
+          <li>Go to <strong>Channels</strong> and enable the <strong>Microsoft Teams</strong> channel</li>
+        </ol>
+
+        <h2>Environment Variables</h2>
+        <p>Add these to your <code>.env</code> file:</p>
+        <div class="code-block">
+          <div class="code-block-header">.env <span class="lang-tag">env</span></div>
+          <pre><code><span class="cm"># Teams Bot</span>
+<span class="key">TEAMS_APP_ID</span>=<span class="str">your-microsoft-app-id</span>
+<span class="key">TEAMS_APP_PASSWORD</span>=<span class="str">your-client-secret</span>
+<span class="key">TEAMS_TENANT_ID</span>=<span class="str">your-azure-ad-tenant-id</span>
+
+<span class="cm"># Team member detection</span>
+<span class="key">TEAM_MEMBER_IDS</span>=<span class="str">aad-object-id-1,aad-object-id-2</span></code></pre>
+        </div>
+
+        <div class="info-box">
+          <p>
+            <strong>Local development:</strong> Use <a href="https://ngrok.com/" target="_blank">ngrok</a>
+            or the <a href="https://learn.microsoft.com/en-us/microsoftteams/platform/toolkit/teams-toolkit-fundamentals" target="_blank">Teams Toolkit</a>
+            to tunnel webhooks to your local machine. The bot listens on port <strong>3003</strong> by default.
+          </p>
+        </div>
+
+        <h2>Features</h2>
+
+        <h3>Message Monitoring</h3>
+        <p>
+          The bot receives messages via the Bot Framework webhook endpoint. When a customer
+          posts in a monitored Teams channel, Outpost automatically:
+        </p>
+        <ol>
+          <li>Detects whether the author is a team member or external customer</li>
+          <li>Runs AI triage to classify priority and category</li>
+          <li>Searches the knowledge base for relevant answers</li>
+          <li>Replies with an Adaptive Card containing the AI-generated response</li>
+          <li>Creates a ticket in the Outpost dashboard linked to the conversation</li>
+        </ol>
+
+        <h3>Conversation Tracking</h3>
+        <p>
+          Once a conversation is linked to a ticket, all subsequent replies are tracked
+          and synced to the Outpost dashboard. The bot maintains conversation references
+          so it can proactively send updates when ticket status changes.
+        </p>
+
+        <h3>AI Responses</h3>
+        <p>
+          Responses are delivered as Adaptive Cards with structured formatting, making
+          them visually distinct from regular messages and easy to interact with.
+        </p>
+
+        <h2>Adaptive Cards</h2>
+        <p>The bot uses three types of Adaptive Cards:</p>
+
+        <h3>Response Cards</h3>
+        <p>
+          AI-generated answers are rendered as Adaptive Cards with action buttons:
+        </p>
+        <ul>
+          <li><strong>"Issue Solved"</strong> &mdash; marks the ticket as resolved</li>
+          <li><strong>"Need more help"</strong> &mdash; escalates to a team member</li>
+        </ul>
+
+        <h3>Ticket-Created Cards</h3>
+        <p>
+          When a new ticket is created, the bot posts a confirmation card showing the
+          ticket ID, priority, and a link to the Outpost dashboard.
+        </p>
+
+        <h3>Escalation Cards</h3>
+        <p>
+          When a ticket is escalated, the assigned team member receives a card with
+          the full conversation context, ticket details, and quick-action buttons
+          for reassignment or priority changes.
+        </p>
+
+        <h2>Team Member Detection</h2>
+        <p>
+          The <code>TEAM_MEMBER_IDS</code> environment variable contains a comma-separated list of
+          Azure AD object IDs for your support team. The bot uses this list to:
+        </p>
+        <ul>
+          <li>Skip AI triage for messages from team members</li>
+          <li>Track team member responses as internal replies on the ticket</li>
+          <li>Calculate response time metrics (first reply from a team member)</li>
+        </ul>
+
+        <div class="info-box">
+          <p>
+            <strong>Finding Azure AD object IDs:</strong> In the Azure Portal, go to
+            <strong>Azure Active Directory &rarr; Users</strong>, click on a user, and copy their
+            <strong>Object ID</strong> from the overview page.
+          </p>
+        </div>
+
+        <h2>Health Check Endpoint</h2>
+        <p>
+          The Teams bot exposes a health check endpoint on port <strong>3003</strong>:
+        </p>
+        <div class="code-block">
+          <div class="code-block-header">HTTP <span class="lang-tag">bash</span></div>
+          <pre><code>GET :3003/health/teams
+
+<span class="cm"># Response</span>
+{ "status": "ok", "connected": true, "tenant": "your-tenant-id" }</code></pre>
+        </div>
+
+        <div class="prev-next">
+          <a href="../slack-bot/">
+            <span class="label">Previous</span>
+            <span class="title">Slack Bot</span>
+          </a>
+          <a href="../github-app/" class="next">
+            <span class="label">Next</span>
+            <span class="title">GitHub App</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span class="prompt">$</span> outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>

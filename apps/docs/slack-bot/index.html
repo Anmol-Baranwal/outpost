@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Slack Bot Setup — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="../" class="nav-brand"> <span class="prompt">$</span> outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="../docs/" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Slack Bot Setup</h1>
+        <p class="lead">
+          The Outpost Slack bot uses <code>@slack/bolt</code> to monitor Slack Connect channels,
+          automatically create support tickets, and deliver AI-powered responses directly in your
+          Slack workspace.
+        </p>
+
+        <h2>Overview</h2>
+        <p>
+          The Slack integration connects to your workspace via Socket Mode, listening for messages
+          in designated Slack Connect channels shared with customers. When a customer posts a
+          message, the bot triages it with AI, searches the knowledge base, and responds in-thread
+          &mdash; all while creating and tracking tickets in the Outpost dashboard.
+        </p>
+
+        <h2>Create a Slack App</h2>
+        <ol>
+          <li>Go to <a href="https://api.slack.com/apps" target="_blank">api.slack.com/apps</a> and click <strong>Create New App</strong></li>
+          <li>Choose <strong>From scratch</strong> and give it a name (e.g., "Outpost Support")</li>
+          <li>Select the workspace where you want to install it</li>
+          <li>Go to <strong>OAuth &amp; Permissions</strong> and add the required bot token scopes (see below)</li>
+          <li>Install the app to your workspace and copy the <strong>Bot User OAuth Token</strong> &mdash; this is <code>SLACK_BOT_TOKEN</code></li>
+          <li>Go to <strong>Basic Information</strong> and copy the <strong>Signing Secret</strong> &mdash; this is <code>SLACK_SIGNING_SECRET</code></li>
+          <li>Enable <strong>Socket Mode</strong> under Settings, generate an app-level token with <code>connections:write</code> scope &mdash; this is <code>SLACK_APP_TOKEN</code></li>
+        </ol>
+
+        <h2>Required Bot Token Scopes</h2>
+        <p>Add these scopes under <strong>OAuth &amp; Permissions &rarr; Bot Token Scopes</strong>:</p>
+        <ul>
+          <li><strong>channels:history</strong> &mdash; read messages in public channels</li>
+          <li><strong>channels:read</strong> &mdash; view basic channel info</li>
+          <li><strong>chat:write</strong> &mdash; send messages as the bot</li>
+          <li><strong>commands</strong> &mdash; register and handle slash commands</li>
+          <li><strong>groups:history</strong> &mdash; read messages in private channels</li>
+          <li><strong>groups:read</strong> &mdash; view basic info about private channels</li>
+          <li><strong>im:history</strong> &mdash; read direct messages</li>
+          <li><strong>users:read</strong> &mdash; view user profiles for team member detection</li>
+        </ul>
+
+        <h2>Environment Variables</h2>
+        <p>Add these to your <code>.env</code> file:</p>
+        <div class="code-block">
+          <div class="code-block-header">.env <span class="lang-tag">env</span></div>
+          <pre><code><span class="cm"># Slack Bot</span>
+<span class="key">SLACK_BOT_TOKEN</span>=<span class="str">xoxb-your-bot-token</span>
+<span class="key">SLACK_APP_TOKEN</span>=<span class="str">xapp-your-app-level-token</span>
+<span class="key">SLACK_SIGNING_SECRET</span>=<span class="str">your-signing-secret</span>
+
+<span class="cm"># Team member detection</span>
+<span class="key">TEAM_MEMBER_IDS</span>=<span class="str">U01ABC123,U02DEF456,U03GHI789</span></code></pre>
+        </div>
+
+        <div class="info-box">
+          <p>
+            <strong>Socket Mode:</strong> The bot uses Socket Mode (<code>SLACK_APP_TOKEN</code>)
+            rather than HTTP webhooks, so you don't need a publicly accessible URL during development.
+            Messages are received over a WebSocket connection.
+          </p>
+        </div>
+
+        <h2>Features</h2>
+
+        <h3>Message Monitoring</h3>
+        <p>
+          The bot listens for new messages in configured Slack Connect channels. When a customer
+          posts a message, Outpost automatically:
+        </p>
+        <ol>
+          <li>Detects whether the author is a team member or external customer (via <code>TEAM_MEMBER_IDS</code>)</li>
+          <li>Runs AI triage to classify priority and category</li>
+          <li>Searches the knowledge base for relevant answers</li>
+          <li>Posts an AI-generated response in the message thread</li>
+          <li>Creates a ticket in the Outpost dashboard linked to the Slack thread</li>
+        </ol>
+
+        <h3>Thread Tracking</h3>
+        <p>
+          Once a thread is linked to a ticket, subsequent replies are tracked and synced
+          to the Outpost dashboard. Team member replies update the ticket status, and customer
+          follow-ups are appended to the conversation history.
+        </p>
+
+        <h3>AI Responses</h3>
+        <p>
+          The bot delivers AI-powered responses using Block Kit formatting for rich,
+          structured messages. Responses include action buttons that let customers indicate
+          whether the answer was helpful.
+        </p>
+
+        <h2>Slash Commands</h2>
+        <p>Register these slash commands in your Slack app configuration:</p>
+        <table class="endpoint-table">
+          <thead><tr><th>Command</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>/outpost-assign</td><td>Assign the current thread's ticket to a team member</td></tr>
+            <tr><td>/outpost-close</td><td>Close the ticket associated with the current thread</td></tr>
+            <tr><td>/outpost-escalate</td><td>Escalate the ticket to a higher priority or different team</td></tr>
+            <tr><td>/outpost-priority</td><td>Set or change the priority level of the current ticket</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Action Buttons (Block Kit)</h2>
+        <p>
+          AI responses include interactive Block Kit buttons that customers can click to
+          provide feedback:
+        </p>
+        <ul>
+          <li><strong>"Issue Solved"</strong> &mdash; marks the ticket as resolved and archives the thread</li>
+          <li><strong>"Need more help"</strong> &mdash; escalates the ticket and notifies the assigned team member</li>
+        </ul>
+        <p>
+          To receive these interactions, enable <strong>Interactivity</strong> in your Slack app settings.
+          With Socket Mode enabled, interactions are delivered over the same WebSocket connection.
+        </p>
+
+        <h2>Team Member Detection</h2>
+        <p>
+          The <code>TEAM_MEMBER_IDS</code> environment variable contains a comma-separated list of
+          Slack user IDs that belong to your support team. The bot uses this list to:
+        </p>
+        <ul>
+          <li>Skip AI triage for messages from team members</li>
+          <li>Track team member responses as internal replies on the ticket</li>
+          <li>Calculate response time metrics (first reply from a team member)</li>
+        </ul>
+
+        <div class="info-box">
+          <p>
+            <strong>Finding user IDs:</strong> Click a user's profile in Slack, then click the
+            three-dot menu and select <strong>Copy member ID</strong>.
+          </p>
+        </div>
+
+        <h2>Health Check Endpoint</h2>
+        <p>
+          The Slack bot exposes a health check endpoint that reports connection status:
+        </p>
+        <div class="code-block">
+          <div class="code-block-header">HTTP <span class="lang-tag">bash</span></div>
+          <pre><code>GET /health/slack
+
+<span class="cm"># Response</span>
+{ "status": "ok", "connected": true, "workspace": "your-workspace" }</code></pre>
+        </div>
+
+        <div class="prev-next">
+          <a href="../discord-bot/">
+            <span class="label">Previous</span>
+            <span class="title">Discord Bot</span>
+          </a>
+          <a href="../teams-bot/" class="next">
+            <span class="label">Next</span>
+            <span class="title">Teams Bot</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span class="prompt">$</span> outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>
