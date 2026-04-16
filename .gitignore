@@ -13,7 +13,7 @@ out/
 !.env.example
 
 # Prisma
-packages/db/src/generated/
+packages/outpost/db/src/generated/
 
 # TypeScript
 *.tsbuildinfo
