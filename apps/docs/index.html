@@ -284,16 +284,24 @@ footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align:center
 
     <div class="demo-grid">
         <div class="demo-panel">
-            <div class="demo-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> docker-compose.yml</div>
-            <div class="demo-body"><pre style="margin:0; font:inherit; color:inherit; white-space:pre;"><span class="highlight">services:</span>
-  <span class="highlight">postgres:</span>
-    image: <span class="file">postgres:16-alpine</span>
-    environment:
-      POSTGRES_DB: <span class="file">outpost</span>
-      POSTGRES_USER: <span class="file">outpost</span>
-      POSTGRES_PASSWORD: <span class="file">outpost</span>
-    ports:
-      - <span class="file">"5432:5432"</span></pre>
+            <div class="demo-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> outpost.config.ts</div>
+            <div class="demo-body"><pre style="margin:0; font:inherit; color:inherit; white-space:pre;"><span class="highlight">discord:</span>
+  token: <span class="file">$DISCORD_TOKEN</span>
+  channels: <span class="file">[support-forum]</span>
+
+<span class="highlight">ai:</span>
+  model: <span class="file">claude-sonnet-4-6</span>
+  pathfinder: <span class="file">mcp.copilotkit.ai</span>
+  autoRespond: <span class="file">true</span>
+
+<span class="highlight">sla:</span>
+  firstResponse: <span class="file">1h</span>
+  resolution: <span class="file">24h</span>
+
+<span class="highlight">routing:</span>
+  - match: <span class="file">[api, production, bug]</span>
+    route: <span class="file">@backend-team</span>
+    priority: <span class="file">HIGH</span></pre>
             </div>
         </div>
         <div class="demo-panel">
