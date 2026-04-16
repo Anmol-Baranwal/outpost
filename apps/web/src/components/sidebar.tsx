@@ -11,6 +11,7 @@ import {
     Megaphone,
     Mail,
     MessageSquare,
+    RefreshCw,
     Settings,
     HelpCircle,
     Mountain,
@@ -37,6 +38,7 @@ const navItems: NavItem[] = [
     { name: 'Agents', href: '/agents', icon: Bot },
     { name: 'Messages', href: '/messaging', icon: Mail, badge: 'New' },
     { name: 'Broadcasts', href: '/broadcasts', icon: Megaphone },
+    { name: 'Sync', href: '/sync', icon: RefreshCw },
     { name: 'Ask AI', href: '/qa', icon: MessageSquare, badge: 'Beta' },
 ];
 
