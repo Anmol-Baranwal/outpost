@@ -7,3 +7,4 @@ export * from './onboarding/index.js';
 export * from './messaging/index.js';
 export * from './integrations/index.js';
 export * from './monitoring/index.js';
+export * from './sync/index.js';
