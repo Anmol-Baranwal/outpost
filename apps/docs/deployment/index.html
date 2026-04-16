@@ -99,33 +99,26 @@
 
         <h2>Platform-Specific Guides</h2>
 
-        <h3>Railway</h3>
-        <ol>
-          <li>Create a new project on <a href="https://railway.app" target="_blank">Railway</a></li>
-          <li>Add a PostgreSQL service with pgvector</li>
-          <li>Deploy each app as a separate service pointing to the same repo</li>
-          <li>Set the root directory for each service (<code>apps/web</code>, <code>apps/discord-bot</code>, <code>apps/github-app</code>)</li>
-          <li>Share the <code>DATABASE_URL</code> across all services via Railway's variable references</li>
-        </ol>
-
-        <h3>Render (Recommended)</h3>
+        <h3>Railway (Recommended)</h3>
         <p>
-          Outpost ships a <code>render.yaml</code> <a href="https://docs.render.com/blueprint-spec" target="_blank">Blueprint</a>
-          that provisions all services and the database in one step.
+          Railway auto-deploys from GitHub and natively supports Docker-based services.
+          The repo includes a <code>railway.toml</code> config for all three services.
         </p>
         <ol>
           <li>Fork or push the repo to GitHub</li>
-          <li>Go to <a href="https://dashboard.render.com/blueprints" target="_blank">Render Blueprints</a> and click <strong>New Blueprint Instance</strong></li>
-          <li>Select the repo &mdash; Render reads <code>render.yaml</code> automatically</li>
-          <li>Fill in the <code>sync: false</code> variables (secrets like <code>DISCORD_TOKEN</code>, <code>ANTHROPIC_API_KEY</code>, etc.)</li>
-          <li>Click <strong>Apply</strong> &mdash; Render creates the database, builds Docker images, and deploys</li>
-          <li>After provisioning, enable pgvector: <code>CREATE EXTENSION IF NOT EXISTS vector;</code></li>
-          <li>Set <code>RENDER_DEPLOY_HOOK_URL</code> as a GitHub Actions secret for CI-triggered deploys</li>
+          <li>Create a new project on <a href="https://railway.app" target="_blank">Railway</a></li>
+          <li>Add a <strong>PostgreSQL</strong> service (Railway has native Postgres; pgvector is supported via <code>CREATE EXTENSION vector</code>)</li>
+          <li>Add three services from the repo, each pointing to its Dockerfile:
+            <ul>
+              <li><strong>outpost-web</strong> &mdash; <code>apps/web/Dockerfile</code> (port 3000, health check <code>/api/health</code>)</li>
+              <li><strong>outpost-discord-bot</strong> &mdash; <code>apps/discord-bot/Dockerfile</code> (background worker)</li>
+              <li><strong>outpost-github-app</strong> &mdash; <code>apps/github-app/Dockerfile</code> (port 3200, needs public URL for webhooks)</li>
+            </ul>
+          </li>
+          <li>Share <code>DATABASE_URL</code> across all services via Railway's variable references (<code>${{Postgres.DATABASE_URL}}</code>)</li>
+          <li>Fill in secret environment variables (<code>DISCORD_TOKEN</code>, <code>ANTHROPIC_API_KEY</code>, etc.)</li>
+          <li>Configure custom domains for the web dashboard and GitHub App webhook endpoint</li>
         </ol>
-        <p>
-          The blueprint creates: <strong>outpost-web</strong> (web service), <strong>outpost-discord-bot</strong> (worker),
-          <strong>outpost-github-app</strong> (worker), and <strong>outpost-db</strong> (PostgreSQL 16).
-        </p>
 
         <h3>VPS / Bare Metal</h3>
         <div class="code-block">

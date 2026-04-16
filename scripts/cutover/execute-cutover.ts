@@ -161,12 +161,12 @@ export async function disableShadowMode(confirm: boolean): Promise<StepResult> {
         return {
             step,
             status: 'SKIP',
-            message: 'Dry run — would set SHADOW_MODE=false on Render',
+            message: 'Dry run — would set SHADOW_MODE=false on Railway',
             timestamp: new Date(),
         };
     }
 
-    // In a real deployment, this would call the Render API to update env vars.
+    // In a real deployment, this would call the Railway API to update env vars.
     // For now, we verify the current state and log the instruction.
     const currentValue = process.env.SHADOW_MODE;
     if (currentValue !== 'true') {
@@ -178,7 +178,7 @@ export async function disableShadowMode(confirm: boolean): Promise<StepResult> {
         };
     }
 
-    console.log('  ACTION REQUIRED: Set SHADOW_MODE=false in Render environment variables');
+    console.log('  ACTION REQUIRED: Set SHADOW_MODE=false in Railway environment variables');
     console.log('  Then redeploy the discord-bot service.');
 
     return {

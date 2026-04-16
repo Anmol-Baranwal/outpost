@@ -7,27 +7,31 @@ Outpost consists of three services (web dashboard, Discord bot, GitHub app) shar
 - Node.js 20+
 - PostgreSQL 16 with pgvector extension
 - Docker (for containerized deployment)
-- Render account (recommended) or equivalent PaaS
+- Railway account (recommended) or equivalent PaaS
 
-## Quick Start with Render Blueprint
+## Quick Start with Railway
 
-The repo includes a `render.yaml` blueprint that provisions everything in one step.
+Railway auto-deploys from GitHub and natively supports Docker-based services.
 
 1. Push the repo to GitHub
-2. Go to [Render Blueprints](https://dashboard.render.com/blueprints) and click **New Blueprint Instance**
-3. Select the repo -- Render reads `render.yaml` automatically
-4. Fill in the secret environment variables (`DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, etc.)
-5. Click **Apply**
-6. After provisioning, connect to the database and run: `CREATE EXTENSION IF NOT EXISTS vector;`
-7. Add `RENDER_DEPLOY_HOOK_URL` as a GitHub Actions secret for CI-triggered deploys
+2. Create a new project on [Railway](https://railway.app)
+3. Add a **PostgreSQL** service (Railway has native Postgres with pgvector support)
+4. Enable pgvector: connect to the database and run `CREATE EXTENSION IF NOT EXISTS vector;`
+5. Add three services from the repo, each pointing to its Dockerfile:
+   - **outpost-web** — `apps/web/Dockerfile` (web service, port 3000, health check `/api/health`)
+   - **outpost-discord-bot** — `apps/discord-bot/Dockerfile` (background worker)
+   - **outpost-github-app** — `apps/github-app/Dockerfile` (web service, port 3200, needs public URL for webhooks)
+6. Share `DATABASE_URL` across all services using Railway's variable references (`${{Postgres.DATABASE_URL}}`)
+7. Fill in the remaining secret environment variables (`DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, etc.)
+8. Configure custom domains for the web dashboard and GitHub App webhook endpoint
 
-### What the blueprint creates
+### What gets deployed
 
 | Service              | Type       | Port | Health Check       |
 |----------------------|------------|------|--------------------|
 | outpost-web          | Web        | 3000 | GET /api/health    |
 | outpost-discord-bot  | Worker     | 3001 | GET /health        |
-| outpost-github-app   | Worker     | 3200 | GET /health        |
+| outpost-github-app   | Web        | 3200 | GET /health        |
 | outpost-db           | PostgreSQL | --   | --                 |
 
 ## Environment Variables
@@ -73,7 +77,7 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 5. Type check
 6. Run tests
 
-On merge to main, if `RENDER_DEPLOY_HOOK_URL` is set as a GitHub secret, CI triggers a Render deploy automatically.
+On merge to main, Railway auto-deploys via its GitHub integration — no deploy hooks needed.
 
 ## Monitoring
 
@@ -107,7 +111,7 @@ All three services expose health endpoints returning JSON:
 
 ## Database Setup
 
-After provisioning PostgreSQL:
+After provisioning PostgreSQL (Railway supports pgvector via `CREATE EXTENSION`):
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;

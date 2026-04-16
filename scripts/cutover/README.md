@@ -7,12 +7,12 @@ Step-by-step procedure for switching from Orca (app.getorca.ai) to Outpost as th
 Before starting the parallel run, verify:
 
 - [ ] **Database migrated** — `npx tsx scripts/migrate-from-orca.ts` completed successfully
-- [ ] **Environment variables set** on Render for all services:
+- [ ] **Environment variables set** on Railway for all services:
   - `DATABASE_URL`, `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `GUILD_ID`
   - `MONITORED_CHANNEL_IDS` (comma-separated forum channel IDs)
   - `ANTHROPIC_API_KEY` (for AI responses)
   - `SHADOW_MODE=true` (critical — prevents double-posting)
-- [ ] **Render services deployed** — `outpost-web`, `outpost-api`, `outpost-discord-bot`, `outpost-worker`
+- [ ] **Railway services deployed** — `outpost-web`, `outpost-discord-bot`, `outpost-github-app`
 - [ ] **Discord bot connected** — bot is online in the server with correct permissions
 - [ ] **GitHub app installed** — if using GitHub integration for issue tracking
 - [ ] **Pathfinder indexed** — knowledge base is populated and responding
@@ -24,7 +24,7 @@ Shadow mode lets Outpost monitor the same channels as Orca without posting respo
 
 ### Enable Shadow Mode
 
-1. Set `SHADOW_MODE=true` in the discord-bot's environment variables on Render
+1. Set `SHADOW_MODE=true` in the discord-bot's environment variables on Railway
 2. Deploy the discord-bot service
 3. Verify the bot is online: check the `/health` endpoint and Discord presence
 

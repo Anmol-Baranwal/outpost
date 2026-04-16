@@ -4,7 +4,7 @@ const startedAt = Date.now();
 
 /**
  * Lightweight HTTP health-check server for the Discord bot.
- * Render (and other orchestrators) hit this to know the worker is alive.
+ * Railway (and other orchestrators) hit this to know the worker is alive.
  */
 export function startHealthServer(port: number = 3001): Server {
     const server = createServer((req, res) => {

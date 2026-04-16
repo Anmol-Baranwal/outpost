@@ -68,12 +68,12 @@ async function enableShadowMode(confirm: boolean): Promise<RollbackStep> {
         return {
             step,
             status: 'SKIP',
-            message: 'Dry run — would set SHADOW_MODE=true on Render',
+            message: 'Dry run — would set SHADOW_MODE=true on Railway',
             timestamp: new Date(),
         };
     }
 
-    console.log('  ACTION REQUIRED: Set SHADOW_MODE=true in Render environment variables');
+    console.log('  ACTION REQUIRED: Set SHADOW_MODE=true in Railway environment variables');
     console.log('  Then redeploy the discord-bot service.');
     console.log('  This prevents Outpost from posting to Discord while Orca resumes.');
 
