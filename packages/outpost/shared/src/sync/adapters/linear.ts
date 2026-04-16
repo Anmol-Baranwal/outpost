@@ -239,27 +239,17 @@ export class LinearAdapter implements InternalTracker {
     }
 
     async pushAssignee(link: TicketExternalLinkRef, member: TeamMemberRef): Promise<void> {
-        // Resolve the Outpost member to a Linear user ID via identity mapping
-        const externalIdentity = await this.identityMapper.resolve('linear', member.id);
-
-        // If we found a mapping, the externalId stored IS the Linear user ID.
-        // The identity mapper stores plugin + externalId, where externalId is the
-        // Linear user ID and memberId is the Outpost member ID. We need to look up
-        // by memberId to get the Linear user ID — but IdentityMapper.resolve looks up
-        // by externalId. So we use the member.id directly if we can find a mapping
-        // where the memberId matches.
-        //
-        // For simplicity, we look up the member's external identity by plugin name,
-        // using the member email as a proxy to find the linear user ID.
-        // In practice, the mapping is registered during import or setup.
-        const assigneeId = externalIdentity?.id;
-        if (!assigneeId) {
+        // Resolve the Outpost member ID to a Linear user ID via identity mapping.
+        // resolveByMemberId looks up by memberId (Outpost UUID) and returns the
+        // externalId (Linear user ID).
+        const identity = await this.identityMapper.resolveByMemberId('linear', member.id);
+        if (!identity) {
             // No identity mapping — skip silently
             return;
         }
 
         const issue = await this.client.issue(link.externalId);
-        await issue.update({ assigneeId });
+        await issue.update({ assigneeId: identity.externalId });
     }
 
     async pushPriority(link: TicketExternalLinkRef, priority: TicketPriority): Promise<void> {

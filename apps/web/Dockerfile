@@ -38,6 +38,11 @@ WORKDIR /app
 COPY --from=installer --chown=outpost:outpost /app/apps/web/.next/standalone ./
 COPY --from=installer --chown=outpost:outpost /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=installer --chown=outpost:outpost /app/apps/web/public ./apps/web/public
+# Prisma query engine for linux-musl (required by Next.js standalone)
+COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/*.node ./node_modules/.prisma/client/
+COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/schema.prisma ./node_modules/.prisma/client/
+# Prisma schema for db push on first run
+COPY --from=installer --chown=outpost:outpost /app/packages/outpost/db/prisma ./packages/outpost/db/prisma
 
 USER outpost
 ENV NODE_ENV=production
@@ -47,4 +52,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3000/api/health || exit 1
 
-CMD ["node", "apps/web/server.js"]
+COPY --from=installer --chown=outpost:outpost /app/apps/web/start.sh ./apps/web/start.sh
+COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/prisma*/node_modules/prisma ./node_modules/prisma
+COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/prisma*/node_modules/.bin/prisma ./node_modules/.bin/prisma
+
+CMD ["sh", "apps/web/start.sh"]

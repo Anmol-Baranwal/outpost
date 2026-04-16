@@ -119,7 +119,7 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse): Promise
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         console.error(`[Linear Sync] Error processing webhook: ${message}`);
-        jsonResponse(res, 400, { error: message });
+        jsonResponse(res, 500, { error: message });
     }
 }
 
@@ -151,11 +151,35 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 
 const startedAt = Date.now();
 
+// Wire up real sync deps before the webhook handler processes any events.
+// Uses a lazy import to avoid circular dependency issues with Prisma.
+async function bootstrap(): Promise<void> {
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    setSyncDeps({
+        prisma: {
+            ticket: prisma.ticket,
+            ticketExternalLink: prisma.ticketExternalLink,
+            message: prisma.message,
+        },
+    });
+
+    console.log('[Linear Sync] Sync deps initialized');
+}
+
 const server: Server = createServer(handleRequest);
 
-server.listen(config.port, () => {
-    console.log(`[Linear Sync] Webhook server listening on port ${config.port}`);
-});
+bootstrap()
+    .then(() => {
+        server.listen(config.port, () => {
+            console.log(`[Linear Sync] Webhook server listening on port ${config.port}`);
+        });
+    })
+    .catch((err) => {
+        console.error('[Linear Sync] Failed to initialize:', err);
+        process.exit(1);
+    });
 
 // Graceful shutdown
 const shutdown = () => {

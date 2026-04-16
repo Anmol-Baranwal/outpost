@@ -78,16 +78,20 @@ export function parseIssueUpdated(payload: unknown): ParsedIssueUpdated {
         url: data.url,
     };
 
-    // Only include fields that were actually changed
-    if (data.title !== undefined) result.title = data.title;
-    if (data.description !== undefined) result.description = data.description;
-    if (data.state?.name !== undefined) result.status = data.state.name;
-    if (data.priority !== undefined) result.priority = data.priority;
-    if (data.priorityLabel !== undefined) result.priorityLabel = data.priorityLabel;
-    if (data.assigneeId !== undefined || data.assignee?.id !== undefined) {
+    // Only include fields that were actually changed — check updatedFrom keys
+    // to determine what changed, then read current values from data.
+    const changed = p.updatedFrom ?? {};
+    if ('title' in changed) result.title = data.title;
+    if ('description' in changed) result.description = data.description;
+    if ('stateId' in changed && data.state?.name !== undefined) result.status = data.state.name;
+    if ('priority' in changed) {
+        result.priority = data.priority;
+        if (data.priorityLabel !== undefined) result.priorityLabel = data.priorityLabel;
+    }
+    if ('assigneeId' in changed) {
         result.assigneeId = data.assigneeId ?? data.assignee?.id ?? null;
     }
-    if (data.labels !== undefined) result.labels = data.labels;
+    if ('labelIds' in changed) result.labels = data.labels;
 
     return result;
 }

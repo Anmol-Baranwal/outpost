@@ -75,7 +75,7 @@ export function createTrackerSyncHandler(engine: SyncEngine) {
         const payloadHash = engine.computeHash(ticketId, targetPlugin, action, changeData);
         const isEcho = await engine.isEchoEvent(
             ticketId,
-            targetPlugin,  // We are pushing FROM outpost TO target
+            'outpost',  // We are pushing FROM outpost TO target
             targetPlugin,
             payloadHash,
         );

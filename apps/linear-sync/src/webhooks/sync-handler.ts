@@ -95,12 +95,12 @@ export async function handleIssueCreated(
 
     const ticket = await deps.prisma.ticket.create({
         data: {
+            displayId: `TKT-${parsed.issueId.slice(0, 8).toUpperCase()}`,
             title: parsed.title,
             description: parsed.description ?? '',
             status,
             priority,
             source: 'LINEAR' as TicketSource,
-            sourceSystem: 'linear',
             internalTracker: 'linear',
             internalId: parsed.issueId,
             externalUrl: parsed.url,
@@ -143,9 +143,7 @@ export async function handleIssueUpdated(
         return { ticketId: '', updated: false };
     }
 
-    const updateData: Record<string, unknown> = {
-        sourceSystem: 'linear',
-    };
+    const updateData: Record<string, unknown> = {};
 
     if (parsed.status !== undefined) {
         updateData.status = mapLinearStatus(parsed.status);
@@ -153,14 +151,6 @@ export async function handleIssueUpdated(
 
     if (parsed.priority !== undefined) {
         updateData.priority = mapLinearPriority(parsed.priority);
-    }
-
-    if (parsed.assigneeId !== undefined) {
-        updateData.assigneeExternalId = parsed.assigneeId;
-    }
-
-    if (parsed.labels !== undefined) {
-        updateData.labels = parsed.labels.map(l => l.name);
     }
 
     if (parsed.title !== undefined) {
@@ -199,12 +189,9 @@ export async function handleCommentCreated(
     const message = await deps.prisma.message.create({
         data: {
             ticketId: link.ticketId,
-            body: parsed.body,
+            content: parsed.body,
             type: 'USER',
-            sourceSystem: 'linear',
-            externalId: parsed.commentId,
-            authorName: parsed.userName ?? 'Linear User',
-            authorExternalId: parsed.userId,
+            author: parsed.userName ?? 'Linear User',
         },
     });
 

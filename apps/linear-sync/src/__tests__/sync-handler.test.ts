@@ -120,12 +120,12 @@ describe('handleIssueCreated', () => {
 
         expect(deps.prisma.ticket.create).toHaveBeenCalledWith({
             data: {
+                displayId: expect.stringMatching(/^TKT-/),
                 title: 'Fix login bug',
                 description: 'Users cannot log in',
                 status: 'IN_PROGRESS',
                 priority: 'HIGH',
                 source: 'LINEAR',
-                sourceSystem: 'linear',
                 internalTracker: 'linear',
                 internalId: 'lin-issue-123',
                 externalUrl: 'https://linear.app/team/issue/ABC-123',
@@ -206,7 +206,6 @@ describe('handleIssueUpdated', () => {
             where: { id: 'tkt-1' },
             data: expect.objectContaining({
                 status: 'RESOLVED',
-                sourceSystem: 'linear',
             }),
         });
     });
@@ -261,7 +260,7 @@ describe('handleIssueUpdated', () => {
         expect(deps.prisma.ticket.update).not.toHaveBeenCalled();
     });
 
-    it('updates labels when Linear labels change', async () => {
+    it('updates title when Linear title changes', async () => {
         vi.mocked(deps.prisma.ticketExternalLink.findUnique).mockResolvedValue({
             id: 'link-1',
             ticketId: 'tkt-1',
@@ -272,8 +271,8 @@ describe('handleIssueUpdated', () => {
         const parsed: ParsedIssueUpdated = {
             action: 'update',
             issueId: 'lin-issue-123',
-            updatedFields: ['labelIds'],
-            labels: [{ id: 'l1', name: 'bug' }, { id: 'l2', name: 'p1' }],
+            updatedFields: ['title'],
+            title: 'Updated title',
             teamId: 'team-1',
             updatedAt: '2026-04-15T11:00:00.000Z',
             url: 'https://linear.app/team/issue/ABC-123',
@@ -285,7 +284,7 @@ describe('handleIssueUpdated', () => {
         expect(deps.prisma.ticket.update).toHaveBeenCalledWith({
             where: { id: 'tkt-1' },
             data: expect.objectContaining({
-                labels: ['bug', 'p1'],
+                title: 'Updated title',
             }),
         });
     });
@@ -327,12 +326,9 @@ describe('handleCommentCreated', () => {
         expect(deps.prisma.message.create).toHaveBeenCalledWith({
             data: {
                 ticketId: 'tkt-1',
-                body: 'This is a comment from Linear',
+                content: 'This is a comment from Linear',
                 type: 'USER',
-                sourceSystem: 'linear',
-                externalId: 'comment-abc',
-                authorName: 'Alice',
-                authorExternalId: 'user-xyz',
+                author: 'Alice',
             },
         });
     });
@@ -378,7 +374,7 @@ describe('handleCommentCreated', () => {
 
         expect(deps.prisma.message.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
-                authorName: 'Linear User',
+                author: 'Linear User',
             }),
         });
     });

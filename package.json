@@ -16,6 +16,7 @@
         "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\""
     },
     "devDependencies": {
+        "@linear/sdk": "^81.0.0",
         "@typescript-eslint/eslint-plugin": "^8.58.2",
         "@typescript-eslint/parser": "^8.58.2",
         "eslint": "^9.16.0",
@@ -30,6 +31,5 @@
         "node": ">=20.0.0"
     },
     "dependencies": {
-        "@linear/sdk": "^81.0.0"
     }
 }

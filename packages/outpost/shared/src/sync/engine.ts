@@ -6,7 +6,6 @@
  * via TRACKER_SYNC jobs in the queue.
  */
 
-import { createHash } from 'crypto';
 import type {
     ExternalTracker,
     InternalTracker,
@@ -16,11 +15,7 @@ import type {
     SyncEngineError,
     TicketChangeAction,
 } from './types.js';
-
-// ─── Echo Detection Config ─────────────────────────────────────────────────
-
-/** Window in milliseconds to check for duplicate sync events. */
-const ECHO_WINDOW_MS = 60_000;
+import { EchoGuard } from './echo-guard.js';
 
 // ─── Types for Dependencies ────────────────────────────────────────────────
 
@@ -30,13 +25,6 @@ const ECHO_WINDOW_MS = 60_000;
  */
 export interface SyncEngineDeps {
     prisma: {
-        syncEvent: {
-            findFirst: (args: {
-                where: Record<string, unknown>;
-                orderBy?: Record<string, unknown>;
-            }) => Promise<{ id: string; createdAt: Date } | null>;
-            create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
-        };
         ticketExternalLink: {
             findMany: (args: {
                 where: Record<string, unknown>;
@@ -71,6 +59,7 @@ export interface SyncEngineDeps {
         };
     };
     createJob: (type: string, payload: Record<string, unknown>) => Promise<string>;
+    echoGuard: EchoGuard;
 }
 
 // ─── SyncEngine ────────────────────────────────────────────────────────────
@@ -143,7 +132,10 @@ export class SyncEngine {
                 continue;
             }
 
-            const payloadHash = this.computeHash(ticketId, pluginName, change.action, {
+            const payloadHash = EchoGuard.computeHash({
+                entityId: ticketId,
+                targetPlugin: pluginName,
+                action: change.action,
                 status: change.status,
                 priority: change.priority,
                 comment: change.comment,
@@ -151,14 +143,14 @@ export class SyncEngine {
             });
 
             // Echo detection: skip if we recently synced this exact change
-            const isEcho = await this.isEchoEvent(
-                ticketId,
+            const shouldSync = await this.deps.echoGuard.shouldSync(
                 sourcePlugin,
                 pluginName,
+                ticketId,
                 payloadHash,
             );
 
-            if (isEcho) {
+            if (!shouldSync) {
                 continue;
             }
 
@@ -247,7 +239,7 @@ export class SyncEngine {
         return this.onTicketChange(link.ticketId, change, pluginName);
     }
 
-    // ─── Echo Detection ────────────────────────────────────────────────
+    // ─── Echo Detection (delegated to EchoGuard) ──────────────────────
 
     /**
      * Check if a matching SyncEvent was created recently, indicating
@@ -259,22 +251,13 @@ export class SyncEngine {
         targetPlugin: string,
         payloadHash: string,
     ): Promise<boolean> {
-        const cutoff = new Date(Date.now() - ECHO_WINDOW_MS);
-
-        const existing = await this.deps.prisma.syncEvent.findFirst({
-            where: {
-                entityId,
-                // An echo means the target pushed TO the source,
-                // and now the source is trying to push back.
-                sourcePlugin: targetPlugin,
-                targetPlugin: sourcePlugin,
-                payloadHash,
-                createdAt: { gte: cutoff },
-            },
-            orderBy: { createdAt: 'desc' },
-        });
-
-        return existing !== null;
+        const shouldSync = await this.deps.echoGuard.shouldSync(
+            sourcePlugin,
+            targetPlugin,
+            entityId,
+            payloadHash,
+        );
+        return !shouldSync;
     }
 
     /**
@@ -283,25 +266,22 @@ export class SyncEngine {
     async recordSyncEvent(
         sourcePlugin: string,
         targetPlugin: string,
-        entityType: string,
+        _entityType: string,
         entityId: string,
         action: string,
         payloadHash: string,
         status: 'success' | 'failure',
         error?: string,
     ): Promise<void> {
-        await this.deps.prisma.syncEvent.create({
-            data: {
-                sourcePlugin,
-                targetPlugin,
-                entityType,
-                entityId,
-                action,
-                payloadHash,
-                status,
-                error: error ?? null,
-            },
-        });
+        await this.deps.echoGuard.recordSync(
+            sourcePlugin,
+            targetPlugin,
+            entityId,
+            action,
+            payloadHash,
+            status,
+            error,
+        );
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────
@@ -313,7 +293,7 @@ export class SyncEngine {
         action: TicketChangeAction | string,
         change: Record<string, unknown>,
     ): string {
-        const canonical = JSON.stringify({
+        return EchoGuard.computeHash({
             entityId,
             targetPlugin,
             action,
@@ -322,6 +302,5 @@ export class SyncEngine {
             comment: change.comment,
             labels: change.labels,
         });
-        return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
     }
 }

@@ -18,6 +18,10 @@ export interface IdentityMapperDeps {
             include: { member: boolean };
         }): Promise<IdentityWithMember | null>;
 
+        findFirst(args: {
+            where: { plugin: string; memberId: string };
+        }): Promise<{ id: string; plugin: string; externalId: string; memberId: string } | null>;
+
         findMany(args: {
             where: { plugin: string; externalId: { in: string[] } };
             include: { member: boolean };
@@ -85,6 +89,22 @@ export class IdentityMapper {
                 memberId,
             },
         });
+    }
+
+    /**
+     * Resolve an Outpost member ID to their external identity for a given plugin.
+     * Returns the external identity (with externalId) or null if not found.
+     */
+    async resolveByMemberId(
+        plugin: string,
+        memberId: string,
+    ): Promise<{ externalId: string; memberId: string } | null> {
+        const identity = await this.prisma.externalIdentity.findFirst({
+            where: { plugin, memberId },
+        });
+
+        if (!identity) return null;
+        return { externalId: identity.externalId, memberId: identity.memberId };
     }
 
     /**

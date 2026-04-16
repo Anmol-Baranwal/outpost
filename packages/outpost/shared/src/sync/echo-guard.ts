@@ -29,7 +29,7 @@ export interface EchoGuardDeps {
     };
 }
 
-export type SyncEventStatus = 'success' | 'failure' | 'conflict';
+export type SyncEventStatus = 'pending' | 'success' | 'failure' | 'conflict';
 
 // ─── Default Config ───────────────────────────────────────────────────────
 

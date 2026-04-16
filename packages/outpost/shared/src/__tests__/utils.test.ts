@@ -106,10 +106,10 @@ describe('truncate', () => {
         expect(truncate('hello world', 8)).toBe('hello...');
     });
 
-    it('handles maxLength < 3 (ellipsis takes all space)', () => {
-        // slice(0, -1) + '...' => empty + '...' for maxLength=2
-        const result = truncate('hello', 2);
-        expect(result).toContain('...');
+    it('handles maxLength <= 3 by slicing without ellipsis', () => {
+        expect(truncate('hello', 2)).toBe('he');
+        expect(truncate('hello', 1)).toBe('h');
+        expect(truncate('hello', 3)).toBe('hel');
     });
 
     it('returns empty string for empty input', () => {
