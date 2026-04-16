@@ -22,6 +22,8 @@ RUN pnpm install --frozen-lockfile
 
 # Copy pruned source and build
 COPY --from=pruner /app/out/full/ .
+# turbo prune omits the root tsconfig.json that packages/outpost/tsconfig.base.json extends
+COPY --from=pruner /app/tsconfig.json ./tsconfig.json
 RUN pnpm turbo run build --filter=@copilotkit/outpost-web
 
 # ── Stage 3: production image ────────────────────────────────────────────────

@@ -20,6 +20,7 @@ COPY --from=pruner /app/out/json/ .
 RUN pnpm install --frozen-lockfile
 
 COPY --from=pruner /app/out/full/ .
+COPY --from=pruner /app/tsconfig.json ./tsconfig.json
 RUN pnpm turbo run build --filter=@copilotkit/outpost-linear-sync
 
 # ── Stage 3: production image ────────────────────────────────────────────────
