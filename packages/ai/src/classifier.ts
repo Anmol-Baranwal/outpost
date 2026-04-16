@@ -6,14 +6,15 @@ import { config } from './config.js';
 const CLASSIFIER_SYSTEM_PROMPT = `You are a support ticket classifier for CopilotKit, an open-source AI framework. Classify the ticket and respond with ONLY a JSON object (no markdown, no explanation):
 
 {
-  "priority": "LOW" | "MEDIUM" | "HIGH",
+  "priority": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
   "type": "BUG" | "FEATURE_REQUEST" | "QUESTION" | "INTEGRATION_HELP" | "ACCOUNT_ISSUE" | "OTHER",
   "tags": ["tag1", "tag2"],
   "reasoning": "<one sentence>"
 }
 
 Classification guidelines:
-- **HIGH priority**: Error messages, crashes, production issues, security concerns, data loss
+- **CRITICAL priority**: Security vulnerabilities, data loss, production outages
+- **HIGH priority**: Error messages, crashes, production issues, security concerns
 - **MEDIUM priority**: Bugs in non-critical flows, integration problems, performance issues
 - **LOW priority**: Feature requests, how-to questions, general inquiries, documentation questions
 
@@ -128,7 +129,7 @@ export class TicketClassifier {
         }
 
         // Type detection
-        let type = TicketType.FEATURE_REQUEST;
+        let type = TicketType.OTHER;
         const issuePatterns = [
             /error/i, /bug/i, /crash/i, /broken/i, /not working/i,
             /fail/i, /issue/i, /problem/i, /wrong/i,

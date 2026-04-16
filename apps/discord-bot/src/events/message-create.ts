@@ -25,7 +25,12 @@ export async function handleMessageCreate(message: Message): Promise<void> {
 
         // In shadow mode, record the message silently without triggering visible responses
         if (isShadowMode() && ticket) {
-            return await handleShadowMessage(message, ticket.id, threadId);
+            try {
+                return await handleShadowMessage(message, ticket.id, threadId);
+            } catch (error) {
+                console.error(`[Discord Bot] Shadow mode message handling failed for thread ${threadId}:`, error);
+                return;
+            }
         }
         if (!ticket) {
             // This thread isn't tracked as a ticket, ignore it

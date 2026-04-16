@@ -176,12 +176,7 @@ export class PathfinderClient {
             }
         } catch (error) {
             console.warn(`[Pathfinder] Failed to parse search results JSON:`, error);
-            // If not JSON, treat the text content as a single result
-            return [{
-                title: 'Pathfinder Result',
-                content: text,
-                score: 0.5,
-            }];
+            return [];
         }
 
         return [];

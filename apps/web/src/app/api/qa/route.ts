@@ -75,7 +75,7 @@ export async function POST(request: Request) {
                     sendEvent(
                         JSON.stringify({
                             type: 'metadata',
-                            confidence: result.confidence as ConfidenceLevel,
+                            confidence: result.confidenceLevel as ConfidenceLevel,
                             sources: result.searchResults.map((s: SearchResult) => ({
                                 title: s.title,
                                 content: s.content,

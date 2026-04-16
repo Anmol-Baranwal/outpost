@@ -122,23 +122,30 @@ export async function handleShadowMessage(
     ticketId: string,
     threadId: string,
 ): Promise<void> {
-    await prisma.message.create({
-        data: {
+    try {
+        await prisma.message.create({
+            data: {
+                ticketId,
+                author: `${message.author.tag} (${message.author.id})`,
+                content: truncate(message.content, 8000),
+                type: 'USER',
+            },
+        });
+
+        // Enqueue AI response (shadow mode checked at handler level via SHADOW_MODE env)
+        await createJob(JobType.AI_RESPONSE, {
             ticketId,
-            author: `${message.author.tag} (${message.author.id})`,
-            content: truncate(message.content, 8000),
-            type: 'USER',
-        },
-    });
+            threadId,
+            source: 'discord' as const,
+        });
 
-    // Enqueue AI response (shadow mode checked at handler level via SHADOW_MODE env)
-    await createJob(JobType.AI_RESPONSE, {
-        ticketId,
-        threadId,
-        source: 'discord' as const,
-    });
-
-    console.log(
-        `[Shadow Mode] Recorded message from ${message.author.tag} on ticket ${ticketId}`,
-    );
+        console.log(
+            `[Shadow Mode] Recorded message from ${message.author.tag} on ticket ${ticketId}`,
+        );
+    } catch (error) {
+        console.error(
+            `[Shadow Mode] Failed to record message from ${message.author.tag} on ticket ${ticketId}:`,
+            error,
+        );
+    }
 }

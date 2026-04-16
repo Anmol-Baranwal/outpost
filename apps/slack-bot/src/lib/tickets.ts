@@ -1,4 +1,5 @@
 import { prisma } from '@outpost/db';
+import { config } from '../config.js';
 
 /**
  * Find a ticket by its Slack thread timestamp and channel ID.
@@ -20,6 +21,8 @@ export async function findTicketByThreadTs(channelId: string, threadTs: string) 
  * that is linked to a TeamMember via email.
  */
 export async function isTeamMember(slackUserId: string): Promise<boolean> {
+    if (config.teamMemberIds.includes(slackUserId)) return true;
+
     const user = await prisma.user.findFirst({
         where: {
             externalId: slackUserId,

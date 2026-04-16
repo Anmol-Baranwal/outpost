@@ -95,7 +95,7 @@ describe('handleDiscussionCreated', () => {
             data: expect.objectContaining({
                 displayId: 'TKT-DS01',
                 source: 'GITHUB_DISCUSSION',
-                sourceId: '7',
+                sourceId: 'CopilotKit/CopilotKit#7',
                 status: 'OPEN',
                 priority: 'MEDIUM',
                 type: 'QUESTION',

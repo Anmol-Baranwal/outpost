@@ -68,7 +68,7 @@ describe('ResponseGenerator', () => {
             );
 
             expect(result.text).toBe('Here is how to use CopilotKit actions...');
-            expect(result.confidence).toBeGreaterThan(0);
+            expect(result.confidenceScore).toBeGreaterThan(0);
             expect(result.confidenceLevel).toBeDefined();
             expect(result.sources).toEqual(sampleSources);
             expect(result.tokenUsage).toEqual({ inputTokens: 500, outputTokens: 100 });
@@ -119,7 +119,7 @@ describe('ResponseGenerator', () => {
             );
 
             expect(result.text).toContain('unable to generate');
-            expect(result.confidence).toBe(0);
+            expect(result.confidenceScore).toBe(0);
             expect(result.confidenceLevel).toBe(ConfidenceLevel.LOW);
             expect(result.autoSend).toBe(false);
         });

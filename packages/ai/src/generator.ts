@@ -66,16 +66,16 @@ export class ResponseGenerator {
                 outputTokens: message.usage.output_tokens,
             };
 
-            const confidence = this.assessConfidence(sources, responseText);
-            const confidenceLevel = this.classifyConfidence(confidence);
+            const confidenceScore = this.assessConfidence(sources, responseText);
+            const confidenceLevel = this.classifyConfidence(confidenceScore);
             const latencyMs = Date.now() - startTime;
 
             return {
                 text: responseText,
-                confidence,
+                confidenceScore,
                 confidenceLevel,
                 sources,
-                autoSend: confidence >= AI_CONFIDENCE.AUTO_RESPOND,
+                autoSend: confidenceScore >= AI_CONFIDENCE.AUTO_RESPOND,
                 reasoning: `Based on ${sources.length} source(s) with avg relevance ${this.avgScore(sources).toFixed(2)}`,
                 tokenUsage,
                 latencyMs,
@@ -87,7 +87,7 @@ export class ResponseGenerator {
             // Never crash — return a graceful fallback
             return {
                 text: 'I apologize, but I was unable to generate a response at this time. A human support agent will follow up shortly.',
-                confidence: 0,
+                confidenceScore: 0,
                 confidenceLevel: ConfidenceLevel.LOW,
                 sources,
                 autoSend: false,

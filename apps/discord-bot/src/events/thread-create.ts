@@ -35,7 +35,12 @@ export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: bo
         const authorTag = starterMessage?.author.tag ?? 'Unknown';
         const authorId = starterMessage?.author.id ?? '';
         const displayId = generateTicketId();
-        return void await handleShadowThreadCreate(thread, displayId, content, authorTag, authorId);
+        try {
+            return void await handleShadowThreadCreate(thread, displayId, content, authorTag, authorId);
+        } catch (error) {
+            console.error(`[Discord Bot] Shadow mode thread handling failed for thread ${thread.id}:`, error);
+            return;
+        }
     }
 
     console.log(

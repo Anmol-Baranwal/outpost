@@ -30,7 +30,7 @@ export interface GeneratedResponse {
     /** The generated response text */
     text: string;
     /** Confidence score from 0 to 1 */
-    confidence: number;
+    confidenceScore: number;
     /** Classified confidence level */
     confidenceLevel: ConfidenceLevel;
     /** Search results used as context for generation */
@@ -180,7 +180,7 @@ export interface PipelineResult {
     /** Formatted response for the target platform */
     formatted: FormattedResponse;
     /** Confidence assessment */
-    confidence: ConfidenceLevel;
+    confidenceLevel: ConfidenceLevel;
     /** Confidence score (0-1) */
     confidenceScore: number;
     /** Search results used as context */

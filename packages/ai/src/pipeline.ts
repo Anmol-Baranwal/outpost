@@ -101,7 +101,7 @@ export class AIPipeline {
 
         // Use the more conservative confidence (lower of generator's and scorer's)
         const finalConfidenceScore = Math.min(
-            generatedResponse.confidence,
+            generatedResponse.confidenceScore,
             confidenceAssessment.score,
         );
         const finalConfidence = this.classifyConfidence(finalConfidenceScore);
@@ -126,7 +126,7 @@ export class AIPipeline {
         return {
             response: generatedResponse.text,
             formatted,
-            confidence: finalConfidence,
+            confidenceLevel: finalConfidence,
             confidenceScore: finalConfidenceScore,
             searchResults,
             tokenUsage: totalTokenUsage,
