@@ -305,6 +305,18 @@ enum SlaMetric {
     RESOLUTION
 }
 
+// ─── Organization (singleton) ───────────────────────────────────────────────
+
+model Organization {
+    id        String   @id @default(cuid())
+    name      String
+    email     String
+    logoUrl   String?
+    tagline   String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
 // ─── Team ───────────────────────────────────────────────────────────────────
 
 model TeamMember {
@@ -312,8 +324,12 @@ model TeamMember {
     name               String
     email              String             @unique
     passwordHash       String?
-    role               TeamMemberRole     @default(SUPPORT)
+    role               TeamMemberRole     @default(MEMBER)
+    status             TeamMemberStatus   @default(ACTIVE)
     avatarUrl          String?
+    invitedBy          String?
+    invitedAt          DateTime?
+    joinedAt           DateTime?
     tickets            Ticket[]
     externalIdentities ExternalIdentity[]
     createdAt          DateTime           @default(now())
@@ -322,9 +338,16 @@ model TeamMember {
 
 enum TeamMemberRole {
     ADMIN
+    MEMBER
     SUPPORT
     ENGINEER
     VIEWER
+}
+
+enum TeamMemberStatus {
+    INVITED
+    ACTIVE
+    DISABLED
 }
 
 // ─── Onboarding ─────────────────────────────────────────────────────────────
