@@ -31,8 +31,11 @@ RUN addgroup --system --gid 1001 outpost && \
 
 WORKDIR /app
 
-# Copy built output and node_modules
-COPY --from=installer --chown=outpost:outpost /app/ ./
+COPY --from=installer --chown=outpost:outpost /app/node_modules ./node_modules
+COPY --from=installer --chown=outpost:outpost /app/apps/teams-bot/dist ./apps/teams-bot/dist
+COPY --from=installer --chown=outpost:outpost /app/apps/teams-bot/package.json ./apps/teams-bot/package.json
+COPY --from=installer --chown=outpost:outpost /app/packages ./packages
+COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 
 USER outpost
 ENV NODE_ENV=production
