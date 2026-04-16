@@ -1,5 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 
+vi.mock('../config.js', () => ({
+    config: {
+        slackBotToken: 'xoxb-test',
+        slackAppToken: 'xapp-test',
+        slackSigningSecret: 'test-secret',
+        monitoredChannelIds: [],
+        teamMemberIds: ['U_TEAM_1'],
+    },
+}));
+
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
         ticket: {
