@@ -48,7 +48,7 @@ const sampleSearchResults: SearchResult[] = [
 
 const sampleGeneratedResponse: GeneratedResponse = {
     text: 'Here is how to use CopilotKit actions...',
-    confidence: 0.85,
+    confidenceScore: 0.85,
     confidenceLevel: ConfidenceLevel.HIGH,
     sources: sampleSearchResults,
     autoSend: false,
@@ -111,7 +111,7 @@ describe('AIPipeline', () => {
             );
 
             expect(result.confidenceScore).toBe(0.6);
-            expect(result.confidence).toBe(ConfidenceLevel.MEDIUM);
+            expect(result.confidenceLevel).toBe(ConfidenceLevel.MEDIUM);
         });
 
         it('should add disclaimer for non-HIGH confidence', async () => {
@@ -165,6 +165,16 @@ describe('AIPipeline', () => {
                 [], // Empty results after failure
                 undefined,
             );
+        });
+
+        it('should handle generator failure by rejecting (generator errors are not caught)', async () => {
+            mockGenerate.mockRejectedValueOnce(new Error('Claude down'));
+
+            // Generator runs inside Promise.all — its rejection propagates.
+            // The pipeline does NOT silently swallow generator failures.
+            await expect(
+                pipeline.generateSupportResponse('test question', { source: 'discord' }),
+            ).rejects.toThrow('Claude down');
         });
 
         it('should handle confidence scoring failure gracefully', async () => {

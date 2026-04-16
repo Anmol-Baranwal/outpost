@@ -156,4 +156,27 @@ describe('handleThreadCreate', () => {
         // Should still enqueue AI job
         expect(createJob).toHaveBeenCalled();
     });
+
+    it('logs error and does not crash when prisma.ticket.create rejects', async () => {
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.mocked(prisma.ticket.create).mockRejectedValueOnce(
+            new Error('DB connection lost'),
+        );
+
+        const thread = makeThread();
+
+        // Should not throw — the handler catches the error
+        await expect(handleThreadCreate(thread, true)).resolves.toBeUndefined();
+
+        // Should have logged the error
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('Failed to create ticket'),
+            expect.any(Error),
+        );
+
+        // Should NOT have tried to send a message to the thread
+        expect(thread.send).not.toHaveBeenCalled();
+
+        consoleSpy.mockRestore();
+    });
 });
