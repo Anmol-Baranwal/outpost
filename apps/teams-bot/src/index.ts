@@ -11,7 +11,7 @@ import { handleCardAction } from './handlers/card-actions.js';
 import { startHealthServer } from './health.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
-const healthPort = parseInt(process.env.HEALTH_PORT ?? '3001', 10);
+const healthPort = parseInt(process.env.HEALTH_PORT ?? '3003', 10);
 const botPort = parseInt(process.env.PORT ?? '3978', 10);
 
 // Start health check server on a separate port

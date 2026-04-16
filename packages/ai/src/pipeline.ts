@@ -6,7 +6,7 @@ import type {
     TokenUsage,
     SearchResult,
 } from './types.js';
-import { ConfidenceLevel } from './types.js';
+import { ConfidenceLevel, classifyConfidence } from './types.js';
 import { PathfinderClient } from './pathfinder.js';
 import { ResponseGenerator } from './generator.js';
 import { ConfidenceScorer } from './confidence.js';
@@ -104,7 +104,7 @@ export class AIPipeline {
             generatedResponse.confidenceScore,
             confidenceAssessment.score,
         );
-        const finalConfidence = this.classifyConfidence(finalConfidenceScore);
+        const finalConfidence = classifyConfidence(finalConfidenceScore);
 
         // Step 4: Format for target platform
         const needsDisclaimer = finalConfidence !== ConfidenceLevel.HIGH;
@@ -176,12 +176,6 @@ export class AIPipeline {
             searchResults,
             options.conversationHistory,
         );
-    }
-
-    private classifyConfidence(score: number): ConfidenceLevel {
-        if (score >= 0.8) return ConfidenceLevel.HIGH;
-        if (score >= 0.5) return ConfidenceLevel.MEDIUM;
-        return ConfidenceLevel.LOW;
     }
 
     /**

@@ -34,7 +34,7 @@ describe('analyzeSentiment', () => {
     it('should return NEUTRAL for empty message list', async () => {
         const result = await analyzeSentiment([]);
 
-        expect(result.score).toBe(50);
+        expect(result.score).toBe(25);
         expect(result.label).toBe(SentimentLabel.NEUTRAL);
         expect(result.tokenUsage.inputTokens).toBe(0);
     });

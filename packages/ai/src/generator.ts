@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AI_CONFIDENCE } from '@outpost/shared';
 import type { GeneratedResponse, PipelineContext, SearchResult, TokenUsage } from './types.js';
-import { ConfidenceLevel } from './types.js';
+import { ConfidenceLevel, classifyConfidence } from './types.js';
 import { config } from './config.js';
 
 const SYSTEM_PROMPT_PREFIX = `You are an AI support assistant for CopilotKit, an open-source framework for building AI copilots, chatbots, and AI-powered UIs.
@@ -67,7 +67,7 @@ export class ResponseGenerator {
             };
 
             const confidenceScore = this.assessConfidence(sources, responseText);
-            const confidenceLevel = this.classifyConfidence(confidenceScore);
+            const confidenceLevel = classifyConfidence(confidenceScore);
             const latencyMs = Date.now() - startTime;
 
             return {
@@ -176,12 +176,6 @@ export class ResponseGenerator {
 
         // Base confidence on source quality + count
         return Math.min(avgRelevance + sourceCountBonus, 1.0);
-    }
-
-    private classifyConfidence(score: number): ConfidenceLevel {
-        if (score >= AI_CONFIDENCE.SUGGEST) return ConfidenceLevel.HIGH;
-        if (score >= AI_CONFIDENCE.ESCALATE) return ConfidenceLevel.MEDIUM;
-        return ConfidenceLevel.LOW;
     }
 
     private avgScore(sources: SearchResult[]): number {

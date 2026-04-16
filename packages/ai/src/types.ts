@@ -2,7 +2,7 @@
  * Types for the Outpost AI pipeline.
  */
 
-import { TicketPriority, TicketType } from '@outpost/shared';
+import { AI_CONFIDENCE, TicketPriority, TicketType } from '@outpost/shared';
 import type { PlatformTarget } from '@outpost/shared';
 export { TicketPriority, TicketType } from '@outpost/shared';
 export type { PlatformTarget } from '@outpost/shared';
@@ -11,6 +11,16 @@ export enum ConfidenceLevel {
     HIGH = 'HIGH',
     MEDIUM = 'MEDIUM',
     LOW = 'LOW',
+}
+
+/**
+ * Classify a numeric confidence score into a ConfidenceLevel.
+ * Single source of truth — used by generator, pipeline, and confidence scorer.
+ */
+export function classifyConfidence(score: number): ConfidenceLevel {
+    if (score >= AI_CONFIDENCE.HIGH_THRESHOLD) return ConfidenceLevel.HIGH;
+    if (score >= AI_CONFIDENCE.MEDIUM_THRESHOLD) return ConfidenceLevel.MEDIUM;
+    return ConfidenceLevel.LOW;
 }
 
 export interface SearchResult {

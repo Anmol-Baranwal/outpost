@@ -160,17 +160,30 @@ async function scoreAccount(accountId: string, cutoff: Date): Promise<void> {
     const sentimentValue = SENTIMENT_MAP[sentiment.label] ?? 'NEUTRAL';
     const engagementValue = engagement.level; // Already matches the Prisma enum
 
-    // Update the account record
-    await prisma.account.update({
-        where: { id: accountId },
-        data: {
-            sentiment: sentimentValue as 'HAPPY' | 'NEUTRAL' | 'AT_RISK' | 'CHURNING',
-            engagement: engagementValue as 'HIGH' | 'MEDIUM' | 'LOW' | 'INACTIVE',
-        },
-    });
-
-    console.log(
-        `[AccountScoring] Account ${accountId}: sentiment=${sentimentValue} (score=${sentiment.score}), ` +
-            `engagement=${engagementValue} (score=${engagement.score})`,
-    );
+    if (sentiment.degraded) {
+        // Sentiment analysis failed (Claude call errored) — skip DB write to avoid
+        // persisting a fallback score that doesn't reflect real customer sentiment.
+        console.warn(
+            `[AccountScoring] Account ${accountId}: sentiment analysis degraded, skipping sentiment update. ` +
+                `engagement=${engagementValue} (score=${engagement.score})`,
+        );
+        await prisma.account.update({
+            where: { id: accountId },
+            data: {
+                engagement: engagementValue as 'HIGH' | 'MEDIUM' | 'LOW' | 'INACTIVE',
+            },
+        });
+    } else {
+        await prisma.account.update({
+            where: { id: accountId },
+            data: {
+                sentiment: sentimentValue as 'HAPPY' | 'NEUTRAL' | 'AT_RISK' | 'CHURNING',
+                engagement: engagementValue as 'HIGH' | 'MEDIUM' | 'LOW' | 'INACTIVE',
+            },
+        });
+        console.log(
+            `[AccountScoring] Account ${accountId}: sentiment=${sentimentValue} (score=${sentiment.score}), ` +
+                `engagement=${engagementValue} (score=${engagement.score})`,
+        );
+    }
 }

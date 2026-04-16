@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { SearchResult, TokenUsage } from './types.js';
-import { ConfidenceLevel } from './types.js';
+import { ConfidenceLevel, classifyConfidence } from './types.js';
 import { config } from './config.js';
 
 export interface ConfidenceAssessment {
@@ -102,7 +102,7 @@ export class ConfidenceScorer {
             1.0,
         );
 
-        const level = this.classifyScore(score);
+        const level = classifyConfidence(score);
 
         return {
             level,
@@ -141,7 +141,7 @@ export class ConfidenceScorer {
             const parsed = JSON.parse(cleaned) as { score?: number; level?: string; reasoning?: string };
 
             const score = Math.max(0, Math.min(1, Number(parsed.score ?? 0.5)));
-            const level = this.parseLevel(parsed.level) ?? this.classifyScore(score);
+            const level = this.parseLevel(parsed.level) ?? classifyConfidence(score);
 
             return {
                 level,
@@ -172,9 +172,4 @@ export class ConfidenceScorer {
         return null;
     }
 
-    private classifyScore(score: number): ConfidenceLevel {
-        if (score >= config.confidence.highThreshold) return ConfidenceLevel.HIGH;
-        if (score >= config.confidence.mediumThreshold) return ConfidenceLevel.MEDIUM;
-        return ConfidenceLevel.LOW;
-    }
 }

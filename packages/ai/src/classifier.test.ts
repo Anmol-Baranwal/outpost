@@ -149,12 +149,12 @@ describe('TicketClassifier', () => {
             expect(result.type).toBe(TicketType.FEATURE_REQUEST);
         });
 
-        it('should detect how-to questions as LOW priority FEATURE_REQUEST', () => {
+        it('should detect how-to questions as LOW priority QUESTION', () => {
             const result = classifier.heuristicClassify(
                 'How do I configure authentication for my copilot?',
             );
             expect(result.priority).toBe(TicketPriority.LOW);
-            expect(result.type).toBe(TicketType.FEATURE_REQUEST);
+            expect(result.type).toBe(TicketType.QUESTION);
         });
 
         it('should detect CopilotKit-specific tags', () => {

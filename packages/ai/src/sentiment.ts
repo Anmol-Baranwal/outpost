@@ -42,7 +42,7 @@ export async function analyzeSentiment(
 ): Promise<SentimentResult & { degraded: boolean }> {
     if (messages.length === 0) {
         return {
-            score: 50,
+            score: 25,
             label: SentimentLabel.NEUTRAL,
             tokenUsage: { inputTokens: 0, outputTokens: 0 },
             degraded: false,

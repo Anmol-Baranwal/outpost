@@ -55,8 +55,8 @@ export function truncate(str: string, maxLength: number): string {
  * Extract a domain from an email address.
  */
 export function domainFromEmail(email: string): string {
-    const parts = email.split('@');
-    return parts[1] ?? '';
+    if (!email.includes('@')) return '';
+    return email.split('@').pop() ?? '';
 }
 
 /**

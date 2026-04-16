@@ -127,10 +127,8 @@ describe('domainFromEmail', () => {
     });
 
     it('returns the part after the last @ with multiple @ signs', () => {
-        // split('@') with multiple @ returns [before, middle, after]
-        // parts[1] is the middle part, not the domain — testing actual behavior
         const result = domainFromEmail('user@middle@domain.com');
-        expect(result).toBe('middle');
+        expect(result).toBe('domain.com');
     });
 
     it('returns empty string for empty input', () => {

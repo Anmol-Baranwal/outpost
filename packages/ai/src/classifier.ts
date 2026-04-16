@@ -19,8 +19,8 @@ Classification guidelines:
 - **LOW priority**: Feature requests, how-to questions, general inquiries, documentation questions
 
 - **BUG type**: Bug reports, error reports, things that are broken or not working as expected
-- **FEATURE_REQUEST type**: Feature requests, how-to questions, setup help, configuration questions
-- **QUESTION type**: General questions, conceptual inquiries, documentation questions
+- **FEATURE_REQUEST type**: Feature requests, enhancement suggestions, new capability requests
+- **QUESTION type**: General questions, how-to questions, setup help, configuration questions, conceptual inquiries, documentation questions
 - **INTEGRATION_HELP type**: Integration problems, setup help with third-party tools
 - **ACCOUNT_ISSUE type**: Account/billing problems, access issues
 - **OTHER type**: Anything that doesn't fit the above categories
@@ -134,8 +134,21 @@ export class TicketClassifier {
             /error/i, /bug/i, /crash/i, /broken/i, /not working/i,
             /fail/i, /issue/i, /problem/i, /wrong/i,
         ];
+        const questionPatterns = [
+            /how (do|can|to)/i, /what is/i, /explain/i, /difference between/i,
+            /is (it|there) (a way|possible)/i, /documentation/i, /example/i,
+            /tutorial/i, /setup help/i, /configur/i,
+        ];
+        const featurePatterns = [
+            /feature request/i, /would be nice/i, /suggestion/i,
+            /enhancement/i, /new (feature|capability)/i, /please add/i,
+        ];
         if (issuePatterns.some((p) => p.test(content))) {
             type = TicketType.BUG;
+        } else if (questionPatterns.some((p) => p.test(content))) {
+            type = TicketType.QUESTION;
+        } else if (featurePatterns.some((p) => p.test(content))) {
+            type = TicketType.FEATURE_REQUEST;
         }
 
         // Tag detection for CopilotKit concepts
