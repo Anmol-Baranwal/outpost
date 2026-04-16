@@ -12,6 +12,7 @@ import { ResponseGenerator } from './generator.js';
 import { ConfidenceScorer } from './confidence.js';
 import { TicketClassifier } from './classifier.js';
 import { ResponseFormatter } from './formatter.js';
+import { validateConfig } from './config.js';
 
 /**
  * Main entry point for the Outpost AI pipeline.
@@ -34,6 +35,7 @@ export class AIPipeline {
         classifier?: TicketClassifier;
         formatter?: ResponseFormatter;
     }) {
+        validateConfig();
         this.pathfinder = options?.pathfinder ?? new PathfinderClient();
         this.generator = options?.generator ?? new ResponseGenerator();
         this.confidenceScorer = options?.confidenceScorer ?? new ConfidenceScorer();
@@ -160,7 +162,8 @@ export class AIPipeline {
             searchResults = await this.pathfinder.searchDocs({
                 query: question,
             });
-        } catch {
+        } catch (error) {
+            console.error(`[Pipeline] Streaming search failed: ${error instanceof Error ? error.message : String(error)}`, error);
             searchResults = [];
         }
 

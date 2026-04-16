@@ -39,12 +39,13 @@ Label thresholds:
 export async function analyzeSentiment(
     messages: string[],
     options?: { apiKey?: string; model?: string },
-): Promise<SentimentResult> {
+): Promise<SentimentResult & { degraded: boolean }> {
     if (messages.length === 0) {
         return {
             score: 50,
             label: SentimentLabel.NEUTRAL,
             tokenUsage: { inputTokens: 0, outputTokens: 0 },
+            degraded: false,
         };
     }
 
@@ -81,16 +82,16 @@ export async function analyzeSentiment(
         return {
             ...parsed,
             tokenUsage,
+            degraded: false,
         };
     } catch (error) {
-        console.error(
-            `[Sentiment] Analysis failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        console.error(`[Sentiment] Analysis failed, returning neutral fallback:`, error);
         // Fallback: return neutral on failure
         return {
             score: 50,
             label: SentimentLabel.NEUTRAL,
             tokenUsage: { inputTokens: 0, outputTokens: 0 },
+            degraded: true,
         };
     }
 }
@@ -107,7 +108,8 @@ function parseSentimentResponse(text: string): Omit<SentimentResult, 'tokenUsage
         const label = parseLabel(parsed.label) ?? labelFromScore(score);
 
         return { score, label };
-    } catch {
+    } catch (error) {
+        console.warn(`[Sentiment] Failed to parse sentiment response JSON:`, error);
         return { score: 50, label: SentimentLabel.NEUTRAL };
     }
 }

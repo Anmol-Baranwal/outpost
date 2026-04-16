@@ -7,7 +7,7 @@ const CLASSIFIER_SYSTEM_PROMPT = `You are a support ticket classifier for Copilo
 
 {
   "priority": "LOW" | "MEDIUM" | "HIGH",
-  "type": "ISSUE" | "REQUEST",
+  "type": "BUG" | "FEATURE_REQUEST" | "QUESTION" | "INTEGRATION_HELP" | "ACCOUNT_ISSUE" | "OTHER",
   "tags": ["tag1", "tag2"],
   "reasoning": "<one sentence>"
 }
@@ -17,8 +17,12 @@ Classification guidelines:
 - **MEDIUM priority**: Bugs in non-critical flows, integration problems, performance issues
 - **LOW priority**: Feature requests, how-to questions, general inquiries, documentation questions
 
-- **ISSUE type**: Bug reports, error reports, things that are broken or not working as expected
-- **REQUEST type**: Feature requests, how-to questions, setup help, configuration questions
+- **BUG type**: Bug reports, error reports, things that are broken or not working as expected
+- **FEATURE_REQUEST type**: Feature requests, how-to questions, setup help, configuration questions
+- **QUESTION type**: General questions, conceptual inquiries, documentation questions
+- **INTEGRATION_HELP type**: Integration problems, setup help with third-party tools
+- **ACCOUNT_ISSUE type**: Account/billing problems, access issues
+- **OTHER type**: Anything that doesn't fit the above categories
 
 Tags should be specific CopilitKit concepts when relevant: "copilotkit-runtime", "coagent", "copilot-textarea", "react-ui", "cloud", "self-hosted", "actions", "hooks", "integration", "authentication", "deployment", "performance", "typescript", "next.js", "langchain", "langgraph", "crewai", "ag2"`;
 
@@ -44,7 +48,7 @@ export class TicketClassifier {
      * Classify a ticket based on its content.
      * Applies heuristics first, then refines with Claude.
      */
-    async classify(content: string): Promise<TicketClassification & { tokenUsage: TokenUsage }> {
+    async classify(content: string): Promise<TicketClassification & { tokenUsage: TokenUsage; degraded: boolean }> {
         // Apply heuristics for fast pre-classification
         const heuristic = this.heuristicClassify(content);
 
@@ -79,12 +83,14 @@ export class TicketClassifier {
                 tags: allTags,
                 reasoning: parsed.reasoning,
                 tokenUsage,
+                degraded: false,
             };
         } catch (error) {
-            console.error(`[Classifier] Claude classification failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`[Classifier] Claude classification failed, falling back to heuristics:`, error);
             return {
                 ...heuristic,
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                degraded: true,
             };
         }
     }
@@ -122,13 +128,13 @@ export class TicketClassifier {
         }
 
         // Type detection
-        let type = TicketType.REQUEST;
+        let type = TicketType.FEATURE_REQUEST;
         const issuePatterns = [
             /error/i, /bug/i, /crash/i, /broken/i, /not working/i,
             /fail/i, /issue/i, /problem/i, /wrong/i,
         ];
         if (issuePatterns.some((p) => p.test(content))) {
-            type = TicketType.ISSUE;
+            type = TicketType.BUG;
         }
 
         // Tag detection for CopilotKit concepts
@@ -163,7 +169,7 @@ export class TicketClassifier {
             priority,
             type,
             tags,
-            reasoning: `Heuristic classification: ${priority} priority ${type.toLowerCase()}`,
+            reasoning: `Heuristic classification: ${priority} priority ${type.toLowerCase().replace('_', ' ')}`,
         };
     }
 
@@ -183,10 +189,11 @@ export class TicketClassifier {
                 tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],
                 reasoning: String(parsed.reasoning ?? 'Classified by AI'),
             };
-        } catch {
+        } catch (error) {
+            console.warn(`[Classifier] Failed to parse classification JSON:`, error);
             return {
                 priority: TicketPriority.MEDIUM,
-                type: TicketType.REQUEST,
+                type: TicketType.OTHER,
                 tags: [],
                 reasoning: 'Failed to parse classification',
             };
@@ -196,15 +203,20 @@ export class TicketClassifier {
     private parsePriority(value: string | undefined): TicketPriority {
         if (!value) return TicketPriority.MEDIUM;
         const upper = value.toUpperCase();
+        if (upper === 'CRITICAL') return TicketPriority.CRITICAL;
         if (upper === 'HIGH') return TicketPriority.HIGH;
         if (upper === 'LOW') return TicketPriority.LOW;
         return TicketPriority.MEDIUM;
     }
 
     private parseType(value: string | undefined): TicketType {
-        if (!value) return TicketType.REQUEST;
+        if (!value) return TicketType.OTHER;
         const upper = value.toUpperCase();
-        if (upper === 'ISSUE') return TicketType.ISSUE;
-        return TicketType.REQUEST;
+        if (upper === 'BUG') return TicketType.BUG;
+        if (upper === 'FEATURE_REQUEST') return TicketType.FEATURE_REQUEST;
+        if (upper === 'QUESTION') return TicketType.QUESTION;
+        if (upper === 'INTEGRATION_HELP') return TicketType.INTEGRATION_HELP;
+        if (upper === 'ACCOUNT_ISSUE') return TicketType.ACCOUNT_ISSUE;
+        return TicketType.OTHER;
     }
 }

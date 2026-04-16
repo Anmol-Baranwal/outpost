@@ -108,11 +108,11 @@ export async function validateQuality(
         ? { createdAt: { gte: args.since } }
         : {};
 
-    // Fetch all shadow responses (NOTE messages from outpost-shadow)
+    // Fetch all shadow responses (SYSTEM messages from outpost-shadow)
     const shadowMessages = await prisma.message.findMany({
         where: {
             author: 'outpost-shadow',
-            type: 'NOTE',
+            type: 'SYSTEM',
             isAiGenerated: true,
             ...whereClause,
         },

@@ -63,7 +63,7 @@ export function checkSlaCompliance(
         : (now.getTime() - ticket.createdAt.getTime()) > firstResponseTargetMs;
 
     // ── Resolution time ─────────────────────────────────────────────────
-    const isClosed = ticket.status === 'CLOSED';
+    const isClosed = ticket.status === 'CLOSED' || ticket.status === 'RESOLVED';
     // For closed tickets we don't have an explicit closedAt field, but
     // the updatedAt would reflect it.  For simplicity we treat
     // "resolution time so far" as elapsed since creation up to now for
@@ -94,30 +94,45 @@ export function checkSlaCompliance(
  * Build breach events for a check result, returning only the metrics
  * that are actually breached.
  */
-export function buildBreachEvents(result: SlaCheckResult): SlaBreachEvent[] {
+export function buildBreachEvents(
+    result: SlaCheckResult,
+    ticket?: TicketForSla,
+    now: Date = new Date(),
+): SlaBreachEvent[] {
     const events: SlaBreachEvent[] = [];
 
     if (result.firstResponseBreached) {
-        const elapsed = result.firstResponseTimeMs
-            ?? (Date.now() - 0); // caller should supply actual elapsed
-        events.push({
-            ticketId: result.ticketId,
-            metric: SlaMetric.FIRST_RESPONSE,
-            priority: result.priority,
-            elapsedMs: elapsed,
-            targetMs: result.target.firstResponseMinutes * 60 * 1000,
-        });
+        // Use measured first-response time if available, otherwise calculate from ticket creation
+        let elapsed = result.firstResponseTimeMs;
+        if (elapsed == null && ticket) {
+            elapsed = now.getTime() - ticket.createdAt.getTime();
+        }
+        if (elapsed != null) {
+            events.push({
+                ticketId: result.ticketId,
+                metric: SlaMetric.FIRST_RESPONSE,
+                priority: result.priority,
+                elapsedMs: elapsed,
+                targetMs: result.target.firstResponseMinutes * 60 * 1000,
+            });
+        }
     }
 
     if (result.resolutionBreached) {
-        const elapsed = result.resolutionTimeMs ?? (Date.now() - 0);
-        events.push({
-            ticketId: result.ticketId,
-            metric: SlaMetric.RESOLUTION,
-            priority: result.priority,
-            elapsedMs: elapsed,
-            targetMs: result.target.resolutionMinutes * 60 * 1000,
-        });
+        // Use measured resolution time if available, otherwise calculate from ticket creation
+        let elapsed = result.resolutionTimeMs;
+        if (elapsed == null && ticket) {
+            elapsed = now.getTime() - ticket.createdAt.getTime();
+        }
+        if (elapsed != null) {
+            events.push({
+                ticketId: result.ticketId,
+                metric: SlaMetric.RESOLUTION,
+                priority: result.priority,
+                elapsedMs: elapsed,
+                targetMs: result.target.resolutionMinutes * 60 * 1000,
+            });
+        }
     }
 
     return events;

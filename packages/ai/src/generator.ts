@@ -44,7 +44,7 @@ export class ResponseGenerator {
         pipelineContext: PipelineContext,
         sources: SearchResult[],
         conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-    ): Promise<GeneratedResponse> {
+    ): Promise<GeneratedResponse & { degraded: boolean }> {
         const startTime = Date.now();
         const systemPrompt = this.buildSystemPrompt(sources);
         const messages = this.buildMessages(pipelineContext, conversationHistory);
@@ -79,8 +79,10 @@ export class ResponseGenerator {
                 reasoning: `Based on ${sources.length} source(s) with avg relevance ${this.avgScore(sources).toFixed(2)}`,
                 tokenUsage,
                 latencyMs,
+                degraded: false,
             };
         } catch (error) {
+            console.error(`[Generator] Response generation failed, returning fallback:`, error);
             const latencyMs = Date.now() - startTime;
             // Never crash — return a graceful fallback
             return {
@@ -92,6 +94,7 @@ export class ResponseGenerator {
                 reasoning: `Generation failed: ${error instanceof Error ? error.message : String(error)}`,
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
                 latencyMs,
+                degraded: true,
             };
         }
     }

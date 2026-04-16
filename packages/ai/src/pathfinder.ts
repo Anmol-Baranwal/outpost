@@ -174,7 +174,8 @@ export class PathfinderClient {
                     category: item.category ? String(item.category) : undefined,
                 }));
             }
-        } catch {
+        } catch (error) {
+            console.warn(`[Pathfinder] Failed to parse search results JSON:`, error);
             // If not JSON, treat the text content as a single result
             return [{
                 title: 'Pathfinder Result',
@@ -248,6 +249,7 @@ export class PathfinderClient {
             clearTimeout(timeout);
 
             if (!response.ok) {
+                console.error(`[Pathfinder] Fallback docs fetch returned HTTP ${response.status} ${response.statusText}`);
                 return [];
             }
 

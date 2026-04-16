@@ -8,6 +8,7 @@ export interface ConfidenceAssessment {
     score: number;
     reasoning: string;
     tokenUsage: TokenUsage;
+    degraded: boolean;
 }
 
 const CONFIDENCE_SYSTEM_PROMPT = `You are a confidence scoring system for an AI support assistant. Your job is to assess whether a generated response adequately answers the user's question based on the provided search results.
@@ -68,11 +69,11 @@ export class ConfidenceScorer {
                 outputTokens: message.usage.output_tokens,
             };
 
-            return this.parseAssessment(text, tokenUsage);
+            return { ...this.parseAssessment(text, tokenUsage), degraded: false };
         } catch (error) {
-            console.error(`[ConfidenceScorer] Scoring failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`[ConfidenceScorer] Scoring failed, falling back to heuristics:`, error);
             // Fallback to heuristic scoring when Claude call fails
-            return this.heuristicScore(searchResults);
+            return { ...this.heuristicScore(searchResults), degraded: true };
         }
     }
 
@@ -87,6 +88,7 @@ export class ConfidenceScorer {
                 score: 0.2,
                 reasoning: 'No search results available',
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                degraded: false,
             };
         }
 
@@ -107,6 +109,7 @@ export class ConfidenceScorer {
             score,
             reasoning: `Heuristic: top=${topScore.toFixed(2)}, avg=${avgScore.toFixed(2)}, count=${resultCount}`,
             tokenUsage: { inputTokens: 0, outputTokens: 0 },
+            degraded: false,
         };
     }
 
@@ -145,14 +148,17 @@ export class ConfidenceScorer {
                 score,
                 reasoning: String(parsed.reasoning ?? 'No reasoning provided'),
                 tokenUsage,
+                degraded: false,
             };
-        } catch {
+        } catch (error) {
+            console.warn(`[ConfidenceScorer] Failed to parse confidence assessment JSON:`, error);
             // If parsing fails, fall back to a moderate score
             return {
                 level: ConfidenceLevel.MEDIUM,
                 score: 0.5,
                 reasoning: 'Failed to parse confidence assessment',
                 tokenUsage,
+                degraded: true,
             };
         }
     }

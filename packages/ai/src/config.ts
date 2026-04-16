@@ -5,6 +5,8 @@
  * confidence thresholds, and Pathfinder connection params.
  */
 
+import { AI_CONFIDENCE } from '@outpost/shared';
+
 export const config = {
     /** Anthropic API key — required for Claude calls */
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
@@ -51,13 +53,12 @@ export const config = {
     /** Temperature for classification */
     classifierTemperature: 0.1,
 
-    /** Confidence thresholds */
+    /** Confidence thresholds (sourced from @outpost/shared) */
     confidence: {
         /** Above this: HIGH confidence (auto-post) */
-        highThreshold: 0.8,
+        highThreshold: AI_CONFIDENCE.HIGH_THRESHOLD,
         /** Above this: MEDIUM confidence (post with disclaimer) */
-        mediumThreshold: 0.5,
-        /** Below mediumThreshold: LOW confidence (disclaimer + escalate) */
+        mediumThreshold: AI_CONFIDENCE.MEDIUM_THRESHOLD,
     },
 
     /** Pathfinder search settings */
@@ -76,3 +77,16 @@ export const config = {
 } as const;
 
 export type AIConfig = typeof config;
+
+/**
+ * Validate that required configuration values are present.
+ * Throws if any critical config is missing.
+ */
+export function validateConfig(): void {
+    if (!config.anthropicApiKey) {
+        throw new Error(
+            '[AI Config] ANTHROPIC_API_KEY is required but not set. ' +
+            'Set the ANTHROPIC_API_KEY environment variable before starting the pipeline.',
+        );
+    }
+}
