@@ -69,6 +69,13 @@ describe('handleIssueOpened', () => {
         vi.mocked(prisma.message.create).mockResolvedValue({
             id: 'message-internal-id',
         } as ReturnType<typeof prisma.message.create> extends Promise<infer T> ? T : never);
+
+        vi.mocked(prisma.ticketExternalLink.create).mockResolvedValue({
+            id: 'link-1',
+            ticketId: 'ticket-internal-id',
+            plugin: 'github',
+            externalId: 'CopilotKit/CopilotKit#42',
+        } as ReturnType<typeof prisma.ticketExternalLink.create> extends Promise<infer T> ? T : never);
     });
 
     it('creates a ticket with source=GITHUB_ISSUE and enqueues AI job', async () => {

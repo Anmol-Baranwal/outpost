@@ -46,6 +46,16 @@ export async function handleDiscussionCreated(
             });
         }
 
+        // Create TicketExternalLink for bidirectional sync
+        await prisma.ticketExternalLink.create({
+            data: {
+                ticketId: ticket.id,
+                plugin: 'github',
+                externalId: `${repository.full_name}#${discussion.number}`,
+                externalUrl: discussionUrl,
+            },
+        });
+
         // Enqueue an AI response job
         await createJob(JobType.AI_RESPONSE, {
             ticketId: ticket.id,

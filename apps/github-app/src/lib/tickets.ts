@@ -3,10 +3,26 @@ import { config } from '../config.js';
 
 /**
  * Find a ticket by its GitHub issue/discussion source ID.
- * The sourceId format is "owner/repo#number" (e.g. "CopilotKit/CopilotKit#123").
- * Matches both GITHUB_ISSUE and GITHUB_DISCUSSION sources.
+ *
+ * Primary lookup goes through TicketExternalLink (plugin='github'),
+ * with a fallback to the legacy sourceId column for tickets created
+ * before the external link migration.
  */
 export async function findTicketBySourceId(sourceId: string) {
+    // Primary: look up via TicketExternalLink
+    const link = await prisma.ticketExternalLink.findUnique({
+        where: {
+            plugin_externalId: {
+                plugin: 'github',
+                externalId: sourceId,
+            },
+        },
+        include: { ticket: true },
+    });
+
+    if (link) return link.ticket;
+
+    // Fallback: legacy sourceId column
     return prisma.ticket.findFirst({
         where: {
             sourceId,

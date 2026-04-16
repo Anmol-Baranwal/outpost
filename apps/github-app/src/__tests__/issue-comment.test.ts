@@ -65,6 +65,16 @@ function makeEvent(overrides: Record<string, unknown> = {}): EmitterWebhookEvent
 
 describe('handleIssueComment', () => {
     beforeEach(() => {
+        // Primary lookup via TicketExternalLink
+        vi.mocked(prisma.ticketExternalLink.findUnique).mockResolvedValue({
+            id: 'link-1',
+            ticketId: 'ticket-1',
+            plugin: 'github',
+            externalId: 'CopilotKit/CopilotKit#42',
+            ticket: TICKET,
+        } as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
+
+        // Legacy fallback (should not be reached when link exists)
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(
             TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never,
         );
@@ -85,6 +95,7 @@ describe('handleIssueComment', () => {
     });
 
     it('ignores comments on issues without tracked tickets', async () => {
+        vi.mocked(prisma.ticketExternalLink.findUnique).mockResolvedValue(null);
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
         const event = makeEvent();
         await handleIssueComment(event);
@@ -143,10 +154,14 @@ describe('handleIssueComment', () => {
     });
 
     it('reopens ticket when customer replies to a resolved ticket', async () => {
-        vi.mocked(prisma.ticket.findFirst).mockResolvedValue({
-            ...TICKET,
-            status: 'RESOLVED',
-        } as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
+        const resolvedTicket = { ...TICKET, status: 'RESOLVED' };
+        vi.mocked(prisma.ticketExternalLink.findUnique).mockResolvedValue({
+            id: 'link-1',
+            ticketId: 'ticket-1',
+            plugin: 'github',
+            externalId: 'CopilotKit/CopilotKit#42',
+            ticket: resolvedTicket,
+        } as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
 
         const event = makeEvent();
         await handleIssueComment(event);
@@ -158,10 +173,14 @@ describe('handleIssueComment', () => {
     });
 
     it('updates status when team member replies to WAITING_ON_TEAM ticket', async () => {
-        vi.mocked(prisma.ticket.findFirst).mockResolvedValue({
-            ...TICKET,
-            status: 'WAITING_ON_TEAM',
-        } as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
+        const waitingTicket = { ...TICKET, status: 'WAITING_ON_TEAM' };
+        vi.mocked(prisma.ticketExternalLink.findUnique).mockResolvedValue({
+            id: 'link-1',
+            ticketId: 'ticket-1',
+            plugin: 'github',
+            externalId: 'CopilotKit/CopilotKit#42',
+            ticket: waitingTicket,
+        } as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
 
         const event = makeEvent({
             sender: { login: 'teambot', id: 777, type: 'User' },

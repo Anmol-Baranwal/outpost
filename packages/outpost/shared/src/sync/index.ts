@@ -9,3 +9,4 @@ export { IdentityMapper } from './identity-map.js';
 export type { IdentityMapperDeps } from './identity-map.js';
 export { LabelMapper, createGitHubLabelMapper, createLinearLabelMapper } from './label-map.js';
 export type { LabelPrefixRule, LabelMapperConfig } from './label-map.js';
+export * from './adapters/index.js';

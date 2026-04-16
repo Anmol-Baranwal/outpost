@@ -3,7 +3,7 @@ export type { HubSpotCompany, OutpostAccountData, HubSpotOwner } from './hubspot
 export { HubSpotSyncService } from './hubspot-sync.js';
 export type {
     SyncReport,
-    SyncError,
+    HubSpotSyncError,
     AccountStore,
     ExistingAccount,
 } from './hubspot-sync.js';
