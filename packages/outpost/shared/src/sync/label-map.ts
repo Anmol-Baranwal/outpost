@@ -1,0 +1,135 @@
+/**
+ * Label mapping between external labels and Outpost tags.
+ *
+ * Handles prefix stripping (external → Outpost) and prefix
+ * adding (Outpost → external). Configurable per plugin.
+ */
+
+// ─── Types ────────────────────────────────────────────────────────────────
+
+/** Rule for stripping/adding a prefix on a label group. */
+export interface LabelPrefixRule {
+    /** The external prefix to strip, including separator (e.g. "priority:", "type/"). */
+    externalPrefix: string;
+    /** The Outpost prefix to add when pushing back, including separator. Empty string = no prefix. */
+    outpostPrefix: string;
+}
+
+export interface LabelMapperConfig {
+    /** Prefix rules applied in order. First matching rule wins. */
+    rules: LabelPrefixRule[];
+    /** Labels to exclude entirely (case-insensitive). */
+    exclude?: string[];
+}
+
+// ─── LabelMapper ──────────────────────────────────────────────────────────
+
+export class LabelMapper {
+    private readonly rules: LabelPrefixRule[];
+    private readonly excludeSet: Set<string>;
+
+    constructor(config: LabelMapperConfig) {
+        this.rules = config.rules;
+        this.excludeSet = new Set(
+            (config.exclude ?? []).map((l) => l.toLowerCase()),
+        );
+    }
+
+    /**
+     * Convert external labels to Outpost tags.
+     * Strips matching prefixes and excludes blacklisted labels.
+     */
+    toOutpost(externalLabels: string[]): string[] {
+        const tags: string[] = [];
+
+        for (const label of externalLabels) {
+            if (this.excludeSet.has(label.toLowerCase())) {
+                continue;
+            }
+
+            let tag = label;
+            for (const rule of this.rules) {
+                if (label.toLowerCase().startsWith(rule.externalPrefix.toLowerCase())) {
+                    tag = label.slice(rule.externalPrefix.length);
+                    break;
+                }
+            }
+
+            if (tag.length > 0) {
+                tags.push(tag);
+            }
+        }
+
+        return tags;
+    }
+
+    /**
+     * Convert Outpost tags back to external labels.
+     * Adds matching prefixes based on rules.
+     */
+    fromOutpost(outpostTags: string[]): string[] {
+        const labels: string[] = [];
+
+        for (const tag of outpostTags) {
+            let label = tag;
+
+            // Find a rule whose outpostPrefix matches (or use the rule
+            // whose stripped result would produce this tag).
+            for (const rule of this.rules) {
+                if (
+                    rule.outpostPrefix.length > 0 &&
+                    tag.toLowerCase().startsWith(rule.outpostPrefix.toLowerCase())
+                ) {
+                    // Tag already has the Outpost prefix — swap to external.
+                    const stripped = tag.slice(rule.outpostPrefix.length);
+                    label = rule.externalPrefix + stripped;
+                    break;
+                }
+            }
+
+            labels.push(label);
+        }
+
+        return labels;
+    }
+
+    /**
+     * Round-trip helper: convert Outpost tags to external labels
+     * using explicit tag→prefix association.
+     *
+     * Each tag is paired with the rule index (or -1 for no rule)
+     * that produced it during toOutpost, enabling a lossless
+     * round-trip.  When the producing rule is unknown, this falls
+     * back to returning the tag unmodified.
+     */
+    toExternal(tag: string, ruleIndex: number): string {
+        if (ruleIndex >= 0 && ruleIndex < this.rules.length) {
+            return this.rules[ruleIndex].externalPrefix + tag;
+        }
+        return tag;
+    }
+}
+
+// ─── Factory Functions ────────────────────────────────────────────────────
+
+/** GitHub label conventions → Outpost tags. */
+export function createGitHubLabelMapper(): LabelMapper {
+    return new LabelMapper({
+        rules: [
+            { externalPrefix: 'priority:', outpostPrefix: '' },
+            { externalPrefix: 'type:', outpostPrefix: '' },
+            { externalPrefix: 'area/', outpostPrefix: '' },
+        ],
+        exclude: ['wontfix', 'duplicate', 'invalid'],
+    });
+}
+
+/** Linear label conventions → Outpost tags. */
+export function createLinearLabelMapper(): LabelMapper {
+    return new LabelMapper({
+        rules: [
+            { externalPrefix: 'Priority: ', outpostPrefix: '' },
+            { externalPrefix: 'Type: ', outpostPrefix: '' },
+        ],
+    });
+}
