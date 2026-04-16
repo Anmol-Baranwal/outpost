@@ -1,49 +1,57 @@
 /* global window, document, IntersectionObserver, history */
 (function () {
-  // ─── Nav Hierarchy ──────────────────────────────────────────────
+  // ─── Compute relative base path from current page ───────────────
+  // sidebar.js lives at the docs root; pages are one level deep
+  // e.g. from docs/index.html the base is "../", from getting-started/index.html it's "../"
+  var base = "../";
+
+  // ─── Nav Hierarchy (paths relative from a subdirectory) ─────────
   var sections = [
     {
       title: "Getting Started",
       links: [
-        { label: "Overview", href: "/docs" },
-        { label: "Quick Start", href: "/getting-started" },
-        { label: "Architecture", href: "/architecture" },
+        { label: "Overview", href: base + "docs/" },
+        { label: "Quick Start", href: base + "getting-started/" },
+        { label: "Architecture", href: base + "architecture/" },
       ],
     },
     {
       title: "Integrations",
       links: [
-        { label: "Discord Bot", href: "/discord-bot" },
-        { label: "GitHub App", href: "/github-app" },
+        { label: "Discord Bot", href: base + "discord-bot/" },
+        { label: "GitHub App", href: base + "github-app/" },
       ],
     },
     {
       title: "Configuration",
       links: [
-        { label: "Environment Variables", href: "/configuration" },
-        { label: "SLA Targets", href: "/configuration#sla-targets" },
-        { label: "Routing Rules", href: "/configuration#routing-rules" },
+        { label: "Environment Variables", href: base + "configuration/" },
+        { label: "SLA Targets", href: base + "configuration/#sla-targets" },
+        { label: "Routing Rules", href: base + "configuration/#routing-rules" },
       ],
     },
     {
       title: "API Reference",
       links: [
-        { label: "REST Endpoints", href: "/api-reference" },
-        { label: "Webhooks", href: "/api-reference#webhooks" },
+        { label: "REST Endpoints", href: base + "api-reference/" },
+        { label: "Webhooks", href: base + "api-reference/#webhooks" },
       ],
     },
     {
       title: "Operations",
       links: [
-        { label: "Deployment Guide", href: "/deployment" },
-        { label: "Contributing", href: "/contributing" },
+        { label: "Deployment Guide", href: base + "deployment/" },
+        { label: "Contributing", href: base + "contributing/" },
       ],
     },
   ];
 
   // ─── Detect current page ────────────────────────────────────────
-  var p = window.location.pathname.replace(/\/index\.html$/, "").replace(/\/$/, "");
-  var currentPage = p || "/";
+  // Normalize: strip trailing index.html and trailing slash, then take the last path segment
+  var loc = window.location.pathname.replace(/\/index\.html$/, "").replace(/\/$/, "");
+  var currentSegment = loc.substring(loc.lastIndexOf("/") + 1);
+  // Map segment to the canonical href suffix for matching
+  var currentPage = currentSegment ? currentSegment : "docs";
 
   // ─── Build Sidebar HTML ─────────────────────────────────────────
   function buildSidebar() {
@@ -55,7 +63,9 @@
       for (var j = 0; j < section.links.length; j++) {
         var link = section.links[j];
         var href = link.href;
-        var isActive = href === currentPage || (href.indexOf("#") === -1 && currentPage === href);
+        // Extract the page segment from href for comparison (e.g. "../docs/" -> "docs")
+        var hrefSegment = href.replace(/.*\/([^\/]+)\/$/, "$1").replace(/#.*$/, "");
+        var isActive = hrefSegment === currentPage && href.indexOf("#") === -1;
         var activeClass = isActive ? ' class="active"' : "";
         html += '<a href="' + href + '"' + activeClass + ">" + link.label + "</a>";
       }
