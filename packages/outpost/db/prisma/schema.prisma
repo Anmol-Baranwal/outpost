@@ -395,3 +395,15 @@ model SyncEvent {
     @@index([entityId, sourcePlugin, createdAt])
     @@index([status, createdAt])
 }
+
+// ─── Template Overrides ─────────────────────────────────────────────────────
+
+model TemplateOverride {
+    id        String   @id @default(cuid())
+    slug      String   @unique
+    subject   String
+    body      String
+    editedBy  String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
