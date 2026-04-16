@@ -65,6 +65,20 @@ describe('Auth middleware', () => {
         expect(mockNext).toHaveBeenCalled();
     });
 
+    it('allows /setup without authentication', async () => {
+        const req = createMockRequest('/setup');
+        await middleware(req as never);
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockRedirect).not.toHaveBeenCalled();
+    });
+
+    it('allows /api/setup without authentication', async () => {
+        const req = createMockRequest('/api/setup');
+        await middleware(req as never);
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockRedirect).not.toHaveBeenCalled();
+    });
+
     it('allows static assets through', async () => {
         const req = createMockRequest('/_next/static/chunk.js');
         await middleware(req as never);

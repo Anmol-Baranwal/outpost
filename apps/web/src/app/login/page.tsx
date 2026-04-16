@@ -3,7 +3,7 @@
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import { Mountain, Github, KeyRound, Shield } from 'lucide-react';
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 
 const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? 'credentials';
 
@@ -89,6 +89,32 @@ function OidcButton() {
     );
 }
 
+function SetupBanner() {
+    const [showBanner, setShowBanner] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+            .then((res) => {
+                // 400 means no members exist (validation error, not 403)
+                if (res.status !== 403) {
+                    setShowBanner(true);
+                }
+            })
+            .catch(() => {});
+    }, []);
+
+    if (!showBanner) return null;
+
+    return (
+        <a
+            href="/setup"
+            className="block rounded-lg border border-primary/50 bg-primary/10 p-3 text-center text-sm text-primary hover:bg-primary/20 transition-colors"
+        >
+            No accounts yet? Set up your admin account &rarr;
+        </a>
+    );
+}
+
 function LoginContent() {
     const searchParams = useSearchParams();
     const error = searchParams.get('error');
@@ -105,6 +131,8 @@ function LoginContent() {
                         AI-Powered Support Operations
                     </p>
                 </div>
+
+                <SetupBanner />
 
                 {error === 'AccessDenied' && (
                     <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
