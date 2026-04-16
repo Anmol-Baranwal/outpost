@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Page Not Found — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-deep: #0a0a0f;
+        --bg-surface: #111118;
+        --bg-card: #16161f;
+        --border: #222233;
+        --border-bright: #3a3a50;
+        --text-primary: #e8e8f0;
+        --text-secondary: #8888a0;
+        --text-dim: #555570;
+        --accent: #f97316;
+        --accent-dim: #ea580c;
+        --mono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+        --sans: "Instrument Sans", -apple-system, system-ui, sans-serif;
+      }
+
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-size: 16px; }
+      body {
+        background: var(--bg-deep);
+        color: var(--text-primary);
+        font-family: var(--sans);
+        line-height: 1.6;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+        pointer-events: none;
+        z-index: 9999;
+      }
+
+      .container {
+        text-align: center;
+        padding: 2rem;
+        max-width: 560px;
+      }
+
+      .error-code {
+        font-family: var(--mono);
+        font-size: 6rem;
+        font-weight: 700;
+        color: var(--accent);
+        line-height: 1;
+        margin-bottom: 1rem;
+        letter-spacing: -0.04em;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        letter-spacing: -0.01em;
+      }
+
+      p {
+        color: var(--text-secondary);
+        font-size: 1rem;
+        margin-bottom: 2rem;
+        line-height: 1.7;
+      }
+
+      .actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      a.btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.5rem;
+        font-family: var(--mono);
+        font-size: 0.85rem;
+        font-weight: 600;
+        border-radius: 8px;
+        text-decoration: none;
+        transition: opacity 0.2s, background 0.2s;
+      }
+
+      a.btn-primary {
+        background: var(--accent);
+        color: var(--bg-deep);
+      }
+      a.btn-primary:hover {
+        background: var(--accent-dim);
+      }
+
+      a.btn-secondary {
+        background: var(--bg-card);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+      }
+      a.btn-secondary:hover {
+        border-color: var(--border-bright);
+        background: var(--bg-surface);
+      }
+
+      .prompt {
+        color: var(--accent);
+      }
+
+      .footer-note {
+        margin-top: 3rem;
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        color: var(--text-dim);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="error-code">404</div>
+      <h1>Page not found</h1>
+      <p>
+        The page you are looking for does not exist or has been moved.
+        Check the URL or head back to familiar territory.
+      </p>
+      <div class="actions">
+        <a href="/" class="btn btn-primary">Home</a>
+        <a href="/docs/" class="btn btn-secondary">Documentation</a>
+      </div>
+      <div class="footer-note">
+        <span class="prompt">$</span> outpost &mdash; by CopilotKit
+      </div>
+    </div>
+  </body>
+</html>
