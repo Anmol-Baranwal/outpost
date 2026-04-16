@@ -75,6 +75,7 @@ enum TicketType {
 enum TicketSource {
     DISCORD
     SLACK
+    TEAMS
     GITHUB_ISSUE
     GITHUB_DISCUSSION
     WEB

@@ -29,7 +29,7 @@ export enum JobType {
 export interface AiResponsePayload {
     ticketId: string;
     threadId?: string;
-    source: 'discord' | 'github' | 'slack';
+    source: 'discord' | 'github' | 'slack' | 'teams';
 }
 
 export interface TicketClassifyPayload {
