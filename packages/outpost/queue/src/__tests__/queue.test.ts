@@ -539,8 +539,8 @@ describe('JobType enum', () => {
         expect(JobType.ONBOARDING_DIGEST).toBe('ONBOARDING_DIGEST');
     });
 
-    it('has exactly 7 job types', () => {
+    it('has exactly 8 job types', () => {
         const values = Object.values(JobType);
-        expect(values).toHaveLength(7);
+        expect(values).toHaveLength(8);
     });
 });

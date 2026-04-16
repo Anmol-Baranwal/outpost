@@ -24,6 +24,8 @@ export enum JobType {
     ACCOUNT_SCORING = 'ACCOUNT_SCORING',
     /** Sync accounts from HubSpot CRM */
     HUBSPOT_SYNC = 'HUBSPOT_SYNC',
+    /** Push a change to an external tracker plugin */
+    TRACKER_SYNC = 'TRACKER_SYNC',
 }
 
 // ─── Payload Shapes ─────────────────────────────────────────────────────────
@@ -62,6 +64,17 @@ export interface HubSpotSyncPayload {
     domain?: string;
 }
 
+export interface TrackerSyncPayload {
+    /** The Outpost ticket ID */
+    ticketId: string;
+    /** Which plugin should receive the change */
+    targetPlugin: string;
+    /** What kind of change to push */
+    action: string;
+    /** The full change data */
+    changeData: Record<string, unknown>;
+}
+
 /** Map from JobType to its specific payload shape */
 export interface JobPayload {
     [JobType.AI_RESPONSE]: AiResponsePayload;
@@ -71,6 +84,7 @@ export interface JobPayload {
     [JobType.ONBOARDING_DIGEST]: OnboardingDigestPayload;
     [JobType.ACCOUNT_SCORING]: AccountScoringPayload;
     [JobType.HUBSPOT_SYNC]: HubSpotSyncPayload;
+    [JobType.TRACKER_SYNC]: TrackerSyncPayload;
 }
 
 // ─── Job Results ────────────────────────────────────────────────────────────
