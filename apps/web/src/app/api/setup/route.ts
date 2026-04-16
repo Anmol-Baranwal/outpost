@@ -13,11 +13,26 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, email, password, confirmPassword } = body;
+    const {
+        orgName, orgEmail, orgLogoUrl, orgTagline,
+        name, email, password, confirmPassword,
+    } = body;
 
     // Validate required fields
     const errors: string[] = [];
 
+    // Organization validation
+    if (!orgName || typeof orgName !== 'string' || orgName.trim().length === 0) {
+        errors.push('Organization name is required.');
+    }
+
+    if (!orgEmail || typeof orgEmail !== 'string') {
+        errors.push('Organization email is required.');
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(orgEmail)) {
+        errors.push('Organization email must be a valid email address.');
+    }
+
+    // Admin validation
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
         errors.push('Name is required.');
     }
@@ -44,20 +59,42 @@ export async function POST(request: Request) {
 
     const passwordHash = await hashPassword(password);
 
-    const member = await prisma.teamMember.create({
-        data: {
-            name: name.trim(),
-            email: email.trim().toLowerCase(),
-            passwordHash,
-            role: 'ADMIN',
-        },
+    // Create organization and admin in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+        const org = await tx.organization.create({
+            data: {
+                name: orgName.trim(),
+                email: orgEmail.trim().toLowerCase(),
+                logoUrl: orgLogoUrl?.trim() || null,
+                tagline: orgTagline?.trim() || null,
+            },
+        });
+
+        const member = await tx.teamMember.create({
+            data: {
+                name: name.trim(),
+                email: email.trim().toLowerCase(),
+                passwordHash,
+                role: 'ADMIN',
+                status: 'ACTIVE',
+                joinedAt: new Date(),
+            },
+        });
+
+        return { org, member };
     });
 
     return NextResponse.json({
-        id: member.id,
-        name: member.name,
-        email: member.email,
-        role: member.role,
-        createdAt: member.createdAt,
+        organization: {
+            id: result.org.id,
+            name: result.org.name,
+            email: result.org.email,
+        },
+        admin: {
+            id: result.member.id,
+            name: result.member.name,
+            email: result.member.email,
+            role: result.member.role,
+        },
     });
 }
