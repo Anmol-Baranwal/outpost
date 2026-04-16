@@ -25,6 +25,13 @@
       ],
     },
     {
+      title: "Sync",
+      links: [
+        { label: "Overview", href: base + "sync/" },
+        { label: "Linear", href: base + "linear/" },
+      ],
+    },
+    {
       title: "Configuration",
       links: [
         { label: "Environment Variables", href: base + "configuration/" },

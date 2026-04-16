@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Linear Integration — Outpost</title>
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <nav class="top-nav">
+      <div class="nav-inner">
+        <div style="display: flex; align-items: center; gap: 1rem">
+          <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle sidebar">&#9776;</button>
+          <a href="../" class="nav-brand"> <span class="prompt">$</span> outpost </a>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="../docs/" style="color: var(--accent)">Docs</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" class="gh-link" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="docs-layout">
+      <aside class="sidebar" id="sidebar"></aside>
+
+      <main class="docs-content">
+        <h1>Linear Integration</h1>
+        <p class="lead">
+          Connect Outpost to Linear for bidirectional issue synchronization. Tickets created in
+          Outpost appear as Linear issues, and changes in Linear flow back to Outpost automatically.
+        </p>
+
+        <h2>Setup</h2>
+
+        <h3>1. Create a Linear API Key</h3>
+        <ol>
+          <li>Go to <a href="https://linear.app/settings/api" target="_blank">Linear Settings &rarr; API</a></li>
+          <li>Click <strong>Create key</strong></li>
+          <li>Give it a descriptive label (e.g., "Outpost Sync")</li>
+          <li>Copy the generated key &mdash; this is your <code>LINEAR_API_KEY</code></li>
+        </ol>
+
+        <h3>2. Configure a Webhook</h3>
+        <ol>
+          <li>Go to <a href="https://linear.app/settings/api" target="_blank">Linear Settings &rarr; API &rarr; Webhooks</a></li>
+          <li>Click <strong>Create webhook</strong></li>
+          <li>Set the <strong>URL</strong> to <code>https://your-outpost-domain.com/api/linear/webhook</code></li>
+          <li>Select the events to subscribe to:
+            <ul>
+              <li><strong>Issues</strong> &mdash; create, update, remove</li>
+              <li><strong>Comments</strong> &mdash; create, update, remove</li>
+              <li><strong>Labels</strong> &mdash; create, update, remove</li>
+            </ul>
+          </li>
+          <li>Copy the <strong>Webhook secret</strong> shown after creation &mdash; this is your <code>LINEAR_WEBHOOK_SECRET</code></li>
+        </ol>
+
+        <h3>3. Find Your Team ID</h3>
+        <ol>
+          <li>In Linear, go to <strong>Settings &rarr; Teams</strong></li>
+          <li>Click on the team you want to sync with Outpost</li>
+          <li>The team ID is in the URL: <code>https://linear.app/your-org/settings/teams/<strong>TEAM_ID</strong></code></li>
+        </ol>
+
+        <h2>Environment Variables</h2>
+        <div class="code-block">
+          <div class="code-block-header">.env <span class="lang-tag">env</span></div>
+          <pre><code><span class="cm"># Linear Integration</span>
+<span class="key">LINEAR_API_KEY</span>=<span class="str">lin_api_your-api-key-here</span>
+<span class="key">LINEAR_WEBHOOK_SECRET</span>=<span class="str">your-webhook-signing-secret</span>
+<span class="key">LINEAR_TEAM_ID</span>=<span class="str">your-linear-team-id</span></code></pre>
+        </div>
+
+        <div class="info-box">
+          <p>
+            <strong>Webhook URL:</strong> The Linear webhook endpoint must be publicly accessible.
+            During local development, use a tunneling tool like
+            <a href="https://ngrok.com/" target="_blank">ngrok</a> to expose your local server.
+            The webhook receiver runs on the same port as the Outpost web app (default 3000).
+          </p>
+        </div>
+
+        <h2>Status Mapping</h2>
+        <p>
+          Linear uses configurable workflow states per team. Outpost maps these to its own
+          ticket statuses. The default mapping is:
+        </p>
+        <table class="env-table">
+          <thead><tr><th>Linear Workflow State</th><th>Outpost Status</th></tr></thead>
+          <tbody>
+            <tr><td>Backlog</td><td>open</td></tr>
+            <tr><td>Todo</td><td>open</td></tr>
+            <tr><td>In Progress</td><td>in_progress</td></tr>
+            <tr><td>In Review</td><td>in_progress</td></tr>
+            <tr><td>Done</td><td>resolved</td></tr>
+            <tr><td>Canceled</td><td>closed</td></tr>
+          </tbody>
+        </table>
+        <p>
+          When an Outpost ticket status changes, the corresponding Linear issue is moved to the
+          first matching workflow state. Custom status mappings can be configured in the admin
+          dashboard under <strong>Settings &rarr; Sync &rarr; Linear</strong>.
+        </p>
+
+        <h2>Priority Mapping</h2>
+        <p>
+          Linear priorities (0&ndash;4) map to Outpost priorities as follows:
+        </p>
+        <table class="env-table">
+          <thead><tr><th>Linear Priority</th><th>Linear Label</th><th>Outpost Priority</th></tr></thead>
+          <tbody>
+            <tr><td>0</td><td>No priority</td><td>low</td></tr>
+            <tr><td>1</td><td>Urgent</td><td>critical</td></tr>
+            <tr><td>2</td><td>High</td><td>high</td></tr>
+            <tr><td>3</td><td>Medium</td><td>medium</td></tr>
+            <tr><td>4</td><td>Low</td><td>low</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Identity Mapping</h2>
+        <p>
+          To sync assignees between Linear and Outpost, each Linear user must be linked to an
+          Outpost TeamMember. This is configured in the admin dashboard under
+          <strong>Settings &rarr; Team Members</strong> by adding each member's Linear user ID
+          to their profile.
+        </p>
+        <p>
+          When a Linear issue is assigned to a user with a linked TeamMember, the corresponding
+          Outpost ticket is automatically assigned to that team member (and vice versa). Unlinked
+          users are ignored for assignment sync, but their names still appear in synced comments.
+        </p>
+
+        <h2>What Syncs</h2>
+        <p>The following fields are synchronized bidirectionally between Outpost and Linear:</p>
+        <table class="env-table">
+          <thead><tr><th>Field</th><th>Direction</th><th>Details</th></tr></thead>
+          <tbody>
+            <tr><td>Status</td><td>Bidirectional</td><td>Mapped via status mapping (see above)</td></tr>
+            <tr><td>Priority</td><td>Bidirectional</td><td>Mapped via priority mapping (see above)</td></tr>
+            <tr><td>Assignee</td><td>Bidirectional</td><td>Requires identity mapping</td></tr>
+            <tr><td>Labels</td><td>Bidirectional</td><td>Linear labels &harr; Outpost tags</td></tr>
+            <tr><td>Comments</td><td>Bidirectional</td><td>Markdown preserved, author attributed</td></tr>
+            <tr><td>Title</td><td>Bidirectional</td><td>Issue title &harr; ticket title</td></tr>
+            <tr><td>Description</td><td>Outpost &rarr; Linear</td><td>Set on initial creation only</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Bulk Import</h2>
+        <p>
+          When you first connect Linear, you can import existing issues into Outpost as tickets.
+          This is useful for migrating an existing workflow or catching up on issues created before
+          the integration was enabled.
+        </p>
+        <ol>
+          <li>Go to the admin dashboard: <strong>Settings &rarr; Sync &rarr; Linear</strong></li>
+          <li>Click <strong>Import existing issues</strong></li>
+          <li>Select which Linear statuses to import (e.g., skip "Done" and "Canceled" issues)</li>
+          <li>The import runs as a background job &mdash; progress is shown in the dashboard</li>
+        </ol>
+
+        <div class="info-box">
+          <p>
+            <strong>Duplicate prevention:</strong> The bulk import checks for existing linked tickets
+            before creating new ones, so it is safe to run multiple times. Issues already linked to
+            Outpost tickets are skipped.
+          </p>
+        </div>
+
+        <h2>Webhook Events</h2>
+        <p>
+          The Linear webhook endpoint at <code>/api/linear/webhook</code> handles the following events:
+        </p>
+        <table class="endpoint-table">
+          <thead><tr><th>Event</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td>Issue create</td><td>Creates a new Outpost ticket linked to the Linear issue</td></tr>
+            <tr><td>Issue update</td><td>Syncs status, priority, assignee, and label changes</td></tr>
+            <tr><td>Issue remove</td><td>Closes the linked Outpost ticket</td></tr>
+            <tr><td>Comment create</td><td>Adds the comment as a message on the linked ticket</td></tr>
+            <tr><td>Comment update</td><td>Updates the corresponding message in Outpost</td></tr>
+            <tr><td>Comment remove</td><td>Marks the message as deleted in Outpost</td></tr>
+          </tbody>
+        </table>
+
+        <p>
+          All webhook payloads are verified using the <code>LINEAR_WEBHOOK_SECRET</code> to ensure
+          authenticity. Invalid signatures are rejected with a 401 response.
+        </p>
+
+        <div class="prev-next">
+          <a href="../sync/">
+            <span class="label">Previous</span>
+            <span class="title">Sync Overview</span>
+          </a>
+          <a href="../configuration/" class="next">
+            <span class="label">Next</span>
+            <span class="title">Configuration</span>
+          </a>
+        </div>
+      </main>
+
+      <div class="page-toc" id="page-toc"></div>
+    </div>
+
+    <footer class="docs-footer">
+      <div class="footer-inner">
+        <div class="footer-left"><span class="prompt">$</span> outpost &mdash; by CopilotKit</div>
+        <ul class="footer-links">
+          <li><a href="../">Home</a></li>
+          <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+        </ul>
+      </div>
+    </footer>
+
+    <script src="../sidebar.js"></script>
+  </body>
+</html>

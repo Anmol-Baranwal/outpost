@@ -31,14 +31,14 @@
       <main class="docs-content">
         <h1>Deployment Guide</h1>
         <p class="lead">
-          Outpost consists of five services: the web dashboard, Discord bot, Slack bot, Teams bot,
-          and GitHub App webhook receiver. All share a single PostgreSQL database (with pgvector for Pathfinder).
+          Outpost consists of six services: the web dashboard, Discord bot, Slack bot, Teams bot,
+          GitHub App webhook receiver, and Linear sync service. All share a single PostgreSQL database (with pgvector for Pathfinder).
         </p>
 
         <h2>Requirements</h2>
         <ul>
           <li><strong>PostgreSQL 16</strong> with pgvector extension (required by Pathfinder for embeddings)</li>
-          <li><strong>Node.js 20+</strong> runtime for all three services</li>
+          <li><strong>Node.js 20+</strong> runtime for all five services</li>
           <li><strong>Persistent process manager</strong> for the Discord and Slack bots (they maintain WebSocket connections)</li>
           <li><strong>Public HTTPS endpoint</strong> for the GitHub App and Teams bot webhook receivers</li>
         </ul>
@@ -113,6 +113,17 @@
       - <span class="str">postgres</span>
     <span class="key">restart</span>: <span class="str">unless-stopped</span>
 
+  <span class="key">linear-sync</span>:
+    <span class="key">build</span>:
+      <span class="key">context</span>: <span class="str">.</span>
+      <span class="key">dockerfile</span>: <span class="str">apps/linear-sync/Dockerfile</span>
+    <span class="key">ports</span>:
+      - <span class="str">"3004:3004"</span>
+    <span class="key">env_file</span>: <span class="str">.env</span>
+    <span class="key">depends_on</span>:
+      - <span class="str">postgres</span>
+    <span class="key">restart</span>: <span class="str">unless-stopped</span>
+
 <span class="key">volumes</span>:
   <span class="key">pgdata</span>:</code></pre>
         </div>
@@ -135,6 +146,7 @@
               <li><strong>outpost-slack-bot</strong> &mdash; <code>apps/slack-bot/Dockerfile</code> (background worker, Socket Mode)</li>
               <li><strong>outpost-teams-bot</strong> &mdash; <code>apps/teams-bot/Dockerfile</code> (port 3003, needs public URL for webhooks)</li>
               <li><strong>outpost-github-app</strong> &mdash; <code>apps/github-app/Dockerfile</code> (port 3200, needs public URL for webhooks)</li>
+              <li><strong>outpost-linear-sync</strong> &mdash; <code>apps/linear-sync/Dockerfile</code> (port 3004, needs public URL for webhooks)</li>
             </ul>
           </li>
           <li>Share <code>DATABASE_URL</code> across all services via Railway's variable references (<code>${{Postgres.DATABASE_URL}}</code>)</li>
@@ -159,7 +171,8 @@
 <span class="fn">pm2</span> start apps/discord-bot/dist/index.js --name outpost-discord
 <span class="fn">pm2</span> start apps/slack-bot/dist/index.js --name outpost-slack
 <span class="fn">pm2</span> start apps/teams-bot/dist/index.js --name outpost-teams
-<span class="fn">pm2</span> start apps/github-app/dist/index.js --name outpost-github</code></pre>
+<span class="fn">pm2</span> start apps/github-app/dist/index.js --name outpost-github
+<span class="fn">pm2</span> start apps/linear-sync/dist/index.js --name outpost-linear-sync</code></pre>
         </div>
 
         <h2>Database Setup</h2>
@@ -182,6 +195,7 @@
           <li>&#9745; <code>GITHUB_APP_ID</code>, <code>GITHUB_PRIVATE_KEY</code>, and webhook secret</li>
           <li>&#9745; <code>SLACK_BOT_TOKEN</code>, <code>SLACK_APP_TOKEN</code>, <code>SLACK_SIGNING_SECRET</code></li>
           <li>&#9745; <code>TEAMS_APP_ID</code>, <code>TEAMS_APP_PASSWORD</code></li>
+          <li>&#9745; <code>LINEAR_API_KEY</code>, <code>LINEAR_WEBHOOK_SECRET</code>, <code>LINEAR_TEAM_ID</code> (if using Linear sync)</li>
           <li>&#9745; <code>NODE_ENV=production</code></li>
           <li>&#9745; GitHub App webhook URL updated to production domain</li>
           <li>&#9745; HTTPS configured for web dashboard and GitHub webhook endpoint</li>

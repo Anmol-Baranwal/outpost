@@ -358,6 +358,11 @@ footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align:center
             <p>AI-powered search across documentation, past tickets, and community discussions. Surfaces relevant answers automatically.</p>
         </div>
         <div class="feature-card fade-in" style="transition-delay: 0.64s">
+            <div class="icon">&#128260;</div>
+            <h3>Bidirectional Sync</h3>
+            <p>Sync tickets with external issue trackers like GitHub Issues and Linear. Changes flow both ways automatically via adapter plugins.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.72s">
             <div class="icon">&#128274;</div>
             <h3>Job Queue</h3>
             <p>Reliable Postgres-backed job queue for background processing. Retries, dead-letter queue, and observable execution.</p>
@@ -367,7 +372,7 @@ footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align:center
 
 <!-- Architecture diagram removed — too technical for landing page. See /architecture/ docs page instead. -->
 <section style="display:none" class="section-arch" id="architecture">
-    <h2 class="fade-in">Three processes, one database</h2>
+    <h2 class="fade-in">Five processes, one database</h2>
     <p class="section-sub fade-in">A web dashboard, Discord bot, Slack bot, Teams bot, and GitHub App &mdash; all sharing a single PostgreSQL database .</p>
 
     <div class="arch-svg-wrap fade-in" id="arch-diagram">
@@ -512,6 +517,11 @@ footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align:center
             <p>Issue and discussion tracking, label sync, auto-triage of bug reports, and PR-linked ticket resolution.</p>
         </div>
         <div class="integration-card fade-in" style="transition-delay: 0.32s">
+            <div class="icon">&#128200;</div>
+            <h3>Linear</h3>
+            <p>Bidirectional issue sync with Linear. Status, priority, assignee, labels, and comments all stay in sync automatically.</p>
+        </div>
+        <div class="integration-card fade-in" style="transition-delay: 0.4s">
             <div class="icon">&#127760;</div>
             <h3>Web Dashboard</h3>
             <p>Full-featured Next.js dashboard for ticket management, analytics, account management, and team administration.</p>
