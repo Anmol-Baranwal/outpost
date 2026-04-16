@@ -1,13 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockPrisma } from './helpers/mocks.js';
 
 // Mock dependencies before importing the handler
-vi.mock('@copilotkit/outpost/db', () => ({
-    prisma: {
-        onboardingMember: {
-            upsert: vi.fn(),
-        },
-    },
-}));
+vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 
 vi.mock('../config.js', () => ({
     config: {

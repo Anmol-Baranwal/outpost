@@ -1,32 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockPrisma, mockQueue } from './helpers/mocks.js';
 
-vi.mock('@copilotkit/outpost/db', () => ({
-    prisma: {
-        ticket: {
-            create: vi.fn(),
-            findFirst: vi.fn(),
-            findUnique: vi.fn(),
-            update: vi.fn(),
-        },
-        message: {
-            create: vi.fn(),
-        },
-        user: {
-            findFirst: vi.fn(),
-        },
-        teamMember: {
-            findUnique: vi.fn(),
-        },
-    },
-}));
-
-vi.mock('@copilotkit/outpost/queue', () => ({
-    createJob: vi.fn().mockResolvedValue('job-123'),
-    JobType: {
-        AI_RESPONSE: 'AI_RESPONSE',
-        ESCALATION: 'ESCALATION',
-    },
-}));
+vi.mock('@copilotkit/outpost/db', () => mockPrisma());
+vi.mock('@copilotkit/outpost/queue', () => mockQueue());
 
 vi.mock('botbuilder', () => ({
     CardFactory: {

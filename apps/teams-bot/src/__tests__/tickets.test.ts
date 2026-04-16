@@ -1,18 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockPrisma } from './helpers/mocks.js';
 
-vi.mock('@copilotkit/outpost/db', () => ({
-    prisma: {
-        ticket: {
-            findFirst: vi.fn(),
-        },
-        user: {
-            findFirst: vi.fn(),
-        },
-        teamMember: {
-            findUnique: vi.fn(),
-        },
-    },
-}));
+vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 
 import { findTicketByConversationId, isTeamMember } from '../lib/tickets.js';
 import { prisma } from '@copilotkit/outpost/db';

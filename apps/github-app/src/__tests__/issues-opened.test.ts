@@ -1,26 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockPrisma, mockQueue } from './helpers/mocks.js';
 
 // Mock dependencies before importing the handler
-vi.mock('@copilotkit/outpost/db', () => ({
-    prisma: {
-        ticket: {
-            create: vi.fn(),
-            findFirst: vi.fn(),
-            update: vi.fn(),
-        },
-        message: {
-            create: vi.fn(),
-        },
-    },
-}));
-
-vi.mock('@copilotkit/outpost/queue', () => ({
-    createJob: vi.fn().mockResolvedValue('job-123'),
-    JobType: {
-        AI_RESPONSE: 'AI_RESPONSE',
-        TICKET_CLASSIFY: 'TICKET_CLASSIFY',
-    },
-}));
+vi.mock('@copilotkit/outpost/db', () => mockPrisma());
+vi.mock('@copilotkit/outpost/queue', () => mockQueue());
 
 vi.mock('@copilotkit/outpost/shared', () => ({
     generateTicketId: vi.fn().mockReturnValue('TKT-GH01'),

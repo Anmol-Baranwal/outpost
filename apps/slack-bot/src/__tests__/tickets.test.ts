@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mockPrisma } from './helpers/mocks.js';
 
 vi.mock('../config.js', () => ({
     config: {
@@ -10,19 +11,7 @@ vi.mock('../config.js', () => ({
     },
 }));
 
-vi.mock('@copilotkit/outpost/db', () => ({
-    prisma: {
-        ticket: {
-            findFirst: vi.fn(),
-        },
-        user: {
-            findFirst: vi.fn(),
-        },
-        teamMember: {
-            findUnique: vi.fn(),
-        },
-    },
-}));
+vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 
 import { findTicketByThreadTs, isTeamMember, buildPermalink } from '../lib/tickets.js';
 import { prisma } from '@copilotkit/outpost/db';
