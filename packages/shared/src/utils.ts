@@ -2,7 +2,7 @@ import { TICKET_ID_PREFIX, BACKOFF_BASE_MS, BACKOFF_MAX_MS } from './constants.j
 
 /**
  * Generate a unique ticket ID in the format TKT-XXXXXXXX.
- * Uses 8 random characters from a 30-char alphabet (~656 billion keyspace)
+ * Uses 8 random characters from a 32-char alphabet (~1.1 trillion keyspace)
  * to make collisions negligible at scale.
  */
 export function generateTicketId(): string {

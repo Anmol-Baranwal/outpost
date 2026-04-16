@@ -5,9 +5,10 @@
  * for its priority level.
  *
  * First-response time = time between ticket creation and the first
- * BOT or SYSTEM message (team response).  If no such message exists the
- * ticket is considered "awaiting first response" and is breached only
- * when the elapsed time exceeds the target.
+ * BOT or SYSTEM message (bot/system activity, treated as initial response
+ * for SLA purposes).  If no such message exists the ticket is considered
+ * "awaiting first response" and is breached only when the elapsed time
+ * exceeds the target.
  *
  * Resolution time = time between ticket creation and status=CLOSED.
  * Open tickets are checked against the target based on elapsed time so far.
@@ -64,10 +65,11 @@ export function checkSlaCompliance(
 
     // ── Resolution time ─────────────────────────────────────────────────
     const isClosed = ticket.status === 'CLOSED' || ticket.status === 'RESOLVED';
-    // For closed tickets we don't have an explicit closedAt field, but
-    // the updatedAt would reflect it.  For simplicity we treat
-    // "resolution time so far" as elapsed since creation up to now for
-    // open tickets.
+    // Both CLOSED and RESOLVED are treated as terminal states for resolution
+    // SLA.  We don't have an explicit closedAt field; updatedAt would
+    // approximate it but isn't used here — we measure elapsed time from
+    // creation to now, which overestimates slightly for already-closed
+    // tickets.  For open tickets we check elapsed time so far.
     const resolutionTimeMs = isClosed
         ? now.getTime() - ticket.createdAt.getTime()
         : null;

@@ -11,7 +11,7 @@ import type { RoutingRule } from './types.js';
 export const DEFAULT_ROUTING_RULES: RoutingRule[] = [
     {
         name: 'high-acv-account-owner',
-        description: 'Route tickets from high-ACV accounts (>$50K) to account owner',
+        description: 'Route tickets from high-ACV accounts (>$50K) to account owner, falling back to admin role',
         condition: {
             type: 'acv',
             minAcv: 50_000,
@@ -23,7 +23,7 @@ export const DEFAULT_ROUTING_RULES: RoutingRule[] = [
     },
     {
         name: 'billing-to-sales',
-        description: 'Route billing/payment/invoice keywords to sales team',
+        description: 'Route billing/payment/invoice keywords to admin team',
         condition: {
             type: 'keyword',
             keywords: [

@@ -68,7 +68,7 @@ export function scoreEngagement(metrics: AccountMetrics): EngagementResult {
 /**
  * Normalize message frequency to a 0-100 scale.
  * - 0 msgs/day = 0
- * - 2 msgs/day = 50 (moderate engagement)
+ * - 2 msgs/day = ~61 (moderate engagement)
  * - 5+ msgs/day = 100 (very active)
  * Uses a logarithmic curve for diminishing returns.
  */
@@ -83,7 +83,7 @@ function scoreMessageFrequency(avgPerDay: number): number {
  * Normalize ticket volume to a 0-100 scale.
  * More tickets generally = more engaged (they're using the product).
  * - 0 tickets = 0
- * - 5 tickets = ~50
+ * - 5 tickets = ~65
  * - 15+ tickets = 100
  */
 function scoreTicketVolume(ticketCount: number): number {
@@ -96,7 +96,7 @@ function scoreTicketVolume(ticketCount: number): number {
  * Score recency of activity using exponential decay.
  * - 0 days ago = 100
  * - 7 days ago = ~50
- * - 30 days ago = ~10
+ * - 30 days ago = ~5
  * - 90+ days ago = ~0
  */
 function scoreRecency(daysSinceLastActivity: number): number {
