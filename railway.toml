@@ -53,3 +53,14 @@ restartPolicy = "always"
 [services.teams-bot.deploy]
 startCommand = ""
 region = "us-west1"
+
+# ── Linear sync (webhook receiver, needs public port) ──────────────────────
+[services.linear-sync]
+name = "outpost-linear-sync"
+dockerfile = "apps/linear-sync/Dockerfile"
+healthcheck = "/health"
+restartPolicy = "always"
+
+[services.linear-sync.deploy]
+startCommand = ""
+region = "us-west1"
