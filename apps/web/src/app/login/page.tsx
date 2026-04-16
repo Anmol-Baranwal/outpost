@@ -2,8 +2,92 @@
 
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
-import { Mountain, Github } from 'lucide-react';
-import { Suspense } from 'react';
+import { Mountain, Github, KeyRound, Shield } from 'lucide-react';
+import { Suspense, useState } from 'react';
+
+const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? 'credentials';
+
+function CredentialsForm() {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        await signIn('credentials', {
+            email,
+            password,
+            callbackUrl: '/dashboard',
+        });
+        setLoading(false);
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+                <label htmlFor="email" className="block text-sm font-medium text-muted-foreground mb-1">
+                    Email
+                </label>
+                <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="you@company.com"
+                />
+            </div>
+            <div>
+                <label htmlFor="password" className="block text-sm font-medium text-muted-foreground mb-1">
+                    Password
+                </label>
+                <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Enter your password"
+                />
+            </div>
+            <button
+                type="submit"
+                disabled={loading}
+                className="flex w-full items-center justify-center gap-3 rounded-lg bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+                <KeyRound className="h-5 w-5" />
+                {loading ? 'Signing in...' : 'Sign in'}
+            </button>
+        </form>
+    );
+}
+
+function GithubButton() {
+    return (
+        <button
+            onClick={() => signIn('github', { callbackUrl: '/dashboard' })}
+            className="flex w-full items-center justify-center gap-3 rounded-lg bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-90"
+        >
+            <Github className="h-5 w-5" />
+            Sign in with GitHub
+        </button>
+    );
+}
+
+function OidcButton() {
+    return (
+        <button
+            onClick={() => signIn('oidc', { callbackUrl: '/dashboard' })}
+            className="flex w-full items-center justify-center gap-3 rounded-lg bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-90"
+        >
+            <Shield className="h-5 w-5" />
+            Sign in with SSO
+        </button>
+    );
+}
 
 function LoginContent() {
     const searchParams = useSearchParams();
@@ -24,26 +108,30 @@ function LoginContent() {
 
                 {error === 'AccessDenied' && (
                     <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
-                        Access denied. You must be a member of the authorized GitHub organization.
+                        Access denied. You are not authorized to sign in.
                     </div>
                 )}
 
-                {error && error !== 'AccessDenied' && (
+                {error === 'CredentialsSignin' && (
+                    <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
+                        Invalid email or password. Please try again.
+                    </div>
+                )}
+
+                {error && error !== 'AccessDenied' && error !== 'CredentialsSignin' && (
                     <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
                         An error occurred during sign in. Please try again.
                     </div>
                 )}
 
-                <button
-                    onClick={() => signIn('github', { callbackUrl: '/dashboard' })}
-                    className="flex w-full items-center justify-center gap-3 rounded-lg bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-90"
-                >
-                    <Github className="h-5 w-5" />
-                    Sign in with GitHub
-                </button>
+                {AUTH_PROVIDER === 'credentials' && <CredentialsForm />}
+                {AUTH_PROVIDER === 'github' && <GithubButton />}
+                {AUTH_PROVIDER === 'oidc' && <OidcButton />}
 
                 <p className="text-center text-xs text-muted-foreground">
-                    Team members only. Sign in with your GitHub account.
+                    {AUTH_PROVIDER === 'credentials' && 'Sign in with your team account.'}
+                    {AUTH_PROVIDER === 'github' && 'Team members only. Sign in with your GitHub account.'}
+                    {AUTH_PROVIDER === 'oidc' && 'Sign in with your organization SSO.'}
                 </p>
             </div>
         </div>

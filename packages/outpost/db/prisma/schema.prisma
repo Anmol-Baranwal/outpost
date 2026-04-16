@@ -311,6 +311,7 @@ model TeamMember {
     id                 String             @id @default(cuid())
     name               String
     email              String             @unique
+    passwordHash       String?
     role               TeamMemberRole     @default(SUPPORT)
     avatarUrl          String?
     tickets            Ticket[]
