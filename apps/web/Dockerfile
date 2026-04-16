@@ -56,7 +56,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3000/api/health || exit 1
 
 COPY --from=installer --chown=outpost:outpost /app/apps/web/start.sh ./apps/web/start.sh
-COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/prisma*/node_modules/prisma ./node_modules/prisma
-COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+engines*/node_modules/@prisma/engines ./node_modules/@prisma/engines
 
 CMD ["sh", "apps/web/start.sh"]
