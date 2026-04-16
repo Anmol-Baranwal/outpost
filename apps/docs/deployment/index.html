@@ -178,12 +178,21 @@
         <h2>Database Setup</h2>
         <p>
           Outpost uses PostgreSQL 16. The shared database also serves Pathfinder (which requires
-          the pgvector extension for embedding storage). Run the Prisma migrations to set up the schema:
+          the pgvector extension for embedding storage). You can manually run the Prisma migrations:
         </p>
         <div class="code-block">
           <div class="code-block-header">terminal <span class="lang-tag">bash</span></div>
           <pre><code><span class="fn">pnpm</span> db:generate
 <span class="fn">pnpm</span> db:push</code></pre>
+        </div>
+
+        <div class="info-box">
+          <p>
+            <strong>Auto db push:</strong> The web app automatically runs <code>db push</code> on
+            startup if the database schema is out of date. This means fresh deployments will
+            self-initialize their schema without manual migration steps. The first user to visit
+            the app will be redirected to the setup wizard to create the organization and admin account.
+          </p>
         </div>
 
         <h2>Environment Checklist</h2>
@@ -197,6 +206,9 @@
           <li>&#9745; <code>TEAMS_APP_ID</code>, <code>TEAMS_APP_PASSWORD</code></li>
           <li>&#9745; <code>LINEAR_API_KEY</code>, <code>LINEAR_WEBHOOK_SECRET</code>, <code>LINEAR_TEAM_ID</code> (if using Linear sync)</li>
           <li>&#9745; <code>HUBSPOT_API_KEY</code> (if using HubSpot CRM sync)</li>
+          <li>&#9745; <code>AUTH_PROVIDER</code> &mdash; <code>credentials</code> (default), <code>github</code>, or <code>oidc</code></li>
+          <li>&#9745; <code>NEXT_PUBLIC_AUTH_PROVIDER</code> &mdash; must match <code>AUTH_PROVIDER</code></li>
+          <li>&#9745; <code>RESEND_API_KEY</code> (required for team invitations and email notifications)</li>
           <li>&#9745; <code>NODE_ENV=production</code></li>
           <li>&#9745; GitHub App webhook URL updated to production domain</li>
           <li>&#9745; HTTPS configured for web dashboard and GitHub webhook endpoint</li>

@@ -133,6 +133,47 @@
           </p>
         </div>
 
+        <h2>Authentication</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>AUTH_PROVIDER</td><td>Authentication provider: <code>credentials</code>, <code>github</code>, or <code>oidc</code></td><td>credentials</td></tr>
+            <tr><td>NEXT_PUBLIC_AUTH_PROVIDER</td><td>Client-side auth provider hint (must match <code>AUTH_PROVIDER</code>)</td><td>credentials</td></tr>
+            <tr><td>GITHUB_CLIENT_ID</td><td>GitHub OAuth App client ID (required when <code>AUTH_PROVIDER=github</code>)</td><td>&mdash;</td></tr>
+            <tr><td>GITHUB_CLIENT_SECRET</td><td>GitHub OAuth App client secret (required when <code>AUTH_PROVIDER=github</code>)</td><td>&mdash;</td></tr>
+            <tr><td>OIDC_ISSUER</td><td>OIDC provider issuer URL (required when <code>AUTH_PROVIDER=oidc</code>)</td><td>&mdash;</td></tr>
+            <tr><td>OIDC_CLIENT_ID</td><td>OIDC client ID (required when <code>AUTH_PROVIDER=oidc</code>)</td><td>&mdash;</td></tr>
+            <tr><td>OIDC_CLIENT_SECRET</td><td>OIDC client secret (required when <code>AUTH_PROVIDER=oidc</code>)</td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
+
+        <div class="info-box">
+          <p>
+            <strong>Pluggable auth:</strong> Outpost defaults to credentials-based authentication
+            (email + password). To use GitHub OAuth or an OIDC provider instead, set both
+            <code>AUTH_PROVIDER</code> and <code>NEXT_PUBLIC_AUTH_PROVIDER</code> to the same value,
+            then supply the corresponding client credentials above.
+          </p>
+        </div>
+
+        <h2>Email (Resend)</h2>
+        <table class="env-table">
+          <thead><tr><th>Variable</th><th>Description</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td>RESEND_API_KEY</td><td>API key for <a href="https://resend.com" target="_blank">Resend</a> email delivery (used for team invitations, notifications, and template-based emails)</td><td>&mdash;</td></tr>
+            <tr><td>EMAIL_FROM</td><td>Sender address for outgoing emails</td><td>noreply@outpost.dev</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Setup (First Run)</h2>
+        <p>
+          On first launch, Outpost detects an empty database and redirects to the setup wizard at
+          <code>/setup</code>. The wizard creates the organization record and the first admin user
+          account in three steps: organization details, admin credentials, and launch. No environment
+          variables are required for the setup flow &mdash; it works out of the box with credentials
+          auth. The database schema is automatically pushed on startup if needed.
+        </p>
+
         <h2 id="sla-targets">SLA Targets</h2>
         <p>
           SLA targets are configured per priority level in the database through the admin dashboard.

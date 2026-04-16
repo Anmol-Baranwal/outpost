@@ -145,11 +145,30 @@
           </p>
         </div>
 
-        <h2>Verify It Works</h2>
+        <h2>First Run: Setup Wizard</h2>
         <p>
-          Open <a href="http://localhost:3000">http://localhost:3000</a> in your browser. You should
-          see the Outpost dashboard with the seeded sample data.
+          When you open <a href="http://localhost:3000">http://localhost:3000</a> for the first time,
+          Outpost will redirect you to the <strong>Setup Wizard</strong> at <code>/setup</code>.
+          The wizard walks you through three steps:
         </p>
+        <ol>
+          <li><strong>Organization Details</strong> &mdash; name your organization and configure basic settings</li>
+          <li><strong>Admin Account</strong> &mdash; create the first admin user with email and password (credentials auth)</li>
+          <li><strong>Launch</strong> &mdash; confirm and launch into the dashboard</li>
+        </ol>
+        <p>
+          After completing the wizard, you'll land on the main dashboard, fully authenticated.
+          The setup wizard only runs once &mdash; subsequent visits go straight to the login page.
+        </p>
+
+        <div class="info-box">
+          <p>
+            <strong>Auth:</strong> Outpost uses credentials-based authentication by default (email + password).
+            GitHub OAuth and OIDC providers can be enabled optionally via the
+            <code>AUTH_PROVIDER</code> environment variable. See the
+            <a href="../configuration/">Configuration Reference</a> for details.
+          </p>
+        </div>
 
         <h2>Next Steps</h2>
         <ul>

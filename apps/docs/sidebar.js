@@ -33,6 +33,15 @@
       ],
     },
     {
+      title: "Settings",
+      links: [
+        { label: "Team Management", href: base + "settings/team/" },
+        { label: "Templates", href: base + "templates/" },
+        { label: "Organization", href: base + "settings/org/" },
+        { label: "Profile", href: base + "settings/profile/" },
+      ],
+    },
+    {
       title: "Configuration",
       links: [
         { label: "Environment Variables", href: base + "configuration/" },
