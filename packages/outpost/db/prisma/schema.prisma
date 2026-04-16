@@ -36,6 +36,7 @@ model Ticket {
     messages        Message[]
     notes           Note[]
     discussions     Discussion[]
+    externalLinks   TicketExternalLink[]
 
     slaBreachedAt   DateTime?
     createdAt       DateTime       @default(now())
@@ -298,14 +299,15 @@ enum SlaMetric {
 // ─── Team ───────────────────────────────────────────────────────────────────
 
 model TeamMember {
-    id        String         @id @default(cuid())
-    name      String
-    email     String         @unique
-    role      TeamMemberRole @default(SUPPORT)
-    avatarUrl String?
-    tickets   Ticket[]
-    createdAt DateTime       @default(now())
-    updatedAt DateTime       @updatedAt
+    id                 String             @id @default(cuid())
+    name               String
+    email              String             @unique
+    role               TeamMemberRole     @default(SUPPORT)
+    avatarUrl          String?
+    tickets            Ticket[]
+    externalIdentities ExternalIdentity[]
+    createdAt          DateTime           @default(now())
+    updatedAt          DateTime           @updatedAt
 }
 
 enum TeamMemberRole {
@@ -338,4 +340,48 @@ enum FunnelStage {
     CONTACTED
     RESPONDED
     MEETING_BOOKED
+}
+
+// ─── Sync Infrastructure ───────────────────────────────────────────────────
+
+model TicketExternalLink {
+    id          String   @id @default(cuid())
+    ticketId    String
+    plugin      String
+    externalId  String
+    externalUrl String?
+    metadata    Json?
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+    ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+    @@unique([ticketId, plugin])
+    @@unique([plugin, externalId])
+}
+
+model ExternalIdentity {
+    id         String     @id @default(cuid())
+    memberId   String
+    plugin     String
+    externalId String
+    member     TeamMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+    @@unique([plugin, externalId])
+    @@index([memberId])
+}
+
+model SyncEvent {
+    id           String   @id @default(cuid())
+    sourcePlugin String
+    targetPlugin String
+    entityType   String
+    entityId     String
+    action       String
+    payloadHash  String
+    status       String   @default("pending")
+    error        String?
+    createdAt    DateTime @default(now())
+
+    @@index([entityId, sourcePlugin, createdAt])
+    @@index([status, createdAt])
 }
