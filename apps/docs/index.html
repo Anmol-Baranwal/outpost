@@ -1,806 +1,513 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Outpost — AI-Powered Support Operations Platform</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta name="description" content="Unify customer support across Discord, GitHub, and the web into a single intelligent hub. AI-assisted ticket management and proactive customer engagement.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Outpost — AI-powered support operations platform">
+<meta property="og:description" content="Unify customer support across Discord, GitHub, and the web with AI-powered ticket management.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Outpost — AI-powered support operations">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg-deep: #0a0a0f;
+    --bg-surface: #111118;
+    --bg-card: #16161f;
+    --border: #222233;
+    --text-primary: #e8e8f0;
+    --text-secondary: #8888a0;
+    --text-dim: #555570;
+    --accent: #f97316;
+    --accent-dim: #ea580c;
+    --accent-glow: rgba(249, 115, 22, 0.15);
+    --blue: #4488ff;
+    --purple: #aa66ff;
+    --warning: #ffaa00;
+    --mono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+    --sans: "Instrument Sans", -apple-system, system-ui, sans-serif;
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Animations */
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.fade-in { opacity: 0; transform: translateY(30px); transition: opacity 0.8s var(--ease-out-expo), transform 0.8s var(--ease-out-expo); }
+.fade-in.visible { opacity: 1; transform: translateY(0); }
+* { margin:0; padding:0; box-sizing:border-box; }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-size: 16px; }
+body { background: var(--bg-deep); color: var(--text-primary); font-family: var(--sans); line-height: 1.6; overflow-x:hidden; }
+code, pre, kbd, .demo-body, .install-command { font-feature-settings: "liga" 0, "calt" 0; }
 
-    <title>Outpost — AI-powered support operations platform</title>
-    <meta
-      name="description"
-      content="Outpost unifies customer support across Discord, GitHub, and the web into a single intelligent hub with AI-assisted ticket management and proactive customer engagement."
-    />
+/* Noise overlay */
+body::before { content:''; position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:9999;
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+}
 
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content="Outpost — AI-powered support operations platform" />
-    <meta
-      property="og:description"
-      content="Unify customer support across Discord, GitHub, and the web with AI-powered ticket management."
-    />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Outpost — AI-powered support operations" />
+/* Container */
+.container { max-width: 1120px; margin: 0 auto; padding: 0 2rem; }
 
-    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+/* Nav */
+nav { position:fixed; top:0; left:0; right:0; z-index:100; padding: 1rem 0;
+    background: rgba(10,10,15,0.85); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border-bottom: 1px solid var(--border); }
+nav .container { display:flex; align-items:center; justify-content:space-between; }
+.nav-brand { font-family: var(--mono); font-weight: 600; font-size: 1rem; color: var(--text-primary); text-decoration: none; }
+.nav-brand span { color: var(--accent); }
+.nav-links { display:flex; gap: 2rem; align-items:center; list-style:none; }
+.nav-links a { color: var(--text-secondary); text-decoration:none; font-size: 0.875rem; font-weight: 500; transition: color 0.2s; }
+.nav-links a:hover { color: var(--text-primary); }
+.nav-links a.active { color: var(--accent); }
+.nav-links .gh-btn { display:inline-flex; align-items:center; gap:0.5rem; padding: 0.4rem 1rem; border: 1px solid var(--border); border-radius: 6px; transition: border-color 0.2s, background 0.2s; }
+.nav-links .gh-btn:hover { border-color: var(--text-dim); background: var(--bg-card); }
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Instrument+Sans:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
+/* Hero */
+.hero { padding: 120px 0 3rem; max-width: 1120px; margin: 0 auto; padding-left: 2rem; padding-right: 2rem; }
+.badge { display: inline-flex; align-items:center; gap: 8px; padding: 6px 16px; border: 1px solid var(--border); border-radius: 100px; font-family: var(--mono); font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 32px; animation: fadeUp 0.8s var(--ease-out-expo) both; }
+.badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+.hero h1 { font-size: clamp(2.5rem, 6vw, 4.5rem); font-weight: 700; line-height: 1.08; margin-bottom: 24px; letter-spacing: -0.03em; animation: fadeUp 0.8s var(--ease-out-expo) 0.1s both; }
+.hero-break { display: none; }
+@media (min-width: 769px) { .hero-break { display: block; } }
+.hero h1 .accent { color: var(--accent); }
+.hero .subtitle { font-size: 1.2rem; color: var(--text-secondary); max-width: 700px; line-height: 1.7; margin-bottom: 40px; animation: fadeUp 0.8s var(--ease-out-expo) 0.2s both; }
 
-    <style>
-      /* ─── Reset & Variables ───────────────────────────────────────── */
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
+/* Install box */
+.install-box { display: inline-flex; flex-direction: column; gap: 0; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 20px; font-family: var(--mono); font-size: 0.9rem; margin-bottom: 2.5rem; }
+.install-box .prompt { color: var(--accent); }
+.install-box .cmd { color: var(--text-primary); }
+.install-line { display: flex; align-items: center; gap: 12px; }
+.install-divider { color: var(--text-dim); font-size: 0.75rem; text-align: center; padding: 4px 0; }
 
-      :root {
-        --bg-deep: #0a0a0f;
-        --bg-surface: #111118;
-        --bg-card: #16161f;
-        --bg-card-hover: #1c1c28;
-        --border: #2a2a3a;
-        --border-bright: #3a3a50;
-        --text-primary: #e8e8f0;
-        --text-secondary: #8888a0;
-        --text-dim: #555570;
-        --accent: #f97316;
-        --accent-dim: #ea580c;
-        --accent-glow: rgba(249, 115, 22, 0.15);
-        --accent-glow-strong: rgba(249, 115, 22, 0.3);
-        --warning: #ffaa00;
-        --error: #ff4466;
-        --blue: #4488ff;
-        --purple: #aa66ff;
-        --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
-        --font-features-mono: "liga" 0, "calt" 0;
-        --font-sans: "Instrument Sans", -apple-system, system-ui, sans-serif;
-        --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-      }
+/* Demo grid */
+.demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1120px; }
+.demo-panel { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; text-align: left; }
+.demo-header { padding: 10px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px; color: var(--text-dim); display:flex; gap:8px; align-items:center; }
+.demo-header .dot-r { width:10px; height:10px; border-radius:50%; background:#ff5f57; }
+.demo-header .dot-y { width:10px; height:10px; border-radius:50%; background:#ffbd2e; }
+.demo-header .dot-g { width:10px; height:10px; border-radius:50%; background:#28c840; }
+.demo-body { padding: 16px; font-family: var(--mono); font-size: 13px; line-height: 1.7; min-height: 460px; }
+.demo-body .line { opacity: 0; animation: fadeInLine 0.3s forwards; }
+.demo-body .prompt-line { color: var(--accent); }
+.demo-body .output { color: var(--text-secondary); }
+.demo-body .highlight { color: var(--warning); }
+.demo-body .file { color: var(--blue); }
+@keyframes fadeInLine { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 
-      html {
-        font-size: 16px;
-        scroll-behavior: smooth;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-      }
+/* Features */
+.features { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; }
+.features h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); margin-bottom: 0.5rem; letter-spacing: -0.02em; text-align: center; }
+.features .section-sub { color: var(--text-secondary); margin-bottom: 2rem; font-size: 16px; text-align: center; }
 
-      body {
-        font-family: var(--font-sans);
-        background: var(--bg-deep);
-        color: var(--text-primary);
-        line-height: 1.6;
-        overflow-x: hidden;
-      }
+/* Feature cards (3x3 grid) */
+.feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+.feature-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: all 0.3s var(--ease-out-expo); }
+.feature-card:hover { transform: translateY(-4px); border-color: var(--accent-dim); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+.feature-card .icon { font-size: 1.75rem; margin-bottom: 1rem; }
+.feature-card h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.5rem; }
+.feature-card p { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.6; }
 
-      code,
-      pre,
-      kbd {
-        font-feature-settings: var(--font-features-mono);
-      }
+/* Architecture section */
+.section-arch { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; }
+.section-arch h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); margin-bottom: 0.5rem; letter-spacing: -0.02em; text-align: center; }
+.section-arch .section-sub { color: var(--text-secondary); margin-bottom: 2rem; font-size: 16px; text-align: center; }
+.arch-diagram { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.arch-header { padding: 10px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px; color: var(--text-dim); display:flex; gap:8px; align-items:center; }
+.arch-header .dot-r { width:10px; height:10px; border-radius:50%; background:#ff5f57; }
+.arch-header .dot-y { width:10px; height:10px; border-radius:50%; background:#ffbd2e; }
+.arch-header .dot-g { width:10px; height:10px; border-radius:50%; background:#28c840; }
+.arch-body { padding: 16px; font-family: var(--mono); font-size: 13px; line-height: 1.7; overflow-x: auto; }
+.arch-body .hl { color: var(--accent); }
+.arch-body .fn { color: var(--blue); }
+.arch-body .str { color: var(--warning); }
 
-      a {
-        color: var(--accent);
-        text-decoration: none;
-      }
-      a:hover {
-        text-decoration: underline;
-      }
+/* Integrations section */
+.section-integrations { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; text-align: center; }
+.section-integrations h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); margin-bottom: 0.5rem; letter-spacing: -0.02em; }
+.section-integrations .section-sub { color: var(--text-secondary); margin-bottom: 2rem; font-size: 16px; }
+.integration-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; text-align: left; }
+.integration-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: all 0.3s var(--ease-out-expo); }
+.integration-card:hover { transform: translateY(-4px); border-color: var(--accent-dim); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+.integration-card .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+.integration-card h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; }
+.integration-card p { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.6; }
 
-      /* ─── Noise Overlay ──────────────────────────────────────────── */
-      body::before {
-        content: "";
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-        pointer-events: none;
-        z-index: 9999;
-      }
+/* CTA */
+.cta-section { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; text-align: center; }
+.cta-section h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); margin-bottom: 0.5rem; letter-spacing: -0.02em; }
+.cta-section .section-sub { color: var(--text-secondary); margin-bottom: 32px; font-size: 16px; }
+.cta-section .cta-btn { display: inline-flex; align-items:center; gap: 8px; padding: 14px 28px; background: var(--accent); color: var(--bg-deep); font-family: var(--mono); font-weight: 600; font-size: 0.875rem; border: none; border-radius: 8px; cursor: pointer; text-decoration: none; transition: opacity 0.2s; }
+.cta-section .cta-btn:hover { opacity: 0.9; background: var(--accent-dim); }
 
-      /* ─── Layout ─────────────────────────────────────────────────── */
-      .container {
-        max-width: 1120px;
-        margin: 0 auto;
-        padding: 0 2rem;
-      }
+/* Footer */
+footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align:center; }
+.footer-brand { font-family: var(--mono); font-size: 0.85rem; color: var(--text-dim); margin-bottom: 1rem; }
+.footer-brand .prompt { color: var(--accent); }
+.footer-links { display:flex; gap: 2rem; justify-content:center; list-style:none; }
+.footer-links a { color: var(--text-secondary); font-size: 0.85rem; font-weight: 500; text-decoration:none; transition: color 0.2s; }
+.footer-links a:hover { color: var(--text-primary); }
 
-      /* ─── Nav ────────────────────────────────────────────────────── */
-      nav {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        z-index: 100;
-        padding: 1rem 0;
-        background: rgba(10, 10, 15, 0.85);
-        backdrop-filter: blur(20px) saturate(1.4);
-        -webkit-backdrop-filter: blur(20px) saturate(1.4);
-        border-bottom: 1px solid var(--border);
-      }
-      nav .container {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-      .nav-brand {
-        display: flex;
-        flex-direction: column;
-        gap: 0;
-        font-family: var(--font-mono);
-        font-weight: 600;
-        font-size: 1rem;
-        color: var(--text-primary);
-      }
-      .nav-brand .brand-main {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-      }
-      .nav-brand .prompt {
-        font-size: 1.1rem;
-      }
-      .nav-brand .powered-by {
-        font-size: 0.6rem;
-        font-weight: 400;
-        color: var(--text-dim);
-        padding-left: 2rem;
-        margin-top: -2px;
-      }
-      .nav-links {
-        display: flex;
-        align-items: center;
-        gap: 2rem;
-        list-style: none;
-      }
-      .nav-links a {
-        color: var(--text-secondary);
-        font-size: 0.875rem;
-        font-weight: 500;
-        transition: color 0.2s;
-      }
-      .nav-links a:hover {
-        color: var(--text-primary);
-        text-decoration: none;
-      }
-      .nav-links .gh-link {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.4rem 1rem;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        transition:
-          border-color 0.2s,
-          background 0.2s;
-      }
-      .nav-links .gh-link:hover {
-        border-color: var(--border-bright);
-        background: var(--bg-card);
-      }
+/* Responsive: Tablet */
+@media (max-width: 768px) {
+    .hero h1 { font-size: 36px; }
+    .hero .subtitle { font-size: 16px; }
+    .demo-grid { grid-template-columns: 1fr; }
+    .feature-grid { grid-template-columns: 1fr 1fr; }
+    .integration-grid { grid-template-columns: 1fr 1fr; }
+    .install-box { flex-wrap: wrap; justify-content: center; font-size: 12px; }
+    .nav-links { gap: 1rem; }
+    .hero { padding: 100px 16px 2rem; }
+    .hero, .features, .section-arch, .section-integrations, .cta-section { padding-left: 1rem; padding-right: 1rem; }
+}
 
-      /* ─── Hero ───────────────────────────────────────────────────── */
-      .hero {
-        padding: 10rem 0 6rem;
-        text-align: center;
-      }
-      .hero-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.35rem 1rem;
-        border-radius: 999px;
-        background: var(--accent-glow);
-        border: 1px solid rgba(249, 115, 22, 0.25);
-        font-family: var(--font-mono);
-        font-size: 0.75rem;
-        color: var(--accent);
-        margin-bottom: 2rem;
-      }
-      .hero-badge .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: var(--accent);
-        animation: pulse 2s infinite;
-      }
-      @keyframes pulse {
-        0%,
-        100% {
-          opacity: 1;
-        }
-        50% {
-          opacity: 0.4;
-        }
-      }
-      .hero h1 {
-        font-size: 3.5rem;
-        font-weight: 700;
-        line-height: 1.1;
-        letter-spacing: -0.03em;
-        max-width: 800px;
-        margin: 0 auto 1.5rem;
-      }
-      .hero h1 .highlight {
-        color: var(--accent);
-      }
-      .hero-sub {
-        font-size: 1.15rem;
-        color: var(--text-secondary);
-        max-width: 600px;
-        margin: 0 auto 2.5rem;
-        line-height: 1.7;
-      }
-      .hero-cta {
-        display: flex;
-        gap: 1rem;
-        justify-content: center;
-        flex-wrap: wrap;
-      }
-      .btn-primary {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.75rem 2rem;
-        background: var(--accent);
-        color: #0a0a0f;
-        font-weight: 600;
-        font-size: 0.95rem;
-        border-radius: 8px;
-        border: none;
-        cursor: pointer;
-        transition:
-          background 0.2s,
-          transform 0.2s;
-      }
-      .btn-primary:hover {
-        background: var(--accent-dim);
-        transform: translateY(-1px);
-        text-decoration: none;
-        color: #0a0a0f;
-      }
-      .btn-secondary {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.75rem 2rem;
-        background: transparent;
-        color: var(--text-primary);
-        font-weight: 500;
-        font-size: 0.95rem;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        cursor: pointer;
-        transition:
-          border-color 0.2s,
-          background 0.2s;
-      }
-      .btn-secondary:hover {
-        border-color: var(--border-bright);
-        background: var(--bg-card);
-        text-decoration: none;
-      }
+/* Responsive: Mobile */
+@media (max-width: 480px) {
+    .hero h1 { font-size: 28px; }
+    .hero .subtitle { font-size: 14px; }
+    .feature-grid { grid-template-columns: 1fr; }
+    .integration-grid { grid-template-columns: 1fr; }
+    .install-box { padding: 10px 14px; font-size: 11px; }
+    .install-box .cmd { word-break: break-all; }
+    .demo-body { font-size: 11px; min-height: 360px; }
+    .cta-section h2, .features h2, .section-arch h2, .section-integrations h2 { font-size: 1.75rem; }
+}
 
-      /* ─── Architecture Diagram ───────────────────────────────────── */
-      .section-arch {
-        padding: 5rem 0;
-      }
-      .section-arch h2 {
-        text-align: center;
-        font-size: 2rem;
-        font-weight: 700;
-        margin-bottom: 1rem;
-        letter-spacing: -0.02em;
-      }
-      .section-arch .section-sub {
-        text-align: center;
-        color: var(--text-secondary);
-        max-width: 600px;
-        margin: 0 auto 3rem;
-      }
-      .arch-diagram {
-        background: var(--bg-surface);
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        padding: 2rem;
-        overflow-x: auto;
-      }
-      .arch-diagram pre {
-        font-family: var(--font-mono);
-        font-size: 0.75rem;
-        line-height: 1.6;
-        color: var(--text-secondary);
-      }
-      .arch-diagram .hl {
-        color: var(--accent);
-      }
+/* Hamburger menu */
+.hamburger { display:none; background:none; border:none; cursor:pointer; padding:0.5rem; z-index:101; }
+.hamburger span { display:block; width:22px; height:2px; background:var(--text-primary); margin:5px 0; transition: transform 0.3s, opacity 0.3s; border-radius:1px; }
+.hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.hamburger.open span:nth-child(2) { opacity:0; }
+.hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+.mobile-menu { display:none; position:fixed; top:57px; left:0; right:0; background:var(--bg-surface); border-bottom:1px solid var(--border); padding:1rem 2rem 1.5rem; z-index:99; flex-direction:column; gap:0.25rem; }
+.mobile-menu.open { display:flex; }
+@media (min-width: 769px) { .mobile-menu { display:none !important; } }
+.mobile-menu a { color:var(--text-secondary); text-decoration:none; font-size:1rem; font-weight:500; padding:0.6rem 0; border-bottom:1px solid var(--border); transition:color 0.2s; }
+.mobile-menu a:last-child { border-bottom:none; }
+.mobile-menu a:hover { color:var(--text-primary); }
+.mobile-menu a.active { color:var(--accent); }
+.mobile-menu .gh-btn { display:inline-flex; align-items:center; gap:0.5rem; margin-top:0.5rem; padding:0.5rem 1rem; border:1px solid var(--border); border-radius:6px; width:fit-content; }
+.mobile-menu .gh-btn:hover { border-color:var(--text-dim); background:var(--bg-card); }
+@media (max-width: 768px) {
+    .hamburger { display:block; }
+    .nav-links { display:none !important; }
+}
+</style>
+</head>
+<body>
 
-      /* ─── Features Grid ──────────────────────────────────────────── */
-      .section-features {
-        padding: 5rem 0;
-      }
-      .section-features h2 {
-        text-align: center;
-        font-size: 2rem;
-        font-weight: 700;
-        margin-bottom: 1rem;
-        letter-spacing: -0.02em;
-      }
-      .section-features .section-sub {
-        text-align: center;
-        color: var(--text-secondary);
-        max-width: 600px;
-        margin: 0 auto 3rem;
-      }
-      .feature-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1.25rem;
-      }
-      .feature-card {
-        padding: 1.5rem;
-        background: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        transition:
-          border-color 0.3s,
-          transform 0.3s,
-          box-shadow 0.3s;
-        opacity: 0;
-        transform: translateY(20px);
-        animation: fadeInUp 0.5s ease forwards;
-      }
-      .feature-card:hover {
-        border-color: var(--border-bright);
-        transform: translateY(-2px);
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
-      }
-      @keyframes fadeInUp {
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-      .feature-icon {
-        font-size: 1.75rem;
-        margin-bottom: 0.75rem;
-      }
-      .feature-card h3 {
-        font-size: 1rem;
-        font-weight: 600;
-        margin-bottom: 0.5rem;
-      }
-      .feature-card p {
-        font-size: 0.85rem;
-        color: var(--text-secondary);
-        line-height: 1.5;
-      }
+<nav>
+  <div class="container">
+    <a href="./" class="nav-brand"><span>&#127956;&#65039;</span> Outpost</a>
+    <div class="nav-links">
+        <a href="./" class="active">Home</a>
+        <a href="#features">Features</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#integrations">Integrations</a>
+        <a href="docs/">Docs</a>
+        <a href="https://github.com/CopilotKit/outpost" class="gh-btn" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </div>
+    <button class="hamburger" aria-label="Menu">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+  </div>
+</nav>
 
-      /* ─── Integrations ───────────────────────────────────────────── */
-      .section-integrations {
-        padding: 5rem 0;
-      }
-      .section-integrations h2 {
-        text-align: center;
-        font-size: 2rem;
-        font-weight: 700;
-        margin-bottom: 1rem;
-        letter-spacing: -0.02em;
-      }
-      .section-integrations .section-sub {
-        text-align: center;
-        color: var(--text-secondary);
-        max-width: 600px;
-        margin: 0 auto 3rem;
-      }
-      .integration-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1.5rem;
-      }
-      .integration-card {
-        padding: 2rem;
-        background: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        text-align: center;
-        transition:
-          border-color 0.3s,
-          transform 0.3s;
-      }
-      .integration-card:hover {
-        border-color: var(--accent);
-        transform: translateY(-2px);
-      }
-      .integration-card .icon {
-        font-size: 2.5rem;
-        margin-bottom: 1rem;
-      }
-      .integration-card h3 {
-        font-size: 1.1rem;
-        font-weight: 600;
-        margin-bottom: 0.5rem;
-      }
-      .integration-card p {
-        font-size: 0.85rem;
-        color: var(--text-secondary);
-        line-height: 1.5;
-      }
+<div class="mobile-menu">
+    <a href="./" class="active">Home</a>
+    <a href="#features">Features</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#integrations">Integrations</a>
+    <a href="docs/">Docs</a>
+    <a href="https://github.com/CopilotKit/outpost" class="gh-btn" target="_blank"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+</div>
 
-      /* ─── CTA Section ────────────────────────────────────────────── */
-      .section-cta {
-        padding: 6rem 0;
-        text-align: center;
-      }
-      .section-cta h2 {
-        font-size: 2rem;
-        font-weight: 700;
-        margin-bottom: 1rem;
-      }
-      .section-cta p {
-        color: var(--text-secondary);
-        max-width: 500px;
-        margin: 0 auto 2rem;
-      }
-      .install-box {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.75rem 1.25rem;
-        background: var(--bg-surface);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        font-family: var(--font-mono);
-        font-size: 0.85rem;
-      }
-      .install-box .prompt-sign {
-        color: var(--accent);
-      }
-      .install-box code {
-        color: var(--text-primary);
-      }
-      .install-box .copy-btn {
-        padding: 0.25rem 0.75rem;
-        background: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        color: var(--text-dim);
-        font-family: var(--font-mono);
-        font-size: 0.7rem;
-        cursor: pointer;
-        transition:
-          color 0.2s,
-          border-color 0.2s;
-      }
-      .install-box .copy-btn:hover {
-        color: var(--text-primary);
-        border-color: var(--border-bright);
-      }
+<section class="hero">
+    <div class="badge"><span class="dot"></span> outpost &mdash; AI-powered support operations</div>
+    <h1><span class="accent">Intelligent support</span><br class="hero-break"> <span class="accent">operations</span> platform</h1>
+    <p class="subtitle">Unify customer support across Discord, GitHub, and the web into a single intelligent hub. AI-assisted ticket management, knowledge base search, and proactive customer engagement. Self-hosted, source-available, zero lock-in.</p>
 
-      /* ─── Footer ─────────────────────────────────────────────────── */
-      footer {
-        border-top: 1px solid var(--border);
-        padding: 2rem 0;
-      }
-      footer .container {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      .footer-brand {
-        font-family: var(--font-mono);
-        font-size: 0.8rem;
-        color: var(--text-dim);
-      }
-      .footer-brand span {
-        color: var(--accent);
-      }
-      .footer-links {
-        display: flex;
-        gap: 2rem;
-        list-style: none;
-      }
-      .footer-links a {
-        color: var(--text-dim);
-        font-size: 0.85rem;
-        transition: color 0.2s;
-      }
-      .footer-links a:hover {
-        color: var(--text-primary);
-        text-decoration: none;
-      }
-
-      /* ─── Responsive ─────────────────────────────────────────────── */
-      @media (max-width: 1024px) {
-        .hero h1 {
-          font-size: 2.5rem;
-        }
-        .feature-grid {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .integration-grid {
-          grid-template-columns: repeat(2, 1fr);
-        }
-      }
-      @media (max-width: 768px) {
-        .hero {
-          padding: 7rem 0 4rem;
-        }
-        .hero h1 {
-          font-size: 2rem;
-        }
-        .feature-grid {
-          grid-template-columns: 1fr;
-        }
-        .integration-grid {
-          grid-template-columns: 1fr;
-        }
-        .nav-links a.nav-hide-mobile {
-          display: none;
-        }
-        footer .container {
-          flex-direction: column;
-          gap: 1rem;
-          text-align: center;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <nav>
-      <div class="container">
-        <div class="nav-brand">
-          <div class="brand-main"><span class="prompt">&#127956;&#65039;</span> Outpost</div>
-          <div class="powered-by">by CopilotKit</div>
+    <div class="install-box">
+        <div class="install-line">
+            <span class="prompt">$</span>
+            <span class="cmd">git clone git@github.com:CopilotKit/outpost.git</span>
         </div>
-        <ul class="nav-links">
-          <li><a href="#architecture" class="nav-hide-mobile">Architecture</a></li>
-          <li><a href="#features" class="nav-hide-mobile">Features</a></li>
-          <li><a href="#integrations" class="nav-hide-mobile">Integrations</a></li>
-          <li><a href="docs/">Docs</a></li>
-          <li>
-            <a
-              href="https://github.com/CopilotKit/outpost"
-              class="gh-link"
-              target="_blank"
-              rel="noopener"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path
-                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
-                />
-              </svg>
-              GitHub
-            </a>
-          </li>
-        </ul>
-      </div>
-    </nav>
-
-    <!-- ─── Section 1: Hero ──────────────────────────────────────── -->
-    <section class="hero">
-      <div class="container">
-        <div class="hero-badge">
-          <span class="dot"></span>
-          outpost &mdash; AI-powered support operations
+        <div class="install-divider">then</div>
+        <div class="install-line">
+            <span class="prompt">$</span>
+            <span class="cmd">docker compose up -d &amp;&amp; pnpm install &amp;&amp; pnpm dev</span>
         </div>
+    </div>
 
-        <h1>
-          <span class="highlight">Intelligent support</span>
-          operations platform
-        </h1>
+    <div class="demo-grid">
+        <div class="demo-panel">
+            <div class="demo-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> docker-compose.yml</div>
+            <div class="demo-body"><pre style="margin:0; font:inherit; color:inherit; white-space:pre;"><span class="highlight">services:</span>
+  <span class="highlight">postgres:</span>
+    image: <span class="file">pgvector/pgvector:pg16</span>
+    environment:
+      POSTGRES_DB: <span class="file">outpost</span>
+      POSTGRES_USER: <span class="file">outpost</span>
+      POSTGRES_PASSWORD: <span class="file">outpost</span>
+    ports:
+      - <span class="file">"5432:5432"</span>
+    volumes:
+      - <span class="file">pgdata:/var/lib/postgresql/data</span>
 
-        <p class="hero-sub">
-          Unify customer support across Discord, GitHub, and the web into a single intelligent hub.
-          AI-assisted ticket management, knowledge base search, and proactive customer engagement.
-        </p>
-
-        <div class="hero-cta">
-          <a href="docs/" class="btn-primary">Get Started</a>
-          <a href="getting-started/" class="btn-secondary">Quick Start Guide</a>
+<span class="highlight">volumes:</span>
+  pgdata:</pre>
+            </div>
         </div>
-      </div>
-    </section>
+        <div class="demo-panel">
+            <div class="demo-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> Outpost support pipeline</div>
+            <div class="demo-body" id="terminal">
+            </div>
+        </div>
+    </div>
+</section>
 
-    <!-- ─── Section 2: Architecture ──────────────────────────────── -->
-    <section class="section-arch" id="architecture">
-      <div class="container">
-        <h2>Three Processes, One Database</h2>
-        <p class="section-sub">
-          Outpost's architecture is simple by design. A web dashboard, a Discord bot, and a GitHub
-          App &mdash; all sharing a single PostgreSQL database with pgvector for AI-powered search.
-        </p>
+<section class="features" id="features">
+    <h2 class="fade-in">Everything you need for support operations</h2>
+    <p class="section-sub fade-in">From AI-powered triage to SLA tracking, Outpost handles the full lifecycle of customer support.</p>
 
-        <div class="arch-diagram">
-          <pre>
-<span class="hl">&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;</span>
-<span class="hl">&#9474;</span>                     <span class="hl">apps/web</span> (Next.js)                       <span class="hl">&#9474;</span>
+    <div class="feature-grid">
+        <div class="feature-card fade-in">
+            <div class="icon">&#129302;</div>
+            <h3>AI-Powered Triage</h3>
+            <p>Automatically classify, prioritize, and route incoming tickets using Claude and Pathfinder for intelligent knowledge base search.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.08s">
+            <div class="icon">&#127919;</div>
+            <h3>SLA Engine</h3>
+            <p>Define response and resolution targets per priority level. Track SLA compliance in real-time with automatic escalation.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.16s">
+            <div class="icon">&#128268;</div>
+            <h3>Multi-Channel Inbox</h3>
+            <p>Unify Discord threads, GitHub issues, and web tickets into a single queue. No more context switching between platforms.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.24s">
+            <div class="icon">&#128202;</div>
+            <h3>Analytics Dashboard</h3>
+            <p>Real-time metrics on ticket volume, resolution time, SLA compliance, and team performance. Exportable reports.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.32s">
+            <div class="icon">&#128226;</div>
+            <h3>Broadcasts</h3>
+            <p>Send targeted announcements across all channels. Track delivery and engagement. Schedule broadcasts for optimal timing.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.4s">
+            <div class="icon">&#128101;</div>
+            <h3>Account Management</h3>
+            <p>Track customer organizations, their support history, and health scores. Proactive outreach based on engagement patterns.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.48s">
+            <div class="icon">&#128300;</div>
+            <h3>Smart Routing</h3>
+            <p>Route tickets to the right team member based on expertise, availability, and workload. Configurable routing rules.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.56s">
+            <div class="icon">&#128218;</div>
+            <h3>Knowledge Base</h3>
+            <p>AI-powered search across documentation, past tickets, and community discussions. Surfaces relevant answers automatically.</p>
+        </div>
+        <div class="feature-card fade-in" style="transition-delay: 0.64s">
+            <div class="icon">&#128274;</div>
+            <h3>Job Queue</h3>
+            <p>Reliable Postgres-backed job queue for background processing. Retries, dead-letter queue, and observable execution.</p>
+        </div>
+    </div>
+</section>
+
+<section class="section-arch" id="architecture">
+    <h2 class="fade-in">Three processes, one database</h2>
+    <p class="section-sub fade-in">A web dashboard, a Discord bot, and a GitHub App &mdash; all sharing a single PostgreSQL database with pgvector.</p>
+
+    <div class="arch-diagram fade-in">
+        <div class="arch-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> architecture</div>
+        <div class="arch-body">
+            <pre><span class="hl">&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;</span>
+<span class="hl">&#9474;</span>                     <span class="fn">apps/web</span> (Next.js)                       <span class="hl">&#9474;</span>
 <span class="hl">&#9474;</span>   Dashboard &#183; Accounts &#183; Tickets &#183; Agents &#183; Broadcasts        <span class="hl">&#9474;</span>
 <span class="hl">&#9500;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9508;</span>
-<span class="hl">&#9474;</span>       <span class="hl">apps/discord-bot</span>       &#9474;       <span class="hl">apps/github-app</span>        <span class="hl">&#9474;</span>
+<span class="hl">&#9474;</span>       <span class="fn">apps/discord-bot</span>       &#9474;       <span class="fn">apps/github-app</span>        <span class="hl">&#9474;</span>
 <span class="hl">&#9474;</span>   Slash commands &#183; Threads   &#9474;   Issues &#183; Discussions        <span class="hl">&#9474;</span>
 <span class="hl">&#9500;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9508;</span>
-<span class="hl">&#9474;</span>  pkg/ai   &#9474;  pkg/queue &#9474;  pkg/shared  &#9474;          pkg/db             <span class="hl">&#9474;</span>
+<span class="hl">&#9474;</span>  <span class="str">pkg/ai</span>   &#9474;  <span class="str">pkg/queue</span> &#9474;  <span class="str">pkg/shared</span>  &#9474;          <span class="str">pkg/db</span>             <span class="hl">&#9474;</span>
 <span class="hl">&#9474;</span> Pathfinder &#9474;  Postgres  &#9474;  Types &amp;     &#9474;          Prisma             <span class="hl">&#9474;</span>
 <span class="hl">&#9474;</span> + Claude  &#9474;  Job Queue &#9474;  Constants   &#9474;          Schema             <span class="hl">&#9474;</span>
 <span class="hl">&#9500;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9508;</span>
 <span class="hl">&#9474;</span>                  PostgreSQL 16 + pgvector                      <span class="hl">&#9474;</span>
 <span class="hl">&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;</span></pre>
         </div>
-      </div>
-    </section>
+    </div>
+</section>
 
-    <!-- ─── Section 3: Features ──────────────────────────────────── -->
-    <section class="section-features" id="features">
-      <div class="container">
-        <h2>Everything You Need for Support Operations</h2>
-        <p class="section-sub">
-          From AI-powered triage to SLA tracking, Outpost handles the full lifecycle of customer
-          support.
-        </p>
+<section class="section-integrations" id="integrations">
+    <h2 class="fade-in">Native integrations</h2>
+    <p class="section-sub fade-in">Connect to the platforms your community already uses. Each integration is a first-class citizen with full bidirectional sync.</p>
 
-        <div class="feature-grid">
-          <div class="feature-card" style="animation-delay: 0s">
-            <div class="feature-icon">&#129302;</div>
-            <h3>AI-Powered Triage</h3>
-            <p>
-              Automatically classify, prioritize, and route incoming tickets using Claude and
-              Pathfinder for intelligent knowledge base search.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.08s">
-            <div class="feature-icon">&#127919;</div>
-            <h3>SLA Engine</h3>
-            <p>
-              Define response and resolution targets per priority level. Track SLA compliance in
-              real-time with automatic escalation.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.16s">
-            <div class="feature-icon">&#128268;</div>
-            <h3>Multi-Channel Inbox</h3>
-            <p>
-              Unify Discord threads, GitHub issues, and web tickets into a single queue. No more
-              context switching between platforms.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.24s">
-            <div class="feature-icon">&#128202;</div>
-            <h3>Analytics Dashboard</h3>
-            <p>
-              Real-time metrics on ticket volume, resolution time, SLA compliance, and team
-              performance. Exportable reports.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.32s">
-            <div class="feature-icon">&#128226;</div>
-            <h3>Broadcasts</h3>
-            <p>
-              Send targeted announcements across all channels. Track delivery and engagement.
-              Schedule broadcasts for optimal timing.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.4s">
-            <div class="feature-icon">&#128101;</div>
-            <h3>Account Management</h3>
-            <p>
-              Track customer organizations, their support history, and health scores. Proactive
-              outreach based on engagement patterns.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.48s">
-            <div class="feature-icon">&#128300;</div>
-            <h3>Smart Routing</h3>
-            <p>
-              Route tickets to the right team member based on expertise, availability, and workload.
-              Configurable routing rules.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.56s">
-            <div class="feature-icon">&#128218;</div>
-            <h3>Knowledge Base</h3>
-            <p>
-              AI-powered search across documentation, past tickets, and community discussions.
-              Surfaces relevant answers automatically.
-            </p>
-          </div>
-          <div class="feature-card" style="animation-delay: 0.64s">
-            <div class="feature-icon">&#128274;</div>
-            <h3>Job Queue</h3>
-            <p>
-              Reliable Postgres-backed job queue for background processing. Retries, dead-letter
-              queue, and observable execution.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ─── Section 4: Integrations ──────────────────────────────── -->
-    <section class="section-integrations" id="integrations">
-      <div class="container">
-        <h2>Native Integrations</h2>
-        <p class="section-sub">
-          Connect to the platforms your community already uses. Each integration is a first-class
-          citizen with full bidirectional sync.
-        </p>
-
-        <div class="integration-grid">
-          <div class="integration-card">
+    <div class="integration-grid">
+        <div class="integration-card fade-in">
             <div class="icon">&#128172;</div>
             <h3>Discord</h3>
-            <p>
-              Slash commands, thread management, auto-replies, and ticket creation from Discord
-              messages. Full bot with rich embeds.
-            </p>
-          </div>
-          <div class="integration-card">
+            <p>Slash commands, thread management, auto-replies, and ticket creation from Discord messages. Full bot with rich embeds.</p>
+        </div>
+        <div class="integration-card fade-in" style="transition-delay: 0.08s">
             <div class="icon">&#128025;</div>
             <h3>GitHub</h3>
-            <p>
-              Issue and discussion tracking, label sync, auto-triage of bug reports, and PR-linked
-              ticket resolution.
-            </p>
-          </div>
-          <div class="integration-card">
+            <p>Issue and discussion tracking, label sync, auto-triage of bug reports, and PR-linked ticket resolution.</p>
+        </div>
+        <div class="integration-card fade-in" style="transition-delay: 0.16s">
             <div class="icon">&#127760;</div>
             <h3>Web Dashboard</h3>
-            <p>
-              Full-featured Next.js dashboard for ticket management, analytics, account management,
-              and team administration.
-            </p>
-          </div>
+            <p>Full-featured Next.js dashboard for ticket management, analytics, account management, and team administration.</p>
         </div>
-      </div>
-    </section>
+    </div>
+</section>
 
-    <!-- ─── Section 5: Get Started ───────────────────────────────── -->
-    <section class="section-cta" id="get-started">
-      <div class="container">
-        <h2>Get Started in Minutes</h2>
-        <p>Clone, configure, deploy. Outpost runs anywhere Docker does.</p>
+<section class="cta-section" id="get-started">
+    <h2 class="fade-in">Get started in minutes</h2>
+    <p class="section-sub fade-in">Clone, configure, deploy. Outpost runs anywhere Docker does.</p>
+    <div class="fade-in" style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center;">
+        <a href="getting-started/" class="cta-btn">Quick Start &#8594;</a>
+        <a href="docs/" class="cta-btn">Documentation &#8594;</a>
+        <a href="deployment/" class="cta-btn">Deploy Guide &#8594;</a>
+    </div>
+</section>
 
-        <div class="install-box">
-          <span class="prompt-sign">$</span>
-          <code>git clone git@github.com:CopilotKit/outpost.git</code>
-          <button class="copy-btn" onclick="copyInstall(this)">Copy</button>
-        </div>
-      </div>
-    </section>
+<footer>
+  <div class="container">
+    <div class="footer-brand"><span class="prompt">&#127956;&#65039;</span> Outpost &middot; <a href="https://github.com/CopilotKit/outpost/blob/main/LICENSE" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">Elastic License 2.0</a> &mdash; free to use, modify, and self-host</div>
+    <ul class="footer-links">
+        <li><a href="./">Home</a></li>
+        <li><a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener">GitHub</a></li>
+        <li><a href="docs/">Docs</a></li>
+        <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
+    </ul>
+  </div>
+</footer>
 
-    <footer>
-      <div class="container">
-        <div class="footer-brand">
-          <span>&#127956;&#65039;</span> Outpost &mdash; by CopilotKit
-        </div>
-        <ul class="footer-links">
-          <li><a href="docs/">Documentation</a></li>
-          <li>
-            <a href="https://github.com/CopilotKit/outpost" target="_blank" rel="noopener"
-              >GitHub</a
-            >
-          </li>
-          <li><a href="https://copilotkit.ai" target="_blank" rel="noopener">CopilotKit</a></li>
-        </ul>
-      </div>
-    </footer>
+<script>
+// Terminal animation
+var terminal = document.getElementById('terminal');
+var lines = [
+    { type: 'prompt', text: '$ # New ticket from Discord' },
+    { type: 'output', text: '[discord] #support: "API returning 502 errors"' },
+    { type: 'pause', ms: 400 },
+    { type: 'prompt', text: '> AI triage running...' },
+    { type: 'output', text: 'Priority: HIGH' },
+    { type: 'output', text: 'Tags: [api, production, bug]' },
+    { type: 'output', text: 'Route: @backend-team' },
+    { type: 'pause', ms: 600 },
+    { type: 'prompt', text: '> Searching knowledge base...' },
+    { type: 'output', text: 'Found: /docs/troubleshooting.md (0.94)' },
+    { type: 'output', text: 'Found: ticket #412 similar (0.89)' },
+    { type: 'pause', ms: 400 },
+    { type: 'prompt', text: '> SLA clock started' },
+    { type: 'output', text: 'First response: 1h deadline' },
+    { type: 'output', text: 'Resolution: 24h deadline' },
+    { type: 'pause', ms: 600 },
+    { type: 'prompt', text: '$ # Suggested response posted to thread' },
+    { type: 'output', text: '[discord] Reply sent with KB article link' },
+    { type: 'output', text: 'Ticket #847 created in dashboard' },
+];
 
-    <script>
-      function copyInstall(btn) {
-        var text = "git clone git@github.com:CopilotKit/outpost.git";
-        navigator.clipboard.writeText(text).then(function () {
-          btn.textContent = "Copied!";
-          setTimeout(function () {
-            btn.textContent = "Copy";
-          }, 2000);
-        });
-      }
-    </script>
-  </body>
+async function typeText(el, text, speed) {
+    speed = speed || 30;
+    for (var i = 0; i < text.length; i++) {
+        el.textContent += text[i];
+        await new Promise(function(r) { setTimeout(r, speed); });
+    }
+}
+
+async function runTerminal() {
+    terminal.innerHTML = '';
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.type === 'pause') {
+            await new Promise(function(r) { setTimeout(r, line.ms); });
+            continue;
+        }
+        var span = document.createElement('div');
+        span.className = line.type === 'prompt' ? 'prompt-line' : 'output';
+        span.style.opacity = '0';
+        terminal.appendChild(span);
+
+        if (line.type === 'prompt') {
+            span.style.opacity = '1';
+            await typeText(span, line.text, 25);
+            await new Promise(function(r) { setTimeout(r, 200); });
+        } else {
+            span.textContent = line.text;
+            span.style.transition = 'opacity 0.3s';
+            span.style.opacity = '1';
+            await new Promise(function(r) { setTimeout(r, 100); });
+        }
+    }
+    // Add blinking cursor
+    var cursor = document.createElement('span');
+    cursor.textContent = '\u2588';
+    cursor.style.animation = 'pulse 1s infinite';
+    cursor.className = 'prompt-line';
+    terminal.appendChild(cursor);
+
+    await new Promise(function(r) { setTimeout(r, 3000); });
+    runTerminal(); // loop
+}
+
+// Start animation when visible
+var termObserver = new IntersectionObserver(function(entries) {
+    if (entries[0].isIntersecting) {
+        termObserver.disconnect();
+        runTerminal();
+    }
+});
+termObserver.observe(terminal);
+</script>
+
+<script>
+(function(){
+  var btn=document.querySelector(".hamburger");
+  var menu=document.querySelector(".mobile-menu");
+  if(!btn||!menu)return;
+  btn.addEventListener("click",function(){
+    btn.classList.toggle("open");
+    menu.classList.toggle("open");
+  });
+  menu.addEventListener("click",function(e){
+    if(e.target.tagName==="A"){
+      btn.classList.remove("open");
+      menu.classList.remove("open");
+    }
+  });
+})();
+</script>
+<script>
+// Scroll-triggered fade-in via IntersectionObserver
+(function () {
+    var observer = new IntersectionObserver(
+        function (entries) {
+            entries.forEach(function (entry) {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add("visible");
+                    observer.unobserve(entry.target);
+                }
+            });
+        },
+        { threshold: 0.1, rootMargin: "0px 0px -40px 0px" },
+    );
+
+    document.querySelectorAll(".fade-in").forEach(function (el) {
+        observer.observe(el);
+    });
+})();
+</script>
+</body>
 </html>
