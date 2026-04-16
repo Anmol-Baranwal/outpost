@@ -23,7 +23,7 @@ Formatting rules:
  * Claude response generator for the AI support pipeline.
  *
  * Takes a question and relevant context (from Pathfinder search results),
- * then generates a structured response using Claude claude-sonnet-4-20250514.
+ * then generates a structured response using the configured model (default: claude-sonnet-4-6).
  * Supports both streaming and non-streaming modes.
  */
 export class ResponseGenerator {

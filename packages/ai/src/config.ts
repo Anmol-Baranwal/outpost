@@ -18,7 +18,7 @@ export const config = {
     fallbackDocsUrl: process.env.FALLBACK_DOCS_URL ?? 'https://docs.copilotkit.ai/llms-full.txt',
 
     /** Model used for response generation */
-    responseModel: process.env.AI_RESPONSE_MODEL ?? 'claude-sonnet-4-20250514',
+    responseModel: process.env.AI_RESPONSE_MODEL ?? 'claude-sonnet-4-6',
 
     /** Model used for confidence scoring (cheaper, faster) */
     confidenceModel: process.env.AI_CONFIDENCE_MODEL ?? 'claude-haiku-4-5-20251001',

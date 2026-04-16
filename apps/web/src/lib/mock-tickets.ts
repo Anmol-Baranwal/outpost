@@ -287,7 +287,7 @@ export const MOCK_TICKETS: MockTicket[] = [
                 id: 'msg-9',
                 ticketId: 'tkt-4',
                 author: 'CopilotKit Support Bot',
-                content: 'CopilotKit already supports multiple LLM providers through the LangChain adapter! You can use any LangChain-compatible model.\n\nFor Claude specifically:\n\n```typescript\nimport { CopilotRuntime } from "@copilotkit/runtime";\nimport { ChatAnthropic } from "@langchain/anthropic";\n\nconst runtime = new CopilotRuntime();\nconst model = new ChatAnthropic({ model: "claude-sonnet-4-20250514" });\n```\n\nSee the [LangChain adapter docs](https://docs.copilotkit.ai/reference/classes/langchain) for details.',
+                content: 'CopilotKit already supports multiple LLM providers through the LangChain adapter! You can use any LangChain-compatible model.\n\nFor Claude specifically:\n\n```typescript\nimport { CopilotRuntime } from "@copilotkit/runtime";\nimport { ChatAnthropic } from "@langchain/anthropic";\n\nconst runtime = new CopilotRuntime();\nconst model = new ChatAnthropic({ model: "claude-sonnet-4-6" });\n```\n\nSee the [LangChain adapter docs](https://docs.copilotkit.ai/reference/classes/langchain) for details.',
                 type: MessageType.BOT,
                 isAiGenerated: true,
                 attachments: null,

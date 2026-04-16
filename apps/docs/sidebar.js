@@ -19,6 +19,8 @@
       title: "Integrations",
       links: [
         { label: "Discord Bot", href: base + "discord-bot/" },
+        { label: "Slack Bot", href: base + "slack-bot/" },
+        { label: "Teams Bot", href: base + "teams-bot/" },
         { label: "GitHub App", href: base + "github-app/" },
       ],
     },
