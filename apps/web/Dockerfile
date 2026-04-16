@@ -41,6 +41,9 @@ COPY --from=installer --chown=outpost:outpost /app/apps/web/public ./apps/web/pu
 # Prisma query engine for linux-musl (required by Next.js standalone)
 COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/*.node ./node_modules/.prisma/client/
 COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/schema.prisma ./node_modules/.prisma/client/
+# Also copy engine to .next/server where standalone bundle looks for it
+COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/*.node ./apps/web/.next/server/
+COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/schema.prisma ./apps/web/.next/server/
 # Prisma schema for db push on first run
 COPY --from=installer --chown=outpost:outpost /app/packages/outpost/db/prisma ./packages/outpost/db/prisma
 
