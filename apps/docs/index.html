@@ -69,7 +69,9 @@ nav .container { display:flex; align-items:center; justify-content:space-between
 .nav-links .gh-btn:hover { border-color: var(--text-dim); background: var(--bg-card); }
 
 /* Hero */
-.hero { padding: 120px 0 3rem; max-width: 1120px; margin: 0 auto; padding-left: 2rem; padding-right: 2rem; }
+.hero { padding: 120px 0 3rem; max-width: 1120px; margin: 0 auto; padding-left: 2rem; padding-right: 2rem; position: relative; overflow: hidden; }
+.hero::before { content: ""; position: absolute; top: -200px; left: 50%; transform: translateX(-50%); width: 800px; height: 600px; background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%); pointer-events: none; z-index: 0; }
+.hero > * { position: relative; z-index: 1; }
 .badge { display: inline-flex; align-items:center; gap: 8px; padding: 6px 16px; border: 1px solid var(--border); border-radius: 100px; font-family: var(--mono); font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 32px; animation: fadeUp 0.8s var(--ease-out-expo) both; }
 .badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
@@ -165,7 +167,9 @@ nav .container { display:flex; align-items:center; justify-content:space-between
 }
 
 /* Integrations section */
-.section-integrations { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; text-align: center; }
+.section-integrations { padding: 4rem 2rem; max-width: 1120px; margin: 0 auto; text-align: center; position: relative; overflow: hidden; }
+.section-integrations::before { content: ""; position: absolute; top: -100px; left: 50%; transform: translateX(-50%); width: 1000px; height: 800px; background: radial-gradient(ellipse, rgba(68, 136, 255, 0.08) 0%, rgba(249, 115, 22, 0.05) 40%, transparent 70%); pointer-events: none; z-index: 0; }
+.section-integrations > * { position: relative; z-index: 1; }
 .section-integrations h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); margin-bottom: 0.5rem; letter-spacing: -0.02em; }
 .section-integrations .section-sub { color: var(--text-secondary); margin-bottom: 2rem; font-size: 16px; }
 .integration-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; text-align: left; }
@@ -292,7 +296,7 @@ footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align:center
 
     <div class="demo-grid">
         <div class="demo-panel">
-            <div class="demo-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> outpost.config.ts</div>
+            <div class="demo-header"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span> outpost.yaml</div>
             <div class="demo-body"><pre style="margin:0; font:inherit; color:inherit; white-space:pre;"><span class="highlight">discord:</span>
   token: <span class="file">$DISCORD_TOKEN</span>
   channels: <span class="file">[support-forum]</span>
