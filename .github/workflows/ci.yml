@@ -36,7 +36,7 @@ jobs:
 
             - name: Verify Prisma schema and migrations
               run: |
-                  npx prisma validate --schema packages/outpost/db/prisma/schema.prisma
+                  pnpm exec prisma validate --schema packages/outpost/db/prisma/schema.prisma
                   # Ensure migration directory exists with at least one migration
                   test -f packages/outpost/db/prisma/migrations/migration_lock.toml
                   test -d packages/outpost/db/prisma/migrations/0001_init
