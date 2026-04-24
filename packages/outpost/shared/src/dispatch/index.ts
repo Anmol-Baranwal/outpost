@@ -6,6 +6,7 @@ export {
     getOnCallMembers,
     resetRotation,
 } from './on-call.js';
+export type { PrismaLike } from './on-call.js';
 export { DEFAULT_ROUTING_RULES } from './default-rules.js';
 export type {
     RoutingRule,

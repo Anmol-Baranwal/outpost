@@ -8,6 +8,7 @@
 import { DEFAULT_ROUTING_RULES } from './default-rules.js';
 import { matchCondition } from './matcher.js';
 import { getCurrentOnCall } from './on-call.js';
+import type { PrismaLike } from './on-call.js';
 import type {
     RoutingRule,
     RoutingTicket,
@@ -29,13 +30,15 @@ import type {
  * @param teamMembers - Available team members for role-based routing
  * @param rules - Routing rules to evaluate (defaults to built-in rules)
  * @param onCallMembers - On-call member IDs for fallback (defaults to env var)
+ * @param db - Database instance for on-call rotation persistence
  */
-export function evaluateRouting(
+export async function evaluateRouting(
     ticket: RoutingTicket,
     teamMembers: RoutingTeamMember[],
     rules?: RoutingRule[],
     onCallMembers?: string[],
-): RoutingResult {
+    db?: PrismaLike,
+): Promise<RoutingResult> {
     const activeRules = (rules ?? DEFAULT_ROUTING_RULES)
         .filter((rule) => rule.enabled)
         .sort((a, b) => a.priority - b.priority);
@@ -58,7 +61,7 @@ export function evaluateRouting(
     }
 
     // No rule matched — fall back to on-call
-    const onCallMemberId = getCurrentOnCall(onCallMembers);
+    const onCallMemberId = await getCurrentOnCall(onCallMembers, db);
 
     return {
         targetMemberId: onCallMemberId,
@@ -112,11 +115,12 @@ function resolveTarget(
  * Dry-run evaluation: returns the routing result without side effects.
  * Identical to evaluateRouting but named explicitly for the API.
  */
-export function dryRunRouting(
+export async function dryRunRouting(
     ticket: RoutingTicket,
     teamMembers: RoutingTeamMember[],
     rules?: RoutingRule[],
     onCallMembers?: string[],
-): RoutingResult {
-    return evaluateRouting(ticket, teamMembers, rules, onCallMembers);
+    db?: PrismaLike,
+): Promise<RoutingResult> {
+    return evaluateRouting(ticket, teamMembers, rules, onCallMembers, db);
 }
