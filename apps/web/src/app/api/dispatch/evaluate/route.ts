@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@copilotkit/outpost/db';
 import { dryRunRouting, DEFAULT_ROUTING_RULES } from '@copilotkit/outpost/shared';
 import type { RoutingTicket, RoutingTeamMember } from '@copilotkit/outpost/shared';
 
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const result = dryRunRouting(ticket, teamMembers);
+        const result = await dryRunRouting(ticket, teamMembers, undefined, undefined, prisma);
 
         return NextResponse.json({
             result,

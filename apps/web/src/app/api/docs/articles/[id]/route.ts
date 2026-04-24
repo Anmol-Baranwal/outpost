@@ -1,5 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getArticleById } from '@/lib/mock-docs';
+import { prisma } from '@copilotkit/outpost/db';
+
+/**
+ * GET /api/docs/articles/[id]
+ *
+ * Retrieve a single article by ID.
+ */
+export async function GET(
+    _request: NextRequest,
+    { params }: { params: Promise<{ id: string }> },
+) {
+    const { id } = await params;
+
+    const article = await prisma.docArticle.findUnique({
+        where: { id },
+        include: { category: true },
+    });
+
+    if (!article) {
+        return NextResponse.json(
+            { error: 'Article not found' },
+            { status: 404 },
+        );
+    }
+
+    return NextResponse.json(article);
+}
 
 /**
  * PATCH /api/docs/articles/[id]
@@ -11,7 +37,7 @@ export async function PATCH(
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const article = getArticleById(id);
+    const article = await prisma.docArticle.findUnique({ where: { id } });
 
     if (!article) {
         return NextResponse.json(
@@ -23,13 +49,16 @@ export async function PATCH(
     try {
         const body = await request.json();
 
-        const updated = {
-            ...article,
-            ...(body.title !== undefined && { title: body.title }),
-            ...(body.content !== undefined && { content: body.content }),
-            ...(body.status !== undefined && { status: body.status }),
-            updatedAt: new Date().toISOString(),
-        };
+        const data: Record<string, unknown> = {};
+        if (body.title !== undefined) data.title = body.title;
+        if (body.content !== undefined) data.content = body.content;
+        if (body.status !== undefined) data.status = body.status;
+
+        const updated = await prisma.docArticle.update({
+            where: { id },
+            data,
+            include: { category: true },
+        });
 
         return NextResponse.json(updated);
     } catch {

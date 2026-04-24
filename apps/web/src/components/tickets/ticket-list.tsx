@@ -4,6 +4,8 @@ import { useRouter, useParams } from 'next/navigation';
 import { TicketPriority, TicketSource } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
 import { truncate } from '@copilotkit/outpost/shared';
+import { Inbox } from 'lucide-react';
+import { EmptyState } from '@/components/empty-state';
 import type { MockTicket } from '@/lib/mock-tickets';
 
 interface TicketListProps {
@@ -124,9 +126,12 @@ export function TicketList({ tickets, className }: TicketListProps) {
                     );
                 })}
                 {tickets.length === 0 && (
-                    <div className="p-6 text-center text-sm text-slate-400">
-                        No tickets match the current filters.
-                    </div>
+                    <EmptyState
+                        icon={<Inbox className="h-6 w-6" />}
+                        title="No tickets yet"
+                        description="Tickets will appear here when customers reach out via Discord, GitHub, Slack, Teams, or email."
+                        className="py-8"
+                    />
                 )}
             </div>
         </div>

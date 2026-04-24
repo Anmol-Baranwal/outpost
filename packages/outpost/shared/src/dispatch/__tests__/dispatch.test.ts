@@ -4,16 +4,9 @@
  * Developed with red-green discipline: tests written first, then verified
  * against the implementation.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TeamMemberRole } from '../../types.js';
-import { evaluateRouting } from '../engine.js';
 import { matchCondition } from '../matcher.js';
-import {
-    getCurrentOnCall,
-    peekOnCall,
-    getOnCallMembers,
-    resetRotation,
-} from '../on-call.js';
 import { DEFAULT_ROUTING_RULES } from '../default-rules.js';
 import type {
     RoutingTicket,
@@ -24,6 +17,50 @@ import type {
     AcvCondition,
     TicketTypeCondition,
 } from '../types.js';
+import type { PrismaLike } from '../on-call.js';
+
+// ─── Mock Prisma for on-call persistence ─────────────────────────────────
+
+const mockFindUnique = vi.fn();
+const mockUpsert = vi.fn();
+
+vi.mock('@copilotkit/outpost/db', () => ({
+    prisma: {
+        systemConfig: {
+            findUnique: (...args: unknown[]) => mockFindUnique(...args),
+            upsert: (...args: unknown[]) => mockUpsert(...args),
+        },
+    },
+}));
+
+const { evaluateRouting } = await import('../engine.js');
+const { getCurrentOnCall, peekOnCall, getOnCallMembers, resetRotation } = await import('../on-call.js');
+
+/**
+ * Create an in-memory mock PrismaLike for on-call tests.
+ * Stores the rotation index in a local variable.
+ */
+function createMockDb(): PrismaLike {
+    let stored: { key: string; value: string } | null = null;
+    return {
+        systemConfig: {
+            async findUnique(args: { where: { key: string } }) {
+                if (stored && stored.key === args.where.key) {
+                    return stored;
+                }
+                return null;
+            },
+            async upsert(args: {
+                where: { key: string };
+                update: { value: string };
+                create: { key: string; value: string };
+            }) {
+                stored = { key: args.where.key, value: args.update.value };
+                return stored;
+            },
+        },
+    };
+}
 
 // ─── Test Fixtures ─────────────────────────────────────────────────────────
 
@@ -239,13 +276,20 @@ describe('matchCondition', () => {
 // ─── Routing Engine Tests ──────────────────────────────────────────────────
 
 describe('evaluateRouting', () => {
-    it('routes billing keywords to admin/sales team', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Default: no stored index
+        mockFindUnique.mockResolvedValue(null);
+        mockUpsert.mockResolvedValue({ key: 'oncall_rotation_index', value: '0' });
+    });
+
+    it('routes billing keywords to admin/sales team', async () => {
         const ticket = makeTicket({
             title: 'Billing question about our subscription',
             description: 'We need to update our payment method',
         });
 
-        const result = evaluateRouting(ticket, teamMembers);
+        const result = await evaluateRouting(ticket, teamMembers);
 
         expect(result.matchedRule).not.toBeNull();
         expect(result.matchedRule!.name).toBe('billing-to-sales');
@@ -253,48 +297,48 @@ describe('evaluateRouting', () => {
         expect(result.confidence).toBeGreaterThan(0);
     });
 
-    it('routes high-ACV accounts to account owner', () => {
+    it('routes high-ACV accounts to account owner', async () => {
         const ticket = makeTicket({
             title: 'Need help with integration',
             description: 'Having trouble setting up CopilotKit',
             account: { id: 'acct-big', acv: 100_000, owner: 'Alice Admin' },
         });
 
-        const result = evaluateRouting(ticket, teamMembers);
+        const result = await evaluateRouting(ticket, teamMembers);
 
         expect(result.matchedRule).not.toBeNull();
         expect(result.matchedRule!.name).toBe('high-acv-account-owner');
         expect(result.targetMemberId).toBe('admin-1'); // Alice Admin
     });
 
-    it('routes GitHub source tickets to engineering', () => {
+    it('routes GitHub source tickets to engineering', async () => {
         const ticket = makeTicket({
             source: 'GITHUB_ISSUE',
             title: 'Feature request for better docs',
             description: 'The documentation could be improved',
         });
 
-        const result = evaluateRouting(ticket, teamMembers);
+        const result = await evaluateRouting(ticket, teamMembers);
 
         expect(result.matchedRule).not.toBeNull();
         expect(result.matchedRule!.name).toBe('github-to-engineering');
         expect(result.targetMemberId).toBe('eng-1');
     });
 
-    it('routes agent topics to engineering specialist', () => {
+    it('routes agent topics to engineering specialist', async () => {
         const ticket = makeTicket({
             title: 'CoAgent not working',
             description: 'My CoAgent integration throws errors',
         });
 
-        const result = evaluateRouting(ticket, teamMembers);
+        const result = await evaluateRouting(ticket, teamMembers);
 
         expect(result.matchedRule).not.toBeNull();
         expect(result.matchedRule!.name).toBe('agent-topics-to-specialist');
         expect(result.targetMemberId).toBe('eng-1');
     });
 
-    it('falls back to on-call when no rule matches', () => {
+    it('falls back to on-call when no rule matches', async () => {
         const ticket = makeTicket({
             title: 'Generic question',
             description: 'Nothing specific about this ticket',
@@ -303,9 +347,8 @@ describe('evaluateRouting', () => {
         });
 
         const onCallMembers = ['oncall-1', 'oncall-2'];
-        resetRotation();
 
-        const result = evaluateRouting(ticket, teamMembers, undefined, onCallMembers);
+        const result = await evaluateRouting(ticket, teamMembers, undefined, onCallMembers);
 
         expect(result.matchedRule).toBeNull();
         expect(result.targetMemberId).toBe('oncall-1');
@@ -313,7 +356,7 @@ describe('evaluateRouting', () => {
         expect(result.reason).toContain('on-call');
     });
 
-    it('returns null target when no rules match and no on-call configured', () => {
+    it('returns null target when no rules match and no on-call configured', async () => {
         const ticket = makeTicket({
             title: 'Generic question',
             description: 'Nothing matches',
@@ -321,13 +364,13 @@ describe('evaluateRouting', () => {
             type: 'OTHER',
         });
 
-        const result = evaluateRouting(ticket, teamMembers, undefined, []);
+        const result = await evaluateRouting(ticket, teamMembers, undefined, []);
 
         expect(result.matchedRule).toBeNull();
         expect(result.targetMemberId).toBeNull();
     });
 
-    it('respects rule priority ordering', () => {
+    it('respects rule priority ordering', async () => {
         // A billing ticket from a high-ACV account should match ACV first (priority 10)
         // before billing (priority 20)
         const ticket = makeTicket({
@@ -336,13 +379,13 @@ describe('evaluateRouting', () => {
             account: { id: 'acct-big', acv: 100_000, owner: 'Alice Admin' },
         });
 
-        const result = evaluateRouting(ticket, teamMembers);
+        const result = await evaluateRouting(ticket, teamMembers);
 
         // ACV rule has priority 10, billing has priority 20
         expect(result.matchedRule!.name).toBe('high-acv-account-owner');
     });
 
-    it('skips disabled rules', () => {
+    it('skips disabled rules', async () => {
         const customRules: RoutingRule[] = [
             {
                 name: 'disabled-rule',
@@ -363,13 +406,13 @@ describe('evaluateRouting', () => {
         ];
 
         const ticket = makeTicket({ title: 'Billing question' });
-        const result = evaluateRouting(ticket, teamMembers, customRules, []);
+        const result = await evaluateRouting(ticket, teamMembers, customRules, []);
 
         expect(result.matchedRule!.name).toBe('enabled-rule');
         expect(result.targetMemberId).toBe('eng-1');
     });
 
-    it('uses targetMemberId when set directly on rule', () => {
+    it('uses targetMemberId when set directly on rule', async () => {
         const customRules: RoutingRule[] = [
             {
                 name: 'direct-assign',
@@ -382,7 +425,7 @@ describe('evaluateRouting', () => {
         ];
 
         const ticket = makeTicket({ title: 'VIP customer needs help' });
-        const result = evaluateRouting(ticket, teamMembers, customRules, []);
+        const result = await evaluateRouting(ticket, teamMembers, customRules, []);
 
         expect(result.targetMemberId).toBe('eng-2');
     });
@@ -391,37 +434,40 @@ describe('evaluateRouting', () => {
 // ─── On-Call Rotation Tests ────────────────────────────────────────────────
 
 describe('on-call rotation', () => {
+    let db: PrismaLike;
+
     beforeEach(() => {
-        resetRotation();
+        vi.clearAllMocks();
+        db = createMockDb();
     });
 
-    it('cycles through members in round-robin order', () => {
+    it('cycles through members in round-robin order', async () => {
         const members = ['m1', 'm2', 'm3'];
 
-        expect(getCurrentOnCall(members)).toBe('m1');
-        expect(getCurrentOnCall(members)).toBe('m2');
-        expect(getCurrentOnCall(members)).toBe('m3');
-        expect(getCurrentOnCall(members)).toBe('m1'); // wraps around
+        expect(await getCurrentOnCall(members, db)).toBe('m1');
+        expect(await getCurrentOnCall(members, db)).toBe('m2');
+        expect(await getCurrentOnCall(members, db)).toBe('m3');
+        expect(await getCurrentOnCall(members, db)).toBe('m1'); // wraps around
     });
 
-    it('returns null when no members configured', () => {
-        expect(getCurrentOnCall([])).toBeNull();
+    it('returns null when no members configured', async () => {
+        expect(await getCurrentOnCall([], db)).toBeNull();
     });
 
-    it('handles single member', () => {
+    it('handles single member', async () => {
         const members = ['solo'];
 
-        expect(getCurrentOnCall(members)).toBe('solo');
-        expect(getCurrentOnCall(members)).toBe('solo');
+        expect(await getCurrentOnCall(members, db)).toBe('solo');
+        expect(await getCurrentOnCall(members, db)).toBe('solo');
     });
 
-    it('peekOnCall does not advance rotation', () => {
+    it('peekOnCall does not advance rotation', async () => {
         const members = ['m1', 'm2', 'm3'];
 
-        expect(peekOnCall(members)).toBe('m1');
-        expect(peekOnCall(members)).toBe('m1'); // still m1
-        expect(getCurrentOnCall(members)).toBe('m1'); // now advances
-        expect(peekOnCall(members)).toBe('m2'); // next one
+        expect(await peekOnCall(members, db)).toBe('m1');
+        expect(await peekOnCall(members, db)).toBe('m1'); // still m1
+        expect(await getCurrentOnCall(members, db)).toBe('m1'); // now advances
+        expect(await peekOnCall(members, db)).toBe('m2'); // next one
     });
 
     it('parses comma-separated env var', () => {
@@ -434,15 +480,33 @@ describe('on-call rotation', () => {
         expect(members).toEqual([]);
     });
 
-    it('resetRotation resets to first member', () => {
+    it('resetRotation resets to first member', async () => {
         const members = ['m1', 'm2', 'm3'];
 
-        getCurrentOnCall(members); // m1
-        getCurrentOnCall(members); // m2
+        await getCurrentOnCall(members, db); // m1
+        await getCurrentOnCall(members, db); // m2
 
-        resetRotation();
+        await resetRotation(db);
 
-        expect(getCurrentOnCall(members)).toBe('m1');
+        expect(await getCurrentOnCall(members, db)).toBe('m1');
+    });
+
+    it('persists rotation index across separate calls', async () => {
+        const members = ['m1', 'm2', 'm3'];
+
+        // Advance twice
+        await getCurrentOnCall(members, db);
+        await getCurrentOnCall(members, db);
+
+        // Create a new reference to the same db (simulating a new call context)
+        // The db object retains state, proving persistence
+        expect(await peekOnCall(members, db)).toBe('m3');
+    });
+
+    it('handles first call when no SystemConfig record exists yet', async () => {
+        const members = ['m1', 'm2', 'm3'];
+        // db starts empty, so findUnique returns null => index 0
+        expect(await getCurrentOnCall(members, db)).toBe('m1');
     });
 });
 

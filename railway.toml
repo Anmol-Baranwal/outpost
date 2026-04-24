@@ -64,3 +64,14 @@ restartPolicy = "always"
 [services.linear-sync.deploy]
 startCommand = ""
 region = "us-west1"
+
+# ── Worker (background job processor, no public port) ──────────────────────
+[services.worker]
+name = "outpost-worker"
+dockerfile = "apps/worker/Dockerfile"
+healthcheck = "/health"
+restartPolicy = "always"
+
+[services.worker.deploy]
+startCommand = ""
+region = "us-west1"

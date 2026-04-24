@@ -22,6 +22,8 @@ interface TicketsTrendProps {
 }
 
 export function TicketsTrend({ data, month, totalTickets }: TicketsTrendProps) {
+    const hasData = data.length > 0 && data.some((d) => d.count > 0);
+
     return (
         <div className="rounded-lg border border-border bg-card p-6">
             <div className="mb-4 flex items-center justify-between">
@@ -39,6 +41,14 @@ export function TicketsTrend({ data, month, totalTickets }: TicketsTrendProps) {
                 </div>
             </div>
 
+            {!hasData ? (
+                <div
+                    className="flex h-[200px] items-center justify-center text-sm text-muted-foreground"
+                    data-testid="trend-empty"
+                >
+                    No ticket data for this period
+                </div>
+            ) : (
             <div className="h-[200px] w-full" data-testid="trend-chart">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
@@ -88,6 +98,7 @@ export function TicketsTrend({ data, month, totalTickets }: TicketsTrendProps) {
                     </AreaChart>
                 </ResponsiveContainer>
             </div>
+            )}
         </div>
     );
 }

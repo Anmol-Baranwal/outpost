@@ -3,7 +3,23 @@
 import { useState, useMemo, useCallback } from 'react';
 import { ArrowUpDown, ArrowUp, ArrowDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { AccountWithTicketCounts } from '@/lib/mock-accounts';
+import type { AccountSentiment, AccountEngagement } from '@copilotkit/outpost/shared';
+
+interface AccountWithTicketCounts {
+    id: string;
+    name: string;
+    domain: string | null;
+    owner: string | null;
+    sentiment: AccountSentiment;
+    engagement: AccountEngagement;
+    acv: number | null;
+    closeDate: string | null;
+    createdAt: string;
+    updatedAt: string;
+    openTickets: number;
+    inProgressTickets: number;
+    closedTickets: number;
+}
 import { SentimentBadge } from './sentiment-badge';
 import { EngagementBadge } from './engagement-badge';
 import { AccountOwnerSelect } from './account-owner-select';
@@ -165,8 +181,11 @@ export function AccountsTable({
                                 <td
                                     colSpan={COLUMN_HEADERS.length}
                                     className="px-4 py-8 text-center text-muted-foreground"
+                                    data-testid="accounts-empty"
                                 >
-                                    No accounts match the current search.
+                                    {searchQuery
+                                        ? 'No accounts match the current search.'
+                                        : 'No accounts yet. Accounts will be created automatically from support interactions, or sync from HubSpot.'}
                                 </td>
                             </tr>
                         ) : (

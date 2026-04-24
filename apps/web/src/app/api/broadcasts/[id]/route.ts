@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findMockBroadcast, MAX_BROADCAST_LENGTH } from '@/lib/mock-broadcasts';
+import { prisma } from '@copilotkit/outpost/db';
+
+const MAX_BROADCAST_LENGTH = 500;
 
 /**
  * GET /api/broadcasts/[id]
@@ -11,7 +13,7 @@ export async function GET(
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const broadcast = findMockBroadcast(id);
+    const broadcast = await prisma.broadcast.findUnique({ where: { id } });
 
     if (!broadcast) {
         return NextResponse.json(
@@ -27,14 +29,14 @@ export async function GET(
  * PATCH /api/broadcasts/[id]
  *
  * Update a draft broadcast. Only drafts can be updated.
- * Body: { message?, audienceType?, audienceAccountIds?, senderId? }
+ * Body: { message?, audience?, targetAccounts?, sendAs? }
  */
 export async function PATCH(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const broadcast = findMockBroadcast(id);
+    const broadcast = await prisma.broadcast.findUnique({ where: { id } });
 
     if (!broadcast) {
         return NextResponse.json(
@@ -43,7 +45,7 @@ export async function PATCH(
         );
     }
 
-    if (broadcast.status !== 'draft') {
+    if (broadcast.status !== 'DRAFT') {
         return NextResponse.json(
             { error: 'Only draft broadcasts can be updated' },
             { status: 400 },
@@ -68,15 +70,16 @@ export async function PATCH(
             }
         }
 
-        // In production, this would use prisma.broadcast.update()
-        const updated = {
-            ...broadcast,
-            ...(body.message !== undefined && { message: body.message }),
-            ...(body.audienceType !== undefined && { audienceType: body.audienceType }),
-            ...(body.audienceAccountIds !== undefined && { audienceAccountIds: body.audienceAccountIds }),
-            ...(body.senderId !== undefined && { senderId: body.senderId }),
-            updatedAt: new Date().toISOString(),
-        };
+        const data: Record<string, unknown> = {};
+        if (body.message !== undefined) data.message = body.message;
+        if (body.audience !== undefined) data.audience = body.audience;
+        if (body.targetAccounts !== undefined) data.targetAccounts = body.targetAccounts;
+        if (body.sendAs !== undefined) data.sendAs = body.sendAs;
+
+        const updated = await prisma.broadcast.update({
+            where: { id },
+            data,
+        });
 
         return NextResponse.json(updated);
     } catch {

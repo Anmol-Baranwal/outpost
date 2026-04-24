@@ -80,7 +80,7 @@ export async function handleEscalation(
             account: ticket.account,
         };
 
-        const result = evaluateRouting(routingTicket, teamMembers);
+        const result = await evaluateRouting(routingTicket, teamMembers, undefined, undefined, prisma);
         assigneeId = result.targetMemberId;
         routingReason = result.reason;
     }
@@ -113,6 +113,28 @@ export async function handleEscalation(
             ].join('\n'),
         },
     });
+
+    // Post external notification about the escalation
+    try {
+        const assigneeName = assigneeId
+            ? (await prisma.teamMember.findUnique({
+                  where: { id: assigneeId },
+                  select: { name: true },
+              }))?.name ?? assigneeId
+            : 'unassigned';
+
+        await prisma.message.create({
+            data: {
+                ticketId,
+                author: 'System',
+                content: `Ticket ${ticket.displayId ?? ticketId} escalated to ${assigneeName}. Reason: ${reason}`,
+                type: 'SYSTEM',
+            },
+        });
+    } catch (err) {
+        // Log but don't fail the job — the escalation itself succeeded
+        console.error('[Escalation] Failed to post escalation notification:', err);
+    }
 
     await context.reportProgress(100);
 

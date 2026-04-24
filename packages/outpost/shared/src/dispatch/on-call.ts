@@ -5,11 +5,27 @@
  * The list is configured via the ON_CALL_MEMBERS environment variable
  * (comma-separated team member IDs).
  *
- * The rotation index advances with each call to getCurrentOnCall(),
- * wrapping around when it reaches the end of the list.
+ * The rotation index is persisted via a PrismaLike interface
+ * (SystemConfig table) so it survives process restarts.
+ * Callers must inject a database instance.
  */
 
-let rotationIndex = 0;
+const ROTATION_KEY = 'oncall_rotation_index';
+
+/**
+ * Minimal Prisma-like interface for the SystemConfig table,
+ * allowing callers to inject the real prisma client or a test double.
+ */
+export interface PrismaLike {
+    systemConfig: {
+        findUnique(args: { where: { key: string } }): Promise<{ key: string; value: string } | null>;
+        upsert(args: {
+            where: { key: string };
+            update: { value: string };
+            create: { key: string; value: string };
+        }): Promise<{ key: string; value: string }>;
+    };
+}
 
 /**
  * Parse the on-call member list from an environment variable or explicit list.
@@ -23,20 +39,56 @@ export function getOnCallMembers(envValue?: string): string[] {
 }
 
 /**
+ * Read the current rotation index from the database.
+ * Returns 0 if no record exists yet.
+ */
+async function readIndex(db: PrismaLike): Promise<number> {
+    const row = await db.systemConfig.findUnique({ where: { key: ROTATION_KEY } });
+    if (!row) return 0;
+    const parsed = parseInt(row.value, 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Write the rotation index to the database.
+ */
+async function writeIndex(index: number, db: PrismaLike): Promise<void> {
+    await db.systemConfig.upsert({
+        where: { key: ROTATION_KEY },
+        update: { value: String(index) },
+        create: { key: ROTATION_KEY, value: String(index) },
+    });
+}
+
+/**
  * Get the current on-call team member ID using round-robin rotation.
  *
  * Returns null if no on-call members are configured.
- * Each call advances the rotation to the next member.
+ * Each call advances the rotation to the next member and persists
+ * the new index in the database.
+ *
+ * @param members - Override on-call member list (defaults to ON_CALL_MEMBERS env var)
+ * @param db - Database instance implementing PrismaLike (required for persistence)
  */
-export function getCurrentOnCall(members?: string[]): string | null {
+export async function getCurrentOnCall(
+    members?: string[],
+    db?: PrismaLike,
+): Promise<string | null> {
     const onCallMembers = members ?? getOnCallMembers();
 
     if (onCallMembers.length === 0) {
         return null;
     }
 
-    const currentIndex = rotationIndex % onCallMembers.length;
-    rotationIndex = (rotationIndex + 1) % onCallMembers.length;
+    if (!db) {
+        // No database provided — return first member without persistence.
+        // This should only happen in development or misconfigured environments.
+        return onCallMembers[0];
+    }
+
+    const currentIndex = (await readIndex(db)) % onCallMembers.length;
+    const nextIndex = (currentIndex + 1) % onCallMembers.length;
+    await writeIndex(nextIndex, db);
 
     return onCallMembers[currentIndex];
 }
@@ -44,19 +96,28 @@ export function getCurrentOnCall(members?: string[]): string | null {
 /**
  * Peek at the current on-call member without advancing the rotation.
  */
-export function peekOnCall(members?: string[]): string | null {
+export async function peekOnCall(
+    members?: string[],
+    db?: PrismaLike,
+): Promise<string | null> {
     const onCallMembers = members ?? getOnCallMembers();
 
     if (onCallMembers.length === 0) {
         return null;
     }
 
-    return onCallMembers[rotationIndex % onCallMembers.length];
+    if (!db) {
+        return onCallMembers[0];
+    }
+
+    const currentIndex = (await readIndex(db)) % onCallMembers.length;
+    return onCallMembers[currentIndex];
 }
 
 /**
- * Reset the rotation index. Primarily useful for testing.
+ * Reset the rotation index to zero.
  */
-export function resetRotation(): void {
-    rotationIndex = 0;
+export async function resetRotation(db?: PrismaLike): Promise<void> {
+    if (!db) return;
+    await writeIndex(0, db);
 }

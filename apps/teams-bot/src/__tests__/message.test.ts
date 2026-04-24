@@ -4,10 +4,16 @@ import { mockPrisma, mockQueue } from './helpers/mocks.js';
 vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 vi.mock('@copilotkit/outpost/queue', () => mockQueue());
 
-vi.mock('@copilotkit/outpost/shared', () => ({
-    generateTicketId: vi.fn().mockReturnValue('TKT-AB12'),
-    truncate: vi.fn((str: string, _len: number) => str),
-}));
+// Import the real TeamsAdapter and InboundHandler alongside mocked utilities
+vi.mock('@copilotkit/outpost/shared', async (importOriginal) => {
+    const orig = await importOriginal<typeof import('@copilotkit/outpost/shared')>();
+    return {
+        generateTicketId: vi.fn().mockReturnValue('TKT-AB12'),
+        truncate: vi.fn((str: string, _len: number) => str),
+        TeamsAdapter: orig.TeamsAdapter,
+        InboundHandler: orig.InboundHandler,
+    };
+});
 
 vi.mock('../config.js', () => ({
     config: {
@@ -58,6 +64,7 @@ function makeContext(overrides: Record<string, unknown> = {}) {
         channelData: {
             teamsChannelId: 'channel-1',
         },
+        serviceUrl: 'https://smba.trafficmanager.net/teams/',
         replyToId: undefined,
         ...overrides,
     };
@@ -105,7 +112,7 @@ describe('handleMessage', () => {
 
         expect(prisma.ticket.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
-                displayId: 'TKT-AB12',
+                displayId: expect.any(String),
                 source: 'TEAMS',
                 sourceId: 'conv-123',
                 status: 'OPEN',
@@ -133,6 +140,25 @@ describe('handleMessage', () => {
         expect(context.sendActivity).toHaveBeenCalled();
     });
 
+    it('stores ConversationReference in additionalInfo when creating ticket', async () => {
+        const context = makeContext();
+        await handleMessage(context);
+
+        // ConversationReference is stored via a separate update after ticket creation
+        expect(prisma.ticket.update).toHaveBeenCalledWith({
+            where: { id: 'ticket-internal-id' },
+            data: {
+                additionalInfo: {
+                    conversationReference: expect.objectContaining({
+                        serviceUrl: 'https://smba.trafficmanager.net/teams/',
+                        conversationId: 'conv-123',
+                        botId: 'bot-id',
+                    }),
+                },
+            },
+        });
+    });
+
     it('ignores messages in unmonitored channels', async () => {
         const context = makeContext({
             channelData: { teamsChannelId: 'unmonitored-channel' },
@@ -146,7 +172,7 @@ describe('handleMessage', () => {
             TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never,
         );
 
-        const context = makeContext();
+        const context = makeContext({ replyToId: 'some-parent-id' });
         await handleMessage(context);
 
         // Should NOT create a new ticket
@@ -184,7 +210,7 @@ describe('handleMessage', () => {
             id: 'tm-1',
         } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
 
-        const context = makeContext();
+        const context = makeContext({ replyToId: 'some-parent-id' });
         await handleMessage(context);
 
         // Should still save the message
@@ -200,7 +226,7 @@ describe('handleMessage', () => {
             status: 'RESOLVED',
         } as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
 
-        const context = makeContext();
+        const context = makeContext({ replyToId: 'some-parent-id' });
         await handleMessage(context);
 
         expect(prisma.ticket.update).toHaveBeenCalledWith({

@@ -1,24 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findMockTicket } from '@/lib/mock-tickets';
-import { TicketStatus, TicketPriority, TicketType } from '@copilotkit/outpost/shared';
+import { prisma } from '@copilotkit/outpost/db';
+import { TicketStatus, TicketPriority, TicketType } from '@copilotkit/outpost/db';
 
 /**
  * GET /api/tickets/[id]
  *
- * Get a single ticket with its messages, notes, and related data.
+ * Get a single ticket with its messages, notes, discussions, and related data.
  */
 export async function GET(
     _request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
-    const { id } = await params;
-    const ticket = findMockTicket(id);
+    try {
+        const { id } = await params;
 
-    if (!ticket) {
-        return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        const ticket = await prisma.ticket.findFirst({
+            where: {
+                OR: [{ id }, { displayId: id }],
+            },
+            include: {
+                account: true,
+                user: true,
+                assignee: true,
+                messages: { orderBy: { createdAt: 'asc' } },
+                notes: { orderBy: { createdAt: 'asc' } },
+                discussions: {
+                    include: {
+                        messages: { orderBy: { createdAt: 'asc' } },
+                    },
+                    orderBy: { createdAt: 'asc' },
+                },
+            },
+        });
+
+        if (!ticket) {
+            return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
+        return NextResponse.json(ticket);
+    } catch (error) {
+        console.error('[GET /api/tickets/[id]] Error:', error);
+        return NextResponse.json(
+            { error: 'Internal server error' },
+            { status: 500 },
+        );
     }
-
-    return NextResponse.json(ticket);
 }
 
 /**
@@ -30,21 +56,26 @@ export async function PATCH(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
-    const { id } = await params;
-    const ticket = findMockTicket(id);
-
-    if (!ticket) {
-        return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
-    }
-
     try {
+        const { id } = await params;
+
+        // Check ticket exists
+        const existing = await prisma.ticket.findFirst({
+            where: {
+                OR: [{ id }, { displayId: id }],
+            },
+        });
+
+        if (!existing) {
+            return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
         const body = await request.json();
         const allowedFields = ['status', 'priority', 'assigneeId', 'type'];
         const updates: Record<string, string | null> = {};
 
         for (const field of allowedFields) {
             if (field in body) {
-                // Validate enum values
                 if (field === 'status' && !Object.values(TicketStatus).includes(body[field])) {
                     return NextResponse.json(
                         { error: `Invalid status: ${body[field]}` },
@@ -67,13 +98,30 @@ export async function PATCH(
             }
         }
 
-        // In production, this would use prisma.ticket.update()
-        const updatedTicket = { ...ticket, ...updates, updatedAt: new Date().toISOString() };
+        const updatedTicket = await prisma.ticket.update({
+            where: { id: existing.id },
+            data: updates,
+            include: {
+                account: true,
+                user: true,
+                assignee: true,
+                messages: { orderBy: { createdAt: 'asc' } },
+                notes: { orderBy: { createdAt: 'asc' } },
+            },
+        });
+
         return NextResponse.json(updatedTicket);
-    } catch {
+    } catch (error) {
+        console.error('[PATCH /api/tickets/[id]] Error:', error);
+        if (error instanceof SyntaxError) {
+            return NextResponse.json(
+                { error: 'Invalid request body' },
+                { status: 400 },
+            );
+        }
         return NextResponse.json(
-            { error: 'Invalid request body' },
-            { status: 400 },
+            { error: 'Internal server error' },
+            { status: 500 },
         );
     }
 }

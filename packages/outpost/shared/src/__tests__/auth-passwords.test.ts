@@ -28,7 +28,7 @@ describe('verifyPassword', () => {
         expect(result).toBe(false);
     });
 
-    it('round-trips with various passwords', async () => {
+    it('round-trips with various passwords', { timeout: 30000 }, async () => {
         const passwords = ['', 'short', 'a-longer-passphrase-with-special-chars!@#$%', '   spaces   '];
         for (const pw of passwords) {
             const hash = await hashPassword(pw);

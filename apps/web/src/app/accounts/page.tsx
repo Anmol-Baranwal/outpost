@@ -1,37 +1,74 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Building2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { AccountsTable } from '@/components/accounts/accounts-table';
-import { filterMockAccounts } from '@/lib/mock-accounts';
-import type { AccountWithTicketCounts } from '@/lib/mock-accounts';
+import type { AccountSentiment, AccountEngagement } from '@copilotkit/outpost/shared';
+
+interface AccountWithTicketCounts {
+    id: string;
+    name: string;
+    domain: string | null;
+    owner: string | null;
+    sentiment: AccountSentiment;
+    engagement: AccountEngagement;
+    acv: number | null;
+    closeDate: string | null;
+    createdAt: string;
+    updatedAt: string;
+    openTickets: number;
+    inProgressTickets: number;
+    closedTickets: number;
+}
 
 export default function AccountsPage() {
     const [searchQuery, setSearchQuery] = useState('');
-    const [ownerOverrides, setOwnerOverrides] = useState<Record<string, string | null>>({});
+    const [accounts, setAccounts] = useState<AccountWithTicketCounts[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    const accounts = useMemo(() => {
-        const filtered = filterMockAccounts({ search: searchQuery || undefined });
-        return filtered.map(account => ({
-            ...account,
-            ...(ownerOverrides[account.id] !== undefined
-                ? { owner: ownerOverrides[account.id] }
-                : {}),
-        }));
-    }, [searchQuery, ownerOverrides]);
+    useEffect(() => {
+        const params = new URLSearchParams();
+        if (searchQuery) {
+            params.set('search', searchQuery);
+        }
+
+        const url = `/api/accounts${params.toString() ? `?${params.toString()}` : ''}`;
+
+        // Debounce search requests
+        const timer = setTimeout(() => {
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    setAccounts(data.accounts ?? []);
+                    setLoading(false);
+                })
+                .catch(() => {
+                    setAccounts([]);
+                    setLoading(false);
+                });
+        }, 200);
+
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
 
     const handleOwnerChange = useCallback((accountId: string, owner: string | null) => {
-        setOwnerOverrides(prev => ({ ...prev, [accountId]: owner }));
-        // In production this would PATCH /api/accounts/:id
+        // Optimistic update
+        setAccounts(prev =>
+            prev.map(a => a.id === accountId ? { ...a, owner } : a),
+        );
+
         fetch(`/api/accounts/${accountId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ owner }),
         }).catch(() => {
-            // Revert on failure in production
+            // Revert on failure — refetch
+            fetch(`/api/accounts?${searchQuery ? `search=${searchQuery}` : ''}`)
+                .then(res => res.json())
+                .then(data => setAccounts(data.accounts ?? []));
         });
-    }, []);
+    }, [searchQuery]);
 
     return (
         <div>
@@ -41,12 +78,18 @@ export default function AccountsPage() {
                 icon={Building2}
                 breadcrumbs={[{ label: 'Accounts' }]}
             />
-            <AccountsTable
-                accounts={accounts}
-                searchQuery={searchQuery}
-                onSearchChange={setSearchQuery}
-                onOwnerChange={handleOwnerChange}
-            />
+            {loading ? (
+                <div className="flex items-center justify-center py-12 text-muted-foreground">
+                    Loading accounts...
+                </div>
+            ) : (
+                <AccountsTable
+                    accounts={accounts}
+                    searchQuery={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    onOwnerChange={handleOwnerChange}
+                />
+            )}
         </div>
     );
 }

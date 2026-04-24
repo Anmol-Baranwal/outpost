@@ -10,21 +10,40 @@ vi.mock('../lib/shadow-mode.js', () => ({
     handleShadowMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('@copilotkit/outpost/shared', () => ({
-    truncate: vi.fn((str: string, _len: number) => str),
+vi.mock('../config.js', () => ({
+    config: {
+        discordToken: 'test-token',
+        clientId: 'test-client-id',
+        guildId: 'test-guild-id',
+        monitoredChannelIds: ['forum-channel-1'],
+    },
 }));
+
+// Mock discord.js REST to prevent real HTTP calls
+vi.mock('discord.js', async (importOriginal) => {
+    const actual = await importOriginal() as Record<string, unknown>;
+    return {
+        ...actual,
+        REST: vi.fn().mockImplementation(function(this: Record<string, unknown>) {
+            this.setToken = vi.fn().mockReturnValue(this);
+            this.post = vi.fn().mockResolvedValue({});
+            this.get = vi.fn().mockResolvedValue({});
+        }),
+    };
+});
 
 import { handleMessageCreate } from '../events/message-create.js';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
+import { createJob } from '@copilotkit/outpost/queue';
 
 const TICKET = {
     id: 'ticket-1',
-    displayId: 'TKT-AB12',
+    displayId: 'TKT-AB12CD34',
     status: 'OPEN',
     priority: 'MEDIUM',
     source: 'DISCORD',
     sourceId: 'thread-123',
+    channel: 'forum-channel-1',
 };
 
 function makeMessage(overrides: Record<string, unknown> = {}) {
@@ -33,18 +52,23 @@ function makeMessage(overrides: Record<string, unknown> = {}) {
             bot: false,
             tag: 'TestUser#1234',
             id: 'user-456',
+            username: 'TestUser',
         },
         content: 'I still need help with this',
+        url: 'https://discord.com/channels/guild/thread-123/msg-1',
         channel: {
             type: ChannelType.PublicThread,
             id: 'thread-123',
+            parentId: 'forum-channel-1',
         },
+        attachments: [],
         ...overrides,
     } as unknown as Parameters<typeof handleMessageCreate>[0];
 }
 
 describe('handleMessageCreate', () => {
     beforeEach(() => {
+        // findTicketByThreadId returns the existing ticket
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
         vi.mocked(prisma.message.create).mockResolvedValue({
             id: 'msg-1',
@@ -54,7 +78,7 @@ describe('handleMessageCreate', () => {
     });
 
     it('ignores messages from bots', async () => {
-        const message = makeMessage({ author: { bot: true, tag: 'Bot', id: 'bot-1' } });
+        const message = makeMessage({ author: { bot: true, tag: 'Bot', id: 'bot-1', username: 'Bot' } });
         await handleMessageCreate(message);
         expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
     });
@@ -71,13 +95,15 @@ describe('handleMessageCreate', () => {
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
         const message = makeMessage();
         await handleMessageCreate(message);
+        // InboundHandler should not be invoked (no message.create call)
         expect(prisma.message.create).not.toHaveBeenCalled();
     });
 
-    it('appends a message and enqueues AI response for non-team-member', async () => {
+    it('processes reply through InboundHandler and enqueues AI response for non-team-member', async () => {
         const message = makeMessage();
         await handleMessageCreate(message);
 
+        // InboundHandler appends a message
         expect(prisma.message.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 ticketId: 'ticket-1',
@@ -85,8 +111,9 @@ describe('handleMessageCreate', () => {
             }),
         });
 
+        // InboundHandler enqueues AI response via createJob wrapper
         expect(createJob).toHaveBeenCalledWith(
-            JobType.AI_RESPONSE,
+            'AI_RESPONSE',
             expect.objectContaining({
                 ticketId: 'ticket-1',
                 source: 'discord',
@@ -120,6 +147,11 @@ describe('handleMessageCreate', () => {
             status: 'RESOLVED',
         } as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
 
+        vi.mocked(prisma.ticket.update).mockResolvedValue({
+            ...TICKET,
+            status: 'OPEN',
+        } as ReturnType<typeof prisma.ticket.update> extends Promise<infer T> ? T : never);
+
         const message = makeMessage();
         await handleMessageCreate(message);
 
@@ -127,5 +159,16 @@ describe('handleMessageCreate', () => {
             where: { id: 'ticket-1' },
             data: { status: 'OPEN' },
         });
+    });
+
+    it('uses DiscordAdapter.parseInboundEvent to normalize message events', async () => {
+        const message = makeMessage();
+        await handleMessageCreate(message);
+
+        // The adapter sets isThreadStart=false for message events
+        // InboundHandler should find the existing ticket (not create a new one)
+        // Verify by checking ticket.create was NOT called (only findFirst and message.create)
+        expect(prisma.ticket.create).not.toHaveBeenCalled();
+        expect(prisma.message.create).toHaveBeenCalled();
     });
 });

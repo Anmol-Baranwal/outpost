@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@copilotkit/outpost/db';
 import { FunnelStage, isValidTransition, flagsForStage } from '@copilotkit/outpost/shared';
 
 /**
@@ -31,18 +32,36 @@ export async function PATCH(
             );
         }
 
-        // In production, fetch the member from DB and validate transition.
-        // For mock mode, return success with updated fields.
+        const member = await prisma.onboardingMember.findUnique({
+            where: { id },
+        });
+
+        if (!member) {
+            return NextResponse.json(
+                { error: 'Member not found' },
+                { status: 404 },
+            );
+        }
+
+        // Validate forward-only transition
+        if (!isValidTransition(member.funnelStage as FunnelStage, funnelStage as FunnelStage)) {
+            return NextResponse.json(
+                { error: `Invalid transition from ${member.funnelStage} to ${funnelStage}` },
+                { status: 400 },
+            );
+        }
+
         const flags = flagsForStage(funnelStage as FunnelStage);
 
-        const updatedMember = {
-            id,
-            funnelStage,
-            ...flags,
-            updatedAt: new Date().toISOString(),
-        };
+        const updated = await prisma.onboardingMember.update({
+            where: { id },
+            data: {
+                funnelStage: funnelStage as FunnelStage,
+                ...flags,
+            },
+        });
 
-        return NextResponse.json(updatedMember);
+        return NextResponse.json(updated);
     } catch {
         return NextResponse.json(
             { error: 'Invalid request body' },

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { MOCK_AGENTS, filterMockAgents } from '@/lib/mock-agents';
-import type { AgentActionType, AgentTriggerType } from '@/lib/mock-agents';
+import { prisma } from '@copilotkit/outpost/db';
+import type { Prisma } from '@copilotkit/outpost/db';
+
+type AgentTriggerType = 'interval' | 'cron' | 'manual';
+type AgentActionType =
+    | 'classify_tickets'
+    | 'check_sla'
+    | 'generate_faq'
+    | 'custom_webhook';
 
 const VALID_TRIGGER_TYPES: AgentTriggerType[] = ['interval', 'cron', 'manual'];
 const VALID_ACTION_TYPES: AgentActionType[] = [
@@ -18,7 +25,21 @@ const VALID_ACTION_TYPES: AgentActionType[] = [
 export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const search = searchParams.get('search') || undefined;
-    const agents = filterMockAgents(search);
+
+    const where: Prisma.AgentWhereInput = {};
+
+    if (search) {
+        where.OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } },
+        ];
+    }
+
+    const agents = await prisma.agent.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+    });
+
     return NextResponse.json({ agents, total: agents.length });
 }
 
@@ -60,16 +81,14 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const newAgent = {
-            id: `agent-${Date.now()}`,
-            name: body.name.trim(),
-            description: body.description?.trim() || null,
-            config,
-            lastRun: null,
-            status: 'ACTIVE',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        };
+        const newAgent = await prisma.agent.create({
+            data: {
+                name: body.name.trim(),
+                description: body.description?.trim() || null,
+                config: config as Prisma.InputJsonValue,
+                status: 'ACTIVE',
+            },
+        });
 
         return NextResponse.json(newAgent, { status: 201 });
     } catch {

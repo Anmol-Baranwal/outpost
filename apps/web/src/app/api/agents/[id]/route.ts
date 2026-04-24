@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findMockAgent } from '@/lib/mock-agents';
-import type { AgentActionType, AgentTriggerType } from '@/lib/mock-agents';
+import { prisma } from '@copilotkit/outpost/db';
+import type { Prisma } from '@copilotkit/outpost/db';
 
 const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'ERROR'] as const;
 
@@ -14,7 +14,7 @@ export async function GET(
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const agent = findMockAgent(id);
+    const agent = await prisma.agent.findUnique({ where: { id } });
 
     if (!agent) {
         return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
@@ -33,7 +33,7 @@ export async function PATCH(
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const agent = findMockAgent(id);
+    const agent = await prisma.agent.findUnique({ where: { id } });
 
     if (!agent) {
         return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
@@ -41,7 +41,7 @@ export async function PATCH(
 
     try {
         const body = await request.json();
-        const updates: Record<string, unknown> = {};
+        const data: Prisma.AgentUpdateInput = {};
 
         if ('name' in body) {
             if (typeof body.name !== 'string' || !body.name.trim()) {
@@ -50,11 +50,11 @@ export async function PATCH(
                     { status: 400 },
                 );
             }
-            updates.name = body.name.trim();
+            data.name = body.name.trim();
         }
 
         if ('description' in body) {
-            updates.description = body.description?.trim() || null;
+            data.description = body.description?.trim() || null;
         }
 
         if ('status' in body) {
@@ -64,18 +64,18 @@ export async function PATCH(
                     { status: 400 },
                 );
             }
-            updates.status = body.status;
+            data.status = body.status;
         }
 
         if ('config' in body) {
-            updates.config = { ...agent.config, ...body.config };
+            const existingConfig = (agent.config && typeof agent.config === 'object') ? agent.config : {};
+            data.config = { ...existingConfig, ...body.config } as Prisma.InputJsonValue;
         }
 
-        const updatedAgent = {
-            ...agent,
-            ...updates,
-            updatedAt: new Date().toISOString(),
-        };
+        const updatedAgent = await prisma.agent.update({
+            where: { id },
+            data,
+        });
 
         return NextResponse.json(updatedAgent);
     } catch {
@@ -96,12 +96,13 @@ export async function DELETE(
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const agent = findMockAgent(id);
+    const agent = await prisma.agent.findUnique({ where: { id } });
 
     if (!agent) {
         return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
     }
 
-    // In production this would use prisma.agent.delete()
+    await prisma.agent.delete({ where: { id } });
+
     return NextResponse.json({ deleted: true, id });
 }

@@ -425,6 +425,14 @@ model SyncEvent {
     @@index([status, createdAt])
 }
 
+// ─── System Configuration ──────────────────────────────────────────────────
+
+model SystemConfig {
+    key       String   @id
+    value     String
+    updatedAt DateTime @updatedAt
+}
+
 // ─── Template Overrides ─────────────────────────────────────────────────────
 
 model TemplateOverride {

@@ -1,6 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findMockTicket } from '@/lib/mock-tickets';
-import { MessageType } from '@copilotkit/outpost/shared';
+import { prisma } from '@copilotkit/outpost/db';
+import { MessageType } from '@copilotkit/outpost/db';
+
+/**
+ * GET /api/tickets/[id]/messages
+ *
+ * List all messages for a ticket.
+ */
+export async function GET(
+    _request: NextRequest,
+    { params }: { params: Promise<{ id: string }> },
+) {
+    try {
+        const { id } = await params;
+
+        // Support both UUID and displayId lookups (matching parent ticket route)
+        const ticket = await prisma.ticket.findFirst({
+            where: {
+                OR: [{ id }, { displayId: id }],
+            },
+        });
+
+        if (!ticket) {
+            return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
+        const messages = await prisma.message.findMany({
+            where: { ticketId: ticket.id },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        return NextResponse.json({ messages });
+    } catch (error) {
+        console.error('[GET /api/tickets/[id]/messages] Error:', error);
+        return NextResponse.json(
+            { error: 'Internal server error' },
+            { status: 500 },
+        );
+    }
+}
 
 /**
  * POST /api/tickets/[id]/messages
@@ -12,14 +50,20 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
-    const { id } = await params;
-    const ticket = findMockTicket(id);
-
-    if (!ticket) {
-        return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
-    }
-
     try {
+        const { id } = await params;
+
+        // Support both UUID and displayId lookups (matching parent ticket route)
+        const ticket = await prisma.ticket.findFirst({
+            where: {
+                OR: [{ id }, { displayId: id }],
+            },
+        });
+
+        if (!ticket) {
+            return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
         const body = await request.json();
 
         if (!body.content) {
@@ -29,23 +73,29 @@ export async function POST(
             );
         }
 
-        const message = {
-            id: `msg-${Date.now()}`,
-            ticketId: id,
-            author: body.author || 'Unknown',
-            content: body.content,
-            type: (body.type as MessageType) || MessageType.USER,
-            isAiGenerated: body.isAiGenerated || false,
-            attachments: body.attachments || null,
-            createdAt: new Date().toISOString(),
-        };
+        const message = await prisma.message.create({
+            data: {
+                ticketId: ticket.id,
+                author: body.author || 'Unknown',
+                content: body.content,
+                type: (body.type as MessageType) || MessageType.USER,
+                isAiGenerated: body.isAiGenerated || false,
+                attachments: body.attachments || undefined,
+            },
+        });
 
-        // In production, this would use prisma.message.create()
         return NextResponse.json(message, { status: 201 });
-    } catch {
+    } catch (error) {
+        console.error('[POST /api/tickets/[id]/messages] Error:', error);
+        if (error instanceof SyntaxError) {
+            return NextResponse.json(
+                { error: 'Invalid request body' },
+                { status: 400 },
+            );
+        }
         return NextResponse.json(
-            { error: 'Invalid request body' },
-            { status: 400 },
+            { error: 'Internal server error' },
+            { status: 500 },
         );
     }
 }

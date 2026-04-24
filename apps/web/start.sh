@@ -1,3 +1,8 @@
 #!/bin/sh
-# Start Next.js directly — DB migrations are handled externally via `prisma db push`
+set -e
+
+# Run pending database migrations before starting
+npx prisma migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+
+# Start Next.js
 exec node apps/web/server.js

@@ -51,8 +51,13 @@ describe('AccountsTable', () => {
         expect(onSearchChange).toHaveBeenCalledWith('Acme');
     });
 
-    it('shows empty state when no accounts match', () => {
+    it('shows empty state when no accounts exist', () => {
         render(<AccountsTable {...defaultProps} accounts={[]} />);
+        expect(screen.getByText(/No accounts yet/)).toBeTruthy();
+    });
+
+    it('shows search empty state when search has no results', () => {
+        render(<AccountsTable {...defaultProps} accounts={[]} searchQuery="xyz" />);
         expect(screen.getByText('No accounts match the current search.')).toBeTruthy();
     });
 

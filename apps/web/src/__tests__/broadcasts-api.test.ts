@@ -1,94 +1,188 @@
-import { describe, it, expect } from 'vitest';
-import {
-    MOCK_BROADCASTS,
-    filterMockBroadcasts,
-    findMockBroadcast,
-    MAX_BROADCAST_LENGTH,
-} from '@/lib/mock-broadcasts';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-describe('Broadcast API logic', () => {
-    describe('filterMockBroadcasts', () => {
-        it('returns all broadcasts when no filter is applied', () => {
-            const result = filterMockBroadcasts({});
-            expect(result).toHaveLength(MOCK_BROADCASTS.length);
-        });
+// ─── Mock Prisma ────────────────────────────────────────────────────────────
 
-        it('filters by draft status', () => {
-            const result = filterMockBroadcasts({ status: 'draft' });
-            expect(result.every((b) => b.status === 'draft')).toBe(true);
-            expect(result.length).toBeGreaterThan(0);
-        });
+const mockBroadcastFindMany = vi.fn();
+const mockBroadcastFindUnique = vi.fn();
+const mockBroadcastCreate = vi.fn();
+const mockBroadcastUpdate = vi.fn();
 
-        it('filters by sent status', () => {
-            const result = filterMockBroadcasts({ status: 'sent' });
-            expect(result.every((b) => b.status === 'sent')).toBe(true);
-            expect(result.length).toBeGreaterThan(0);
-        });
+vi.mock('@copilotkit/outpost/db', () => ({
+    prisma: {
+        broadcast: {
+            findMany: (...args: unknown[]) => mockBroadcastFindMany(...args),
+            findUnique: (...args: unknown[]) => mockBroadcastFindUnique(...args),
+            create: (...args: unknown[]) => mockBroadcastCreate(...args),
+            update: (...args: unknown[]) => mockBroadcastUpdate(...args),
+        },
+    },
+}));
 
-        it('returns results sorted by date descending', () => {
-            const result = filterMockBroadcasts({});
-            for (let i = 1; i < result.length; i++) {
-                const dateA = new Date(result[i - 1].sentAt || result[i - 1].createdAt);
-                const dateB = new Date(result[i].sentAt || result[i].createdAt);
-                expect(dateA.getTime()).toBeGreaterThanOrEqual(dateB.getTime());
-            }
-        });
+// Import after mocks
+import { GET, POST } from '@/app/api/broadcasts/route';
+import { GET as GET_BY_ID, PATCH } from '@/app/api/broadcasts/[id]/route';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+import { NextRequest } from 'next/server';
+
+function makeGetRequest(url: string): NextRequest {
+    return new NextRequest(url, { method: 'GET' });
+}
+
+function makeJsonRequest(url: string, body: unknown, method = 'POST'): NextRequest {
+    return new NextRequest(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+}
+
+const MOCK_BROADCAST = {
+    id: 'bc-1',
+    message: 'Hello from Outpost!',
+    sendAs: null,
+    audience: 'ALL_ACCOUNTS',
+    targetAccounts: null,
+    status: 'DRAFT',
+    sentAt: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+};
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+describe('GET /api/broadcasts', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns all broadcasts', async () => {
+        mockBroadcastFindMany.mockResolvedValue([MOCK_BROADCAST]);
+
+        const req = makeGetRequest('http://localhost:3000/api/broadcasts');
+        const res = await GET(req as never);
+        const body = await res.json();
+
+        expect(body.broadcasts).toHaveLength(1);
+        expect(body.total).toBe(1);
     });
 
-    describe('findMockBroadcast', () => {
-        it('finds a broadcast by ID', () => {
-            const broadcast = findMockBroadcast('bc-1');
-            expect(broadcast).toBeDefined();
-            expect(broadcast?.id).toBe('bc-1');
-        });
+    it('returns empty array when no broadcasts exist', async () => {
+        mockBroadcastFindMany.mockResolvedValue([]);
 
-        it('returns undefined for non-existent ID', () => {
-            const broadcast = findMockBroadcast('nonexistent');
-            expect(broadcast).toBeUndefined();
-        });
+        const req = makeGetRequest('http://localhost:3000/api/broadcasts');
+        const res = await GET(req as never);
+        const body = await res.json();
+
+        expect(body.broadcasts).toHaveLength(0);
     });
 
-    describe('MOCK_BROADCASTS data integrity', () => {
-        it('has exactly 5 mock broadcasts', () => {
-            expect(MOCK_BROADCASTS).toHaveLength(5);
-        });
+    it('filters by status', async () => {
+        mockBroadcastFindMany.mockResolvedValue([]);
 
-        it('has a mix of draft and sent broadcasts', () => {
-            const drafts = MOCK_BROADCASTS.filter((b) => b.status === 'draft');
-            const sent = MOCK_BROADCASTS.filter((b) => b.status === 'sent');
-            expect(drafts.length).toBeGreaterThan(0);
-            expect(sent.length).toBeGreaterThan(0);
-        });
+        const req = makeGetRequest('http://localhost:3000/api/broadcasts?status=DRAFT');
+        await GET(req as never);
 
-        it('all sent broadcasts have a sentAt date', () => {
-            const sent = MOCK_BROADCASTS.filter((b) => b.status === 'sent');
-            expect(sent.every((b) => b.sentAt !== null)).toBe(true);
-        });
+        expect(mockBroadcastFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ status: 'DRAFT' }),
+            }),
+        );
+    });
+});
 
-        it('all draft broadcasts have no sentAt date', () => {
-            const drafts = MOCK_BROADCASTS.filter((b) => b.status === 'draft');
-            expect(drafts.every((b) => b.sentAt === null)).toBe(true);
-        });
+describe('POST /api/broadcasts', () => {
+    beforeEach(() => vi.clearAllMocks());
 
-        it('all broadcasts have valid sender references', () => {
-            for (const bc of MOCK_BROADCASTS) {
-                expect(bc.sender).toBeDefined();
-                expect(bc.sender.id).toBe(bc.senderId);
-            }
-        });
+    it('creates a broadcast', async () => {
+        mockBroadcastCreate.mockResolvedValue({ ...MOCK_BROADCAST, id: 'bc-new' });
 
-        it('specific audience broadcasts have matching account references', () => {
-            const specific = MOCK_BROADCASTS.filter((b) => b.audienceType === 'specific');
-            for (const bc of specific) {
-                expect(bc.audienceAccountIds.length).toBeGreaterThan(0);
-                expect(bc.audienceAccounts.length).toBe(bc.audienceAccountIds.length);
-            }
+        const req = makeJsonRequest('http://localhost:3000/api/broadcasts', {
+            message: 'Test broadcast',
         });
+        const res = await POST(req as never);
 
-        it('all broadcast messages are within character limit', () => {
-            for (const bc of MOCK_BROADCASTS) {
-                expect(bc.message.length).toBeLessThanOrEqual(MAX_BROADCAST_LENGTH);
-            }
+        expect(res.status).toBe(201);
+        expect(mockBroadcastCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects when message is missing', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/broadcasts', {});
+        const res = await POST(req as never);
+
+        expect(res.status).toBe(400);
+    });
+
+    it('rejects when message exceeds limit', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/broadcasts', {
+            message: 'x'.repeat(501),
         });
+        const res = await POST(req as never);
+
+        expect(res.status).toBe(400);
+    });
+});
+
+describe('GET /api/broadcasts/[id]', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns broadcast by ID', async () => {
+        mockBroadcastFindUnique.mockResolvedValue(MOCK_BROADCAST);
+
+        const req = makeGetRequest('http://localhost:3000/api/broadcasts/bc-1');
+        const res = await GET_BY_ID(req as never, { params: Promise.resolve({ id: 'bc-1' }) });
+        const body = await res.json();
+
+        expect(body.message).toBe('Hello from Outpost!');
+    });
+
+    it('returns 404 for non-existent broadcast', async () => {
+        mockBroadcastFindUnique.mockResolvedValue(null);
+
+        const req = makeGetRequest('http://localhost:3000/api/broadcasts/nope');
+        const res = await GET_BY_ID(req as never, { params: Promise.resolve({ id: 'nope' }) });
+
+        expect(res.status).toBe(404);
+    });
+});
+
+describe('PATCH /api/broadcasts/[id]', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('updates a draft broadcast', async () => {
+        mockBroadcastFindUnique.mockResolvedValue(MOCK_BROADCAST);
+        mockBroadcastUpdate.mockResolvedValue({ ...MOCK_BROADCAST, message: 'Updated' });
+
+        const req = makeJsonRequest('http://localhost:3000/api/broadcasts/bc-1', { message: 'Updated' }, 'PATCH');
+        const res = await PATCH(req as never, { params: Promise.resolve({ id: 'bc-1' }) });
+        const body = await res.json();
+
+        expect(body.message).toBe('Updated');
+    });
+
+    it('rejects updating a sent broadcast', async () => {
+        mockBroadcastFindUnique.mockResolvedValue({ ...MOCK_BROADCAST, status: 'SENT' });
+
+        const req = makeJsonRequest('http://localhost:3000/api/broadcasts/bc-1', { message: 'Updated' }, 'PATCH');
+        const res = await PATCH(req as never, { params: Promise.resolve({ id: 'bc-1' }) });
+
+        expect(res.status).toBe(400);
+    });
+
+    it('returns 404 for non-existent broadcast', async () => {
+        mockBroadcastFindUnique.mockResolvedValue(null);
+
+        const req = makeJsonRequest('http://localhost:3000/api/broadcasts/nope', { message: 'Updated' }, 'PATCH');
+        const res = await PATCH(req as never, { params: Promise.resolve({ id: 'nope' }) });
+
+        expect(res.status).toBe(404);
+    });
+
+    it('rejects empty message', async () => {
+        mockBroadcastFindUnique.mockResolvedValue(MOCK_BROADCAST);
+
+        const req = makeJsonRequest('http://localhost:3000/api/broadcasts/bc-1', { message: '' }, 'PATCH');
+        const res = await PATCH(req as never, { params: Promise.resolve({ id: 'bc-1' }) });
+
+        expect(res.status).toBe(400);
     });
 });

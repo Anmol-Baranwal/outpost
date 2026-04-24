@@ -46,4 +46,6 @@ EXPOSE 3200
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3200/health || exit 1
 
-CMD ["node", "apps/github-app/dist/index.js"]
+COPY --from=installer --chown=outpost:outpost /app/apps/github-app/start.sh ./apps/github-app/start.sh
+
+CMD ["sh", "apps/github-app/start.sh"]

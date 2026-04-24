@@ -1,8 +1,9 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { generateTicketId, truncate } from '@copilotkit/outpost/shared';
-import { postIssueComment } from '../lib/github-client.js';
+import { createJob } from '@copilotkit/outpost/queue';
+import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
+import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
+import { getOctokit } from '../lib/github-client.js';
 
 export async function handleIssueOpened(
     event: EmitterWebhookEvent<'issues.opened'>,
@@ -15,67 +16,52 @@ export async function handleIssueOpened(
     );
 
     try {
-        const displayId = generateTicketId();
-        const issueUrl = issue.html_url;
-
-        // Create the ticket in the database
-        const ticket = await prisma.ticket.create({
-            data: {
-                displayId,
-                title: truncate(issue.title, 200),
-                description: truncate(issue.body ?? '', 4000),
-                status: 'OPEN',
-                priority: 'MEDIUM',
-                type: 'QUESTION',
-                source: 'GITHUB_ISSUE',
-                sourceId: `${repository.full_name}#${issue.number}`,
-                sourceUrl: issueUrl,
-                channel: repository.full_name,
-                externalTracker: 'github',
-                externalId: `${repository.full_name}#${issue.number}`,
-                externalUrl: issueUrl,
-            },
+        const adapter = new GitHubPlatformAdapter({ octokit: getOctokit() });
+        const message = adapter.parseInboundEvent({
+            action: 'opened',
+            issue: event.payload.issue,
+            repository: event.payload.repository,
+            sender: event.payload.sender,
         });
 
-        // Create the first Message record from the issue body
-        if (issue.body) {
-            await prisma.message.create({
-                data: {
-                    ticketId: ticket.id,
-                    author: `${sender.login} (${sender.id})`,
-                    content: truncate(issue.body, 8000),
-                    type: 'USER',
-                },
-            });
+        if (!message) {
+            console.error('[GitHub App] Failed to parse issues.opened event');
+            return;
+        }
+        if (!message.content) {
+            message.content = (issue.body as string) ?? '';
         }
 
-        // Create TicketExternalLink for bidirectional sync
+        const handler = new InboundHandler({
+            prisma: prisma as unknown as InboundPrismaLike,
+            createJob: createJob as unknown as CreateJobFn,
+        });
+        const result = await handler.handle(message);
+
+        // GitHub-specific: create TicketExternalLink for bidirectional sync
         await prisma.ticketExternalLink.create({
             data: {
-                ticketId: ticket.id,
+                ticketId: result.ticketId,
                 plugin: 'github',
                 externalId: `${repository.full_name}#${issue.number}`,
-                externalUrl: issueUrl,
+                externalUrl: issue.html_url,
             },
-        });
-
-        // Enqueue an AI response job
-        await createJob(JobType.AI_RESPONSE, {
-            ticketId: ticket.id,
-            source: 'github' as const,
         });
 
         // Post acknowledgment comment on the issue
-        const [owner, repo] = repository.full_name.split('/');
-        await postIssueComment(
-            owner,
-            repo,
-            issue.number,
-            `\uD83C\uDFAB Ticket ${displayId} created. Our AI assistant is reviewing your issue...`,
+        const ticketRef = {
+            id: result.ticketId,
+            sourceId: `${repository.full_name}#${issue.number}`,
+            channel: repository.full_name,
+            source: 'GITHUB_ISSUE' as const,
+        };
+        await adapter.postSystemMessage(
+            ticketRef as Parameters<typeof adapter.postSystemMessage>[0],
+            `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your issue...`,
         );
 
         console.log(
-            `[GitHub App] Created ticket ${displayId} for issue ${repository.full_name}#${issue.number}`,
+            `[GitHub App] Created ticket ${result.displayId} for issue ${repository.full_name}#${issue.number}`,
         );
     } catch (error) {
         console.error(

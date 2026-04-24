@@ -11,6 +11,25 @@ vi.mock('@copilotkit/outpost/ai', () => ({
     },
 }));
 
+// Mock auth dependencies (QA route now has auth check)
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@copilotkit/outpost/db', () => ({
+    prisma: {},
+}));
+
+vi.mock('@copilotkit/outpost/shared', () => ({
+    verifyPassword: vi.fn(),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // Import after mocking
 import { POST } from '@/app/api/qa/route';
 
@@ -38,6 +57,16 @@ describe('POST /api/qa', () => {
     beforeEach(() => {
         mockGenerateSupportResponse.mockReset();
         mockDestroy.mockReset();
+        // Default to authenticated session
+        mockGetServerSession.mockResolvedValue({
+            user: { id: 'user-1', name: 'Test User', email: 'test@test.com' },
+        });
+    });
+
+    it('returns 401 when not authenticated', async () => {
+        mockGetServerSession.mockResolvedValue(null);
+        const response = await POST(makeRequest({}));
+        expect(response.status).toBe(401);
     });
 
     it('returns 400 for missing question', async () => {
@@ -89,7 +118,7 @@ describe('POST /api/qa', () => {
     it('passes conversation history to pipeline', async () => {
         mockGenerateSupportResponse.mockResolvedValue({
             response: 'Follow up answer.',
-            confidence: 'MEDIUM',
+            confidenceLevel: 'MEDIUM',
             confidenceScore: 0.6,
             searchResults: [],
             tokenUsage: { inputTokens: 50, outputTokens: 25 },
@@ -118,7 +147,7 @@ describe('POST /api/qa', () => {
     it('cleans up pipeline after response', async () => {
         mockGenerateSupportResponse.mockResolvedValue({
             response: 'Test.',
-            confidence: 'HIGH',
+            confidenceLevel: 'HIGH',
             confidenceScore: 0.9,
             searchResults: [],
             tokenUsage: { inputTokens: 10, outputTokens: 5 },

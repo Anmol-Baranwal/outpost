@@ -1,115 +1,366 @@
-import { describe, it, expect } from 'vitest';
-import { MOCK_TICKETS } from '@/lib/mock-tickets';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-/**
- * Tests for dashboard API route logic.
- * We test the data transformations directly rather than HTTP round-trips.
- */
+// ─── Mock Prisma ────────────────────────────────────────────────────────────
 
-describe('Dashboard stats API logic', () => {
-    it('counts SLA breaches correctly', () => {
-        const slaBreaches = MOCK_TICKETS.filter((t) => t.slaBreachedAt !== null).length;
-        expect(slaBreaches).toBe(1); // Only tkt-5 has SLA breach
+const mockTicketCount = vi.fn();
+const mockTicketFindMany = vi.fn();
+
+vi.mock('@copilotkit/outpost/db', () => ({
+    prisma: {
+        ticket: {
+            count: (...args: unknown[]) => mockTicketCount(...args),
+            findMany: (...args: unknown[]) => mockTicketFindMany(...args),
+        },
+    },
+    TicketStatus: {
+        OPEN: 'OPEN',
+        IN_PROGRESS: 'IN_PROGRESS',
+        WAITING_ON_CUSTOMER: 'WAITING_ON_CUSTOMER',
+        WAITING_ON_TEAM: 'WAITING_ON_TEAM',
+        RESOLVED: 'RESOLVED',
+        CLOSED: 'CLOSED',
+    },
+    MessageType: {
+        USER: 'USER',
+        BOT: 'BOT',
+        SYSTEM: 'SYSTEM',
+    },
+}));
+
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
+// ─── Mock PathfinderClient ──────────────────────────────────────────────────
+
+const mockQueryKnowledgeBase = vi.fn();
+const mockDisconnect = vi.fn();
+
+vi.mock('@copilotkit/outpost/ai', () => ({
+    PathfinderClient: vi.fn().mockImplementation(function () {
+        return {
+            queryKnowledgeBase: mockQueryKnowledgeBase,
+            disconnect: mockDisconnect,
+        };
+    }),
+}));
+
+// ─── Import routes (after mocks) ───────────────────────────────────────────
+
+import { GET as statsGet } from '@/app/api/dashboard/stats/route';
+import { GET as myTasksGet } from '@/app/api/dashboard/my-tasks/route';
+import { GET as faqGet } from '@/app/api/dashboard/faq/route';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function userSession(memberId = 'tm-1') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role: 'MEMBER',
+            memberId,
+        },
+    };
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+describe('Dashboard API', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
     });
 
-    it('computes first response times from messages', () => {
-        const firstResponseTimesMs: number[] = [];
+    // ── GET /api/dashboard/stats ──────────────────────────────────────────
 
-        for (const ticket of MOCK_TICKETS) {
-            const created = new Date(ticket.createdAt).getTime();
-            const firstResponse = ticket.messages.find(
-                (m) => m.author !== ticket.user?.name && m.author !== 'System',
+    describe('GET /api/dashboard/stats', () => {
+        it('returns aggregated ticket stats', async () => {
+            // Mock the 6 parallel queries:
+            // totalTickets, openTickets, slaBreaches, ticketsWithFirstResponse, resolvedTickets, monthlyTickets
+            mockTicketCount
+                .mockResolvedValueOnce(10)  // totalTickets
+                .mockResolvedValueOnce(6)   // openTickets
+                .mockResolvedValueOnce(2);  // slaBreaches
+            mockTicketFindMany
+                .mockResolvedValueOnce([    // ticketsWithFirstResponse
+                    {
+                        createdAt: new Date('2025-04-14T09:00:00Z'),
+                        user: { name: 'Alice' },
+                        messages: [
+                            { author: 'Alice', type: 'USER', createdAt: new Date('2025-04-14T09:00:00Z') },
+                            { author: 'Bot', type: 'BOT', createdAt: new Date('2025-04-14T09:01:00Z') },
+                        ],
+                    },
+                ])
+                .mockResolvedValueOnce([    // resolvedTickets
+                    {
+                        createdAt: new Date('2025-04-10T09:00:00Z'),
+                        updatedAt: new Date('2025-04-11T14:00:00Z'),
+                    },
+                ])
+                .mockResolvedValueOnce([]); // monthlyTickets
+
+            const res = await statsGet();
+
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.totalTickets).toBe(10);
+            expect(body.openTickets).toBe(6);
+            expect(body.slaBreaches).toBe(2);
+            expect(body.avgFirstResponseMs).toBe(60000); // 1 minute
+            expect(body.avgResolutionMs).toBeGreaterThan(0);
+            expect(body.trend).toBeDefined();
+            expect(Array.isArray(body.trend)).toBe(true);
+        });
+
+        it('handles no tickets gracefully', async () => {
+            mockTicketCount
+                .mockResolvedValueOnce(0)
+                .mockResolvedValueOnce(0)
+                .mockResolvedValueOnce(0);
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]);
+
+            const res = await statsGet();
+
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.totalTickets).toBe(0);
+            expect(body.openTickets).toBe(0);
+            expect(body.slaBreaches).toBe(0);
+            expect(body.avgFirstResponseMs).toBe(0);
+            expect(body.avgResolutionMs).toBe(0);
+        });
+
+        it('returns 500 on database error', async () => {
+            mockTicketCount.mockRejectedValue(new Error('DB failed'));
+
+            const res = await statsGet();
+
+            expect(res.status).toBe(500);
+            const body = await res.json();
+            expect(body.error).toBe('Internal server error');
+        });
+
+        it('computes daily trend with correct number of days', async () => {
+            const now = new Date();
+            const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+            mockTicketCount
+                .mockResolvedValueOnce(1)
+                .mockResolvedValueOnce(1)
+                .mockResolvedValueOnce(0);
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([
+                    { createdAt: new Date() }, // ticket created today
+                ]);
+
+            const res = await statsGet();
+            const body = await res.json();
+
+            expect(body.trend).toHaveLength(daysInMonth);
+            // At least one day should have count > 0 (today)
+            const todaysEntry = body.trend.find((d: { day: number; count: number }) => d.day === now.getDate());
+            expect(todaysEntry?.count).toBe(1);
+        });
+    });
+
+    // ── GET /api/dashboard/my-tasks ───────────────────────────────────────
+
+    describe('GET /api/dashboard/my-tasks', () => {
+        it('returns tasks for authenticated user', async () => {
+            mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+            mockTicketFindMany.mockResolvedValue([
+                {
+                    id: 'tkt-1',
+                    displayId: 'TKT-1234',
+                    title: 'My Task',
+                    status: 'OPEN',
+                    priority: 'HIGH',
+                    account: { name: 'Acme Corp' },
+                    createdAt: new Date('2025-04-14T09:30:00Z'),
+                    slaBreachedAt: null,
+                },
+            ]);
+
+            const res = await myTasksGet();
+
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.tasks).toHaveLength(1);
+            expect(body.tasks[0].title).toBe('My Task');
+            expect(body.tasks[0].accountName).toBe('Acme Corp');
+        });
+
+        it('queries with correct assigneeId from session', async () => {
+            mockGetServerSession.mockResolvedValue(userSession('tm-3'));
+            mockTicketFindMany.mockResolvedValue([]);
+
+            await myTasksGet();
+
+            expect(mockTicketFindMany).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: expect.objectContaining({
+                        assigneeId: 'tm-3',
+                    }),
+                }),
             );
-            if (firstResponse) {
-                firstResponseTimesMs.push(
-                    new Date(firstResponse.createdAt).getTime() - created,
-                );
-            }
-        }
+        });
 
-        expect(firstResponseTimesMs.length).toBeGreaterThan(0);
-        const avg = firstResponseTimesMs.reduce((a, b) => a + b, 0) / firstResponseTimesMs.length;
-        expect(avg).toBeGreaterThan(0);
+        it('only fetches open/in-progress/waiting-on-team statuses', async () => {
+            mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+            mockTicketFindMany.mockResolvedValue([]);
+
+            await myTasksGet();
+
+            expect(mockTicketFindMany).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: expect.objectContaining({
+                        status: {
+                            in: ['OPEN', 'IN_PROGRESS', 'WAITING_ON_TEAM'],
+                        },
+                    }),
+                }),
+            );
+        });
+
+        it('returns 401 for unauthenticated', async () => {
+            mockGetServerSession.mockResolvedValue(null);
+
+            const res = await myTasksGet();
+
+            expect(res.status).toBe(401);
+            const body = await res.json();
+            expect(body.error).toBe('Unauthorized');
+        });
+
+        it('returns 401 when session has no memberId', async () => {
+            mockGetServerSession.mockResolvedValue({
+                user: { id: 'x', name: 'Test', email: 'test@t.com' },
+            });
+
+            const res = await myTasksGet();
+
+            expect(res.status).toBe(401);
+        });
+
+        it('returns 500 on database error', async () => {
+            mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+            mockTicketFindMany.mockRejectedValue(new Error('DB failed'));
+
+            const res = await myTasksGet();
+
+            expect(res.status).toBe(500);
+            const body = await res.json();
+            expect(body.error).toBe('Internal server error');
+        });
+
+        it('maps accountName from included account relation', async () => {
+            mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+            mockTicketFindMany.mockResolvedValue([
+                {
+                    id: 'tkt-1',
+                    displayId: 'TKT-1234',
+                    title: 'Task',
+                    status: 'OPEN',
+                    priority: 'MEDIUM',
+                    account: null, // no account
+                    createdAt: new Date(),
+                    slaBreachedAt: null,
+                },
+            ]);
+
+            const res = await myTasksGet();
+            const body = await res.json();
+
+            expect(body.tasks[0].accountName).toBeNull();
+        });
     });
 
-    it('builds daily trend array with correct length for a month', () => {
-        const now = new Date();
-        const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-        const dailyCounts: number[] = new Array(daysInMonth).fill(0);
+    // ── GET /api/dashboard/faq ────────────────────────────────────────────
 
-        expect(dailyCounts).toHaveLength(daysInMonth);
-        expect(dailyCounts.every((c) => c === 0)).toBe(true);
-    });
+    describe('GET /api/dashboard/faq', () => {
+        afterEach(() => {
+            delete process.env.PATHFINDER_MCP_URL;
+        });
 
-    it('identifies open vs resolved tickets', () => {
-        const openStatuses = ['OPEN', 'IN_PROGRESS', 'WAITING_ON_CUSTOMER', 'WAITING_ON_TEAM'];
-        const open = MOCK_TICKETS.filter((t) => openStatuses.includes(t.status));
-        const resolved = MOCK_TICKETS.filter((t) => t.status === 'RESOLVED' || t.status === 'CLOSED');
+        it('returns empty with message when PATHFINDER_MCP_URL is not set', async () => {
+            delete process.env.PATHFINDER_MCP_URL;
 
-        expect(open.length + resolved.length).toBe(MOCK_TICKETS.length);
-        expect(open.length).toBeGreaterThan(0);
-        expect(resolved.length).toBeGreaterThan(0);
-    });
-});
+            const res = await faqGet();
 
-describe('Dashboard my-tasks API logic', () => {
-    it('filters tasks by assigneeId', () => {
-        const assigneeId = 'tm-3';
-        const tasks = MOCK_TICKETS.filter((t) => t.assigneeId === assigneeId);
-        expect(tasks.length).toBeGreaterThan(0);
-        expect(tasks.every((t) => t.assigneeId === assigneeId)).toBe(true);
-    });
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.entries).toEqual([]);
+            expect(body.message).toContain('Pathfinder not configured');
+        });
 
-    it('returns correct shape for task entries', () => {
-        const assigneeId = 'tm-1';
-        const tasks = MOCK_TICKETS
-            .filter((t) => t.assigneeId === assigneeId)
-            .map((t) => ({
-                id: t.id,
-                displayId: t.displayId,
-                title: t.title,
-                status: t.status,
-                priority: t.priority,
-                accountName: t.account?.name ?? null,
-                createdAt: t.createdAt,
-                slaBreachedAt: t.slaBreachedAt,
-            }));
+        it('returns FAQ from Pathfinder when configured', async () => {
+            process.env.PATHFINDER_MCP_URL = 'http://mcp.test.local';
+            mockQueryKnowledgeBase.mockResolvedValue([
+                {
+                    title: 'How do I set up CopilotKit?',
+                    content: 'Follow the quickstart guide.',
+                    score: 0.95,
+                },
+                {
+                    title: 'How to use CoAgents?',
+                    content: 'CoAgents integrate with LangGraph.',
+                    score: 0.85,
+                },
+            ]);
 
-        expect(tasks.length).toBeGreaterThan(0);
-        for (const task of tasks) {
-            expect(task).toHaveProperty('id');
-            expect(task).toHaveProperty('displayId');
-            expect(task).toHaveProperty('title');
-            expect(task).toHaveProperty('status');
-            expect(task).toHaveProperty('priority');
-            expect(task).toHaveProperty('accountName');
-            expect(task).toHaveProperty('createdAt');
-            expect(task).toHaveProperty('slaBreachedAt');
-        }
-    });
+            const res = await faqGet();
 
-    it('returns empty array for unknown assignee', () => {
-        const tasks = MOCK_TICKETS.filter((t) => t.assigneeId === 'nonexistent');
-        expect(tasks).toHaveLength(0);
-    });
-});
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.entries).toHaveLength(2);
+            expect(body.entries[0].question).toBe('How do I set up CopilotKit?');
+            expect(body.entries[0].answer).toBe('Follow the quickstart guide.');
+            expect(mockDisconnect).toHaveBeenCalled();
 
-describe('Dashboard FAQ API logic', () => {
-    it('has expected FAQ structure', () => {
-        // Simulates the shape the FAQ API returns
-        const mockFaq = [
-            {
-                id: 'faq-1',
-                question: 'How do I set up CopilotKit?',
-                answer: 'Follow the quickstart guide.',
-                sourceCount: 12,
-            },
-        ];
+            delete process.env.PATHFINDER_MCP_URL;
+        });
 
-        expect(mockFaq[0]).toHaveProperty('id');
-        expect(mockFaq[0]).toHaveProperty('question');
-        expect(mockFaq[0]).toHaveProperty('answer');
-        expect(mockFaq[0]).toHaveProperty('sourceCount');
-        expect(typeof mockFaq[0].sourceCount).toBe('number');
+        it('returns empty gracefully on Pathfinder error', async () => {
+            process.env.PATHFINDER_MCP_URL = 'http://mcp.test.local';
+            mockQueryKnowledgeBase.mockRejectedValue(new Error('MCP connection failed'));
+
+            const res = await faqGet();
+
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.entries).toEqual([]);
+            expect(body.message).toContain('Failed to fetch FAQ');
+
+            delete process.env.PATHFINDER_MCP_URL;
+        });
+
+        it('converts Pathfinder scores to sourceCount', async () => {
+            process.env.PATHFINDER_MCP_URL = 'http://mcp.test.local';
+            mockQueryKnowledgeBase.mockResolvedValue([
+                { title: 'Q1', content: 'A1', score: 0.75 },
+            ]);
+
+            const res = await faqGet();
+            const body = await res.json();
+
+            expect(body.entries[0].sourceCount).toBe(75); // 0.75 * 100
+
+            delete process.env.PATHFINDER_MCP_URL;
+        });
     });
 });

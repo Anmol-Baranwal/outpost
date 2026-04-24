@@ -206,8 +206,8 @@ export default function OnboardingPage() {
                         Loading...
                     </div>
                 ) : members.length === 0 ? (
-                    <div className="p-6 text-center text-sm text-muted-foreground">
-                        No members found for the selected date range.
+                    <div className="p-6 text-center text-sm text-muted-foreground" data-testid="onboarding-empty">
+                        No new members detected.
                     </div>
                 ) : (
                     <div className="divide-y divide-border">

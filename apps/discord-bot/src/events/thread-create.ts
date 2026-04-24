@@ -1,9 +1,28 @@
 import { ChannelType, type ThreadChannel } from 'discord.js';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { generateTicketId, truncate } from '@copilotkit/outpost/shared';
+import { createJob } from '@copilotkit/outpost/queue';
+import { PlatformDiscordAdapter, InboundHandler, generateTicketId } from '@copilotkit/outpost/shared';
+import type { CreateJobFn } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
 import { isShadowMode, handleShadowThreadCreate } from '../lib/shadow-mode.js';
+
+/** Adapter instance shared across thread-create invocations. */
+const adapter = new PlatformDiscordAdapter({ token: config.discordToken });
+
+/**
+ * Wrap the queue's createJob into the signature InboundHandler expects.
+ * The queue createJob is generic over JobType; InboundHandler just needs
+ * (type: string, payload: { ticketId, threadId?, source }) => Promise<string>.
+ */
+const createJobFn: CreateJobFn = async (
+    type: string,
+    payload: { ticketId: string; threadId?: string; source: string },
+) => {
+    return createJob(
+        type as Parameters<typeof createJob>[0],
+        payload as Parameters<typeof createJob>[1],
+    );
+};
 
 export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: boolean): Promise<void> {
     if (!newlyCreated) return;
@@ -50,55 +69,24 @@ export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: bo
     try {
         // Fetch the starter message (first message in the thread)
         const starterMessage = await thread.fetchStarterMessage();
-        const content = starterMessage?.content ?? '';
-        const authorTag = starterMessage?.author.tag ?? 'Unknown';
-        const authorId = starterMessage?.author.id ?? '';
 
-        const displayId = generateTicketId();
-
-        // Create the ticket in the database
-        const ticket = await prisma.ticket.create({
-            data: {
-                displayId,
-                title: truncate(thread.name, 200),
-                description: truncate(content, 4000),
-                status: 'OPEN',
-                priority: 'MEDIUM',
-                type: 'QUESTION',
-                source: 'DISCORD',
-                sourceId: thread.id,
-                sourceUrl: thread.url,
-                channel: parentId,
-            },
+        // Parse the raw event through the platform adapter
+        const inboundMessage = adapter.parseInboundEvent({
+            thread,
+            starterMessage,
         });
 
-        // Create the first Message record linked to the ticket
-        let messageId = ticket.id;
-        if (content) {
-            const msg = await prisma.message.create({
-                data: {
-                    ticketId: ticket.id,
-                    author: `${authorTag} (${authorId})`,
-                    content: truncate(content, 8000),
-                    type: 'USER',
-                },
-            });
-            messageId = msg.id;
-        }
+        // Process through the shared InboundHandler
+        const handler = new InboundHandler({ prisma, createJob: createJobFn });
+        const result = await handler.handle(inboundMessage);
 
-        // Enqueue an AI response job
-        await createJob(JobType.AI_RESPONSE, {
-            ticketId: ticket.id,
-            threadId: thread.id,
-            source: 'discord' as const,
-        });
-
-        // Post acknowledgment in the thread
-        await thread.send(
-            `\uD83C\uDFAB Ticket ${displayId} created. Our AI assistant is reviewing your question...`,
+        // Post acknowledgment in the thread (Discord-specific UX)
+        await adapter.postSystemMessage(
+            { id: result.ticketId, sourceId: thread.id, channel: parentId, source: adapter.platform },
+            `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your question...`,
         );
 
-        console.log(`[Discord Bot] Created ticket ${displayId} for thread ${thread.id}`);
+        console.log(`[Discord Bot] Created ticket ${result.displayId} for thread ${thread.id}`);
     } catch (error) {
         console.error(`[Discord Bot] Failed to create ticket for thread ${thread.id}:`, error);
     }

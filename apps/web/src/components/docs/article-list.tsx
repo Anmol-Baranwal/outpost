@@ -35,8 +35,10 @@ function formatDate(iso: string): string {
 export function ArticleList({ articles, categorySlug }: ArticleListProps) {
     if (articles.length === 0) {
         return (
-            <div className="rounded-lg border border-border bg-card p-8 text-center">
-                <p className="text-muted-foreground">No articles found.</p>
+            <div className="rounded-lg border border-border bg-card p-8 text-center" data-testid="articles-empty">
+                <p className="text-muted-foreground">
+                    No documentation articles yet. Create articles or import from Loom.
+                </p>
             </div>
         );
     }

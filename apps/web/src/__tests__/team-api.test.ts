@@ -44,6 +44,10 @@ vi.mock('@copilotkit/outpost/shared', () => ({
     hashPassword: vi.fn().mockResolvedValue('hashed-password-123'),
 }));
 
+vi.mock('@copilotkit/outpost/shared/server', () => ({
+    sendEmail: vi.fn().mockResolvedValue({ success: true, method: 'console' }),
+}));
+
 // ─── Mock next-auth session ─────────────────────────────────────────────────
 
 const mockGetServerSession = vi.fn();

@@ -26,7 +26,7 @@ export function AgentTable({ agents, onRun, onEdit, onDelete }: AgentTableProps)
     if (agents.length === 0) {
         return (
             <div className="flex items-center justify-center py-12 text-sm text-muted-foreground" data-testid="agent-table-empty">
-                No agents found. Create one to get started.
+                No agents configured. Create an agent to automate support tasks.
             </div>
         );
     }

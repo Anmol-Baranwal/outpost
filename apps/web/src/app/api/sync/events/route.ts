@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { filterSyncEvents } from '@/lib/mock-sync';
-import type { SyncEventStatus } from '@/lib/mock-sync';
+import { prisma } from '@copilotkit/outpost/db';
+import type { Prisma } from '@copilotkit/outpost/db';
 
 /**
  * GET /api/sync/events
@@ -13,17 +13,34 @@ export async function GET(request: NextRequest) {
 
     const sourcePlugin = searchParams.get('sourcePlugin') || undefined;
     const targetPlugin = searchParams.get('targetPlugin') || undefined;
-    const status = (searchParams.get('status') as SyncEventStatus) || undefined;
+    const status = searchParams.get('status') || undefined;
     const startDate = searchParams.get('startDate') || undefined;
     const endDate = searchParams.get('endDate') || undefined;
 
     const page = Math.max(1, Number(searchParams.get('page')) || 1);
     const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit')) || 50));
 
-    const allEvents = filterSyncEvents({ sourcePlugin, targetPlugin, status, startDate, endDate });
-    const total = allEvents.length;
-    const start = (page - 1) * limit;
-    const events = allEvents.slice(start, start + limit);
+    const where: Prisma.SyncEventWhereInput = {};
+
+    if (sourcePlugin) where.sourcePlugin = sourcePlugin;
+    if (targetPlugin) where.targetPlugin = targetPlugin;
+    if (status) where.status = status;
+
+    if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = new Date(startDate);
+        if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
+    const [events, total] = await Promise.all([
+        prisma.syncEvent.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip: (page - 1) * limit,
+            take: limit,
+        }),
+        prisma.syncEvent.count({ where }),
+    ]);
 
     return NextResponse.json({
         events,

@@ -45,7 +45,9 @@
         "@linear/sdk": "^81.0.0",
         "@prisma/client": "^6.2.0",
         "bcryptjs": "^3.0.3",
-        "resend": "^4.1.0"
+        "postmark": "^4.0.0",
+        "discord.js": "^14.16.0",
+        "@slack/web-api": "^7.9.0"
     },
     "devDependencies": {
         "@copilotkit/aimock": "^1.14.0",

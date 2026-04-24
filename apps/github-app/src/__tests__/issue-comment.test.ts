@@ -4,8 +4,33 @@ import { mockPrisma, mockQueue } from './helpers/mocks.js';
 vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 vi.mock('@copilotkit/outpost/queue', () => mockQueue());
 
+const mockParseInboundEvent = vi.fn().mockReturnValue({
+    kind: 'follow_up',
+    source: 'GITHUB_ISSUE',
+    sourceId: 'CopilotKit/CopilotKit#42',
+    sourceUrl: '',
+    channel: 'CopilotKit/CopilotKit',
+    body: 'I still have this problem after upgrading',
+    author: 'user123 (999)',
+    isBot: false,
+    authorLogin: 'user123',
+});
+const mockPostSystemMessage = vi.fn().mockResolvedValue(undefined);
+const mockPostResponse = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('@copilotkit/outpost/shared', () => ({
     truncate: vi.fn((str: string, _len: number) => str),
+    GitHubPlatformAdapter: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+        this.parseInboundEvent = mockParseInboundEvent;
+        this.postSystemMessage = mockPostSystemMessage;
+        this.postResponse = mockPostResponse;
+        this.name = 'github';
+    }),
+    InboundHandler: vi.fn(),
+}));
+
+vi.mock('../lib/github-client.js', () => ({
+    getOctokit: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock('../config.js', () => ({
@@ -21,7 +46,8 @@ vi.mock('../config.js', () => ({
 
 import { handleIssueComment } from '../webhooks/issue-comment.js';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
+import { createJob } from '@copilotkit/outpost/queue';
+import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 
 const TICKET = {
@@ -103,6 +129,20 @@ describe('handleIssueComment', () => {
         expect(prisma.message.create).not.toHaveBeenCalled();
     });
 
+    it('uses GitHubPlatformAdapter to parse the comment event', async () => {
+        const event = makeEvent();
+        await handleIssueComment(event);
+
+        expect(GitHubPlatformAdapter).toHaveBeenCalled();
+        expect(mockParseInboundEvent).toHaveBeenCalledWith({
+            action: 'created',
+            comment: event.payload.comment,
+            issue: event.payload.issue,
+            repository: event.payload.repository,
+            sender: event.payload.sender,
+        });
+    });
+
     it('appends a message and enqueues AI response for non-team-member', async () => {
         const event = makeEvent();
         await handleIssueComment(event);
@@ -116,7 +156,7 @@ describe('handleIssueComment', () => {
         });
 
         expect(createJob).toHaveBeenCalledWith(
-            JobType.AI_RESPONSE,
+            'AI_RESPONSE',
             expect.objectContaining({
                 ticketId: 'ticket-1',
                 source: 'github',

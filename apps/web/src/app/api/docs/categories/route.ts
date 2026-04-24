@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { MOCK_CATEGORIES } from '@/lib/mock-docs';
+import { prisma } from '@copilotkit/outpost/db';
 
 /**
  * GET /api/docs/categories
@@ -7,5 +7,22 @@ import { MOCK_CATEGORIES } from '@/lib/mock-docs';
  * List all documentation categories with article counts.
  */
 export async function GET() {
-    return NextResponse.json({ categories: MOCK_CATEGORIES });
+    const categories = await prisma.docCategory.findMany({
+        include: {
+            _count: {
+                select: { articles: true },
+            },
+        },
+        orderBy: { name: 'asc' },
+    });
+
+    const result = categories.map((cat: typeof categories[number]) => ({
+        id: cat.id,
+        name: cat.name,
+        description: cat.description,
+        articleCount: cat._count.articles,
+        createdAt: cat.createdAt,
+    }));
+
+    return NextResponse.json({ categories: result });
 }

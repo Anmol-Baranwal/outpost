@@ -19,7 +19,7 @@ import type {
  * - Per-job-type timeout support
  * - Job progress tracking
  * - Dead letter queue after maxAttempts exhausted
- * - Configurable concurrency
+ * - Configurable concurrency (global + per-type pools)
  * - Health check endpoint
  */
 export class Worker {
@@ -29,10 +29,13 @@ export class Worker {
     private pollIntervalMs: number;
     private batchSize: number;
     private maxConcurrency: number;
+    private concurrencyByType: Partial<Record<string, number>>;
     private jobTimeouts: Partial<Record<JobType, number>>;
     private defaultTimeoutMs: number;
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
     private activeJobs = new Set<string>();
+    /** Track active job counts per type for per-type concurrency enforcement */
+    private activeJobsByType = new Map<string, number>();
     private lastPollTime: Date | null = null;
     private upSince: Date | null = null;
     private shutdownResolve: (() => void) | null = null;
@@ -42,6 +45,7 @@ export class Worker {
         this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
         this.batchSize = options?.batchSize ?? 10;
         this.maxConcurrency = options?.maxConcurrency ?? 5;
+        this.concurrencyByType = (options?.concurrencyByType ?? {}) as Partial<Record<string, number>>;
         this.jobTimeouts = options?.jobTimeouts ?? {};
         this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
     }
@@ -107,6 +111,7 @@ export class Worker {
         return {
             running: this.running,
             activeJobCount: this.activeJobs.size,
+            activeJobsByType: Object.fromEntries(this.activeJobsByType),
             lastPollTime: this.lastPollTime,
             registeredHandlers: Array.from(this.handlers.keys()),
             upSince: this.upSince,
@@ -144,9 +149,16 @@ export class Worker {
                 return;
             }
 
-            const processedCount = await this.claimAndProcessJobs(
-                Math.min(availableSlots, this.batchSize),
-            );
+            const hasPerTypeLimits = Object.keys(this.concurrencyByType).length > 0;
+            let processedCount: number;
+
+            if (hasPerTypeLimits) {
+                processedCount = await this.claimJobsByType(availableSlots);
+            } else {
+                processedCount = await this.claimAndProcessJobs(
+                    Math.min(availableSlots, this.batchSize),
+                );
+            }
 
             // If we processed jobs, poll immediately for more
             const nextPollDelay = processedCount > 0 ? 0 : this.pollIntervalMs;
@@ -155,6 +167,98 @@ export class Worker {
             console.error('[Queue Worker] Poll error:', error);
             this.pollTimer = setTimeout(() => this.poll(), this.pollIntervalMs);
         }
+    }
+
+    /**
+     * Claim jobs respecting per-type concurrency limits.
+     * For each registered job type that has available capacity, claim up to
+     * the available slots for that type.
+     */
+    private async claimJobsByType(globalSlots: number): Promise<number> {
+        let totalProcessed = 0;
+        let remainingGlobalSlots = globalSlots;
+
+        // Determine which types have capacity
+        const typesWithCapacity: Array<{ type: string; available: number }> = [];
+
+        for (const [type] of this.handlers) {
+            if (remainingGlobalSlots <= 0) break;
+
+            const typeLimit = this.concurrencyByType[type];
+            const activeForType = this.activeJobsByType.get(type) ?? 0;
+
+            if (typeLimit !== undefined) {
+                const available = typeLimit - activeForType;
+                if (available > 0) {
+                    typesWithCapacity.push({
+                        type,
+                        available: Math.min(available, remainingGlobalSlots),
+                    });
+                }
+            } else {
+                // No per-type limit; bound by global slots only
+                typesWithCapacity.push({
+                    type,
+                    available: remainingGlobalSlots,
+                });
+            }
+        }
+
+        // Claim jobs for each type that has capacity
+        for (const { type, available } of typesWithCapacity) {
+            if (remainingGlobalSlots <= 0) break;
+
+            const limit = Math.min(available, remainingGlobalSlots, this.batchSize);
+            const jobs = await this.claimJobsForType(type, limit);
+
+            if (jobs.length > 0) {
+                const promises = jobs.map((job) => this.processJob(job));
+                await Promise.allSettled(promises);
+                totalProcessed += jobs.length;
+                remainingGlobalSlots -= jobs.length;
+            }
+        }
+
+        return totalProcessed;
+    }
+
+    /**
+     * Claim pending jobs of a specific type using SKIP LOCKED.
+     */
+    private async claimJobsForType(
+        type: string,
+        limit: number,
+    ): Promise<
+        Array<{
+            id: string;
+            type: string;
+            payload: unknown;
+            attempts: number;
+            maxAttempts: number;
+        }>
+    > {
+        return prisma.$queryRaw<
+            Array<{
+                id: string;
+                type: string;
+                payload: unknown;
+                attempts: number;
+                maxAttempts: number;
+            }>
+        >`
+            UPDATE "Job"
+            SET status = 'PROCESSING', "lockedAt" = NOW(), "updatedAt" = NOW()
+            WHERE id IN (
+                SELECT id FROM "Job"
+                WHERE status = 'PENDING'
+                AND type = ${type}
+                AND "runAt" <= NOW()
+                ORDER BY "runAt" ASC
+                LIMIT ${limit}
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING id, type, payload, attempts, "maxAttempts"
+        `;
     }
 
     private async claimAndProcessJobs(limit: number): Promise<number> {
@@ -197,6 +301,10 @@ export class Worker {
         maxAttempts: number;
     }): Promise<void> {
         this.activeJobs.add(job.id);
+        this.activeJobsByType.set(
+            job.type,
+            (this.activeJobsByType.get(job.type) ?? 0) + 1,
+        );
 
         try {
             const handler = this.handlers.get(job.type);
@@ -249,6 +357,12 @@ export class Worker {
             }
         } finally {
             this.activeJobs.delete(job.id);
+            const currentCount = this.activeJobsByType.get(job.type) ?? 1;
+            if (currentCount <= 1) {
+                this.activeJobsByType.delete(job.type);
+            } else {
+                this.activeJobsByType.set(job.type, currentCount - 1);
+            }
             // If shutting down and no more active jobs, resolve the shutdown promise
             if (this.shuttingDown && this.activeJobs.size === 0 && this.shutdownResolve) {
                 this.shutdownResolve();

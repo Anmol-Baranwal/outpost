@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies before importing the handler
 const mockOnboardingMember = {
@@ -49,8 +49,29 @@ function makeMemberRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe('handleOnboardingDigest', () => {
+    let originalDiscordToken: string | undefined;
+    let originalChannelId: string | undefined;
+
     beforeEach(() => {
         vi.clearAllMocks();
+        originalDiscordToken = process.env.DISCORD_TOKEN;
+        originalChannelId = process.env.DISCORD_DIGEST_CHANNEL_ID;
+        // Default: no Discord env vars set (development fallback)
+        delete process.env.DISCORD_TOKEN;
+        delete process.env.DISCORD_DIGEST_CHANNEL_ID;
+    });
+
+    afterEach(() => {
+        if (originalDiscordToken !== undefined) {
+            process.env.DISCORD_TOKEN = originalDiscordToken;
+        } else {
+            delete process.env.DISCORD_TOKEN;
+        }
+        if (originalChannelId !== undefined) {
+            process.env.DISCORD_DIGEST_CHANNEL_ID = originalChannelId;
+        } else {
+            delete process.env.DISCORD_DIGEST_CHANNEL_ID;
+        }
     });
 
     it('queries members for the given date range', async () => {
@@ -122,5 +143,74 @@ describe('handleOnboardingDigest', () => {
 
         expect(result.success).toBe(true);
         expect(result.data?.newMemberCount).toBe(3);
+    });
+
+    it('posts digest to Discord when channel ID is configured', async () => {
+        process.env.DISCORD_TOKEN = 'test-bot-token';
+        process.env.DISCORD_DIGEST_CHANNEL_ID = '1234567890';
+
+        mockOnboardingMember.findMany
+            .mockResolvedValueOnce([makeMemberRow()])
+            .mockResolvedValueOnce([makeMemberRow()]);
+
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ id: 'msg-1' }),
+        });
+        vi.stubGlobal('fetch', mockFetch);
+
+        const ctx = makeContext();
+        const result = await handleOnboardingDigest({ date: '2026-04-15' }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe('https://discord.com/api/v10/channels/1234567890/messages');
+        expect(options.method).toBe('POST');
+        expect(options.headers.Authorization).toBe('Bot test-bot-token');
+        const body = JSON.parse(options.body);
+        expect(body.content).toContain('Onboarding Digest');
+
+        vi.unstubAllGlobals();
+    });
+
+    it('falls back to console.log when channel ID is not set', async () => {
+        // No DISCORD_DIGEST_CHANNEL_ID set
+        mockOnboardingMember.findMany.mockResolvedValue([]);
+
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+        const ctx = makeContext();
+        const result = await handleOnboardingDigest({ date: '2026-04-15' }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('DISCORD_DIGEST_CHANNEL_ID not set'),
+        );
+
+        consoleSpy.mockRestore();
+    });
+
+    it('throws when Discord API returns an error', async () => {
+        process.env.DISCORD_TOKEN = 'test-bot-token';
+        process.env.DISCORD_DIGEST_CHANNEL_ID = '1234567890';
+
+        mockOnboardingMember.findMany
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([]);
+
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 403,
+            text: async () => '{"message": "Missing Access"}',
+        });
+        vi.stubGlobal('fetch', mockFetch);
+
+        const ctx = makeContext();
+        await expect(handleOnboardingDigest({ date: '2026-04-15' }, ctx))
+            .rejects.toThrow('Discord API error 403');
+
+        vi.unstubAllGlobals();
     });
 });

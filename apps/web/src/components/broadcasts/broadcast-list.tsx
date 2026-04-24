@@ -59,7 +59,7 @@ export function BroadcastList({ broadcasts, onStatusFilter, activeFilter }: Broa
                     className="rounded-lg border border-border bg-card p-6 text-center text-sm text-muted-foreground"
                     data-testid="broadcast-empty"
                 >
-                    No broadcasts found.
+                    No broadcasts yet. Use broadcasts to send messages to your customers.
                 </div>
             ) : (
                 <div className="space-y-3" data-testid="broadcast-cards">

@@ -1,7 +1,8 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { truncate } from '@copilotkit/outpost/shared';
+import { createJob } from '@copilotkit/outpost/queue';
+import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
+import { getOctokit } from '../lib/github-client.js';
 import { findTicketBySourceId, isTeamMember } from '../lib/tickets.js';
 
 export async function handleIssueComment(
@@ -11,7 +12,7 @@ export async function handleIssueComment(
 
     console.log(
         `[GitHub App] Comment on ${repository.full_name}#${issue.number} ` +
-        `by ${sender.login}: ${comment.body.slice(0, 100)}`,
+        `by ${sender.login}: ${(comment.body ?? '').slice(0, 100)}`,
     );
 
     // Skip comments from bots
@@ -25,12 +26,27 @@ export async function handleIssueComment(
             return;
         }
 
+        const adapter = new GitHubPlatformAdapter({ octokit: getOctokit() });
+        const message = adapter.parseInboundEvent({
+            action: 'created',
+            comment: event.payload.comment,
+            issue: event.payload.issue,
+            repository: event.payload.repository,
+            sender: event.payload.sender,
+        });
+
+        if (!message) {
+            console.error('[GitHub App] Failed to parse issue_comment.created event');
+            return;
+        }
+
         // Append the comment as a Message on the ticket
+        const commentBody = message.content || comment.body;
         await prisma.message.create({
             data: {
                 ticketId: ticket.id,
                 author: `${sender.login} (${sender.id})`,
-                content: truncate(comment.body, 8000),
+                content: commentBody.length > 8000 ? commentBody.slice(0, 7997) + '...' : commentBody,
                 type: 'USER',
             },
         });
@@ -53,7 +69,7 @@ export async function handleIssueComment(
             }
         } else {
             // External user (likely original poster): enqueue AI response
-            await createJob(JobType.AI_RESPONSE, {
+            await createJob('AI_RESPONSE' as Parameters<typeof createJob>[0], {
                 ticketId: ticket.id,
                 source: 'github' as const,
             });

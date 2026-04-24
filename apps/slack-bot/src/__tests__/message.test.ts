@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mockPrisma, mockQueue } from './helpers/mocks.js';
 
+// Mock @slack/web-api so SlackAdapter doesn't try real HTTP calls.
+// vi.hoisted ensures the class is available when the hoisted vi.mock factory runs.
+const { mockPostMessage, MockWebClient } = vi.hoisted(() => {
+    const mockPostMessage = vi.fn().mockResolvedValue({ ok: true });
+    class MockWebClient {
+        chat = { postMessage: mockPostMessage };
+    }
+    return { mockPostMessage, MockWebClient };
+});
+vi.mock('@slack/web-api', () => ({
+    WebClient: MockWebClient,
+}));
+
 // Mock dependencies before importing the handler
 vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 vi.mock('@copilotkit/outpost/queue', () => mockQueue());
-
-vi.mock('@copilotkit/outpost/shared', () => ({
-    generateTicketId: vi.fn().mockReturnValue('TKT-SL01'),
-    truncate: vi.fn((str: string, _len: number) => str),
-}));
 
 vi.mock('../config.js', () => ({
     config: {
@@ -20,11 +28,20 @@ vi.mock('../config.js', () => ({
     },
 }));
 
+vi.mock('../lib/tickets.js', () => ({
+    isTeamMember: vi.fn().mockResolvedValue(false),
+    findTicketByThreadTs: vi.fn().mockResolvedValue(null),
+    buildPermalink: vi.fn(
+        (channelId: string, ts: string) =>
+            `https://slack.com/archives/${channelId}/p${ts.replace('.', '')}`,
+    ),
+}));
+
 import { registerMessageHandler } from '../events/message.js';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
+import { createJob } from '@copilotkit/outpost/queue';
 
-// We need to capture the event handler registered with app.event()
+// Capture the event handler registered with app.event()
 let messageHandler: (args: Record<string, unknown>) => Promise<void>;
 
 function makeMockApp() {
@@ -37,14 +54,6 @@ function makeMockApp() {
     };
 }
 
-function makeMockClient() {
-    return {
-        chat: {
-            postMessage: vi.fn().mockResolvedValue({ ok: true }),
-        },
-    };
-}
-
 const TICKET = {
     id: 'ticket-1',
     displayId: 'TKT-SL01',
@@ -52,10 +61,13 @@ const TICKET = {
     priority: 'MEDIUM',
     source: 'SLACK',
     sourceId: 'C_MONITORED:1234567890.123456',
+    channel: 'C_MONITORED',
 };
 
 describe('registerMessageHandler', () => {
     beforeEach(() => {
+        vi.clearAllMocks();
+
         const app = makeMockApp();
         registerMessageHandler(app as unknown as Parameters<typeof registerMessageHandler>[0]);
 
@@ -68,7 +80,7 @@ describe('registerMessageHandler', () => {
             id: 'msg-1',
         } as ReturnType<typeof prisma.message.create> extends Promise<infer T> ? T : never);
 
-        // Default: not a team member
+        // Default: not a team member (InboundHandler checks via prisma)
         vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
     });
 
@@ -77,9 +89,7 @@ describe('registerMessageHandler', () => {
     });
 
     describe('new top-level messages', () => {
-        it('creates a ticket and enqueues AI response for a new message in a monitored channel', async () => {
-            const client = makeMockClient();
-
+        it('creates a ticket and enqueues AI response via adapter+handler flow', async () => {
             await messageHandler({
                 event: {
                     user: 'U_EXTERNAL',
@@ -87,51 +97,51 @@ describe('registerMessageHandler', () => {
                     ts: '1234567890.123456',
                     channel: 'C_MONITORED',
                 },
-                client,
             });
 
-            // Should create a ticket
+            // InboundHandler creates a ticket via prisma
+            // Slack sourceId uses composite channelId:threadId format
             expect(prisma.ticket.create).toHaveBeenCalledWith({
                 data: expect.objectContaining({
-                    displayId: 'TKT-SL01',
                     source: 'SLACK',
                     sourceId: 'C_MONITORED:1234567890.123456',
                     status: 'OPEN',
                     priority: 'MEDIUM',
                     type: 'QUESTION',
+                    channel: 'C_MONITORED',
                 }),
             });
 
-            // Should create the first message
+            // InboundHandler creates the first message record
             expect(prisma.message.create).toHaveBeenCalledWith({
                 data: expect.objectContaining({
                     ticketId: 'ticket-1',
                     type: 'USER',
+                    author: 'slack:U_EXTERNAL (U_EXTERNAL)',
                 }),
             });
 
-            // Should enqueue AI response
+            // InboundHandler enqueues AI response (uses string 'AI_RESPONSE', not enum)
             expect(createJob).toHaveBeenCalledWith(
-                JobType.AI_RESPONSE,
+                'AI_RESPONSE',
                 expect.objectContaining({
                     ticketId: 'ticket-1',
                     source: 'slack',
                 }),
             );
 
-            // Should post acknowledgment in thread
-            expect(client.chat.postMessage).toHaveBeenCalledWith(
+            // SlackAdapter posts acknowledgment via postSystemMessage.
+            // The ticket ID is generated at runtime so we match the pattern.
+            expect(mockPostMessage).toHaveBeenCalledWith(
                 expect.objectContaining({
                     channel: 'C_MONITORED',
                     thread_ts: '1234567890.123456',
-                    text: expect.stringContaining('TKT-SL01'),
+                    text: expect.stringMatching(/TKT-[A-Z0-9]+ created/),
                 }),
             );
         });
 
         it('ignores messages in unmonitored channels', async () => {
-            const client = makeMockClient();
-
             await messageHandler({
                 event: {
                     user: 'U_EXTERNAL',
@@ -139,15 +149,12 @@ describe('registerMessageHandler', () => {
                     ts: '1234567890.000000',
                     channel: 'C_OTHER',
                 },
-                client,
             });
 
             expect(prisma.ticket.create).not.toHaveBeenCalled();
         });
 
         it('ignores bot messages', async () => {
-            const client = makeMockClient();
-
             await messageHandler({
                 event: {
                     user: 'U_BOT',
@@ -156,15 +163,12 @@ describe('registerMessageHandler', () => {
                     ts: '1234567890.000000',
                     channel: 'C_MONITORED',
                 },
-                client,
             });
 
             expect(prisma.ticket.create).not.toHaveBeenCalled();
         });
 
         it('ignores message subtypes (edits, deletions, etc.)', async () => {
-            const client = makeMockClient();
-
             await messageHandler({
                 event: {
                     subtype: 'message_changed',
@@ -173,7 +177,6 @@ describe('registerMessageHandler', () => {
                     ts: '1234567890.000000',
                     channel: 'C_MONITORED',
                 },
-                client,
             });
 
             expect(prisma.ticket.create).not.toHaveBeenCalled();
@@ -188,8 +191,6 @@ describe('registerMessageHandler', () => {
         });
 
         it('appends a message and enqueues AI response for non-team-member replies', async () => {
-            const client = makeMockClient();
-
             await messageHandler({
                 event: {
                     user: 'U_EXTERNAL',
@@ -198,18 +199,18 @@ describe('registerMessageHandler', () => {
                     thread_ts: '1234567890.123456',
                     channel: 'C_MONITORED',
                 },
-                client,
             });
 
             expect(prisma.message.create).toHaveBeenCalledWith({
                 data: expect.objectContaining({
                     ticketId: 'ticket-1',
                     type: 'USER',
+                    author: 'slack:U_EXTERNAL (U_EXTERNAL)',
                 }),
             });
 
             expect(createJob).toHaveBeenCalledWith(
-                JobType.AI_RESPONSE,
+                'AI_RESPONSE',
                 expect.objectContaining({
                     ticketId: 'ticket-1',
                     source: 'slack',
@@ -218,6 +219,7 @@ describe('registerMessageHandler', () => {
         });
 
         it('does not enqueue AI response for team member replies', async () => {
+            // Set up InboundHandler's isTeamMember via prisma mocks
             vi.mocked(prisma.user.findFirst).mockResolvedValue({
                 id: 'u-1',
                 email: 'team@copilotkit.ai',
@@ -225,8 +227,6 @@ describe('registerMessageHandler', () => {
             vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
                 id: 'tm-1',
             } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
-
-            const client = makeMockClient();
 
             await messageHandler({
                 event: {
@@ -236,7 +236,6 @@ describe('registerMessageHandler', () => {
                     thread_ts: '1234567890.123456',
                     channel: 'C_MONITORED',
                 },
-                client,
             });
 
             // Should still save the message
@@ -252,8 +251,6 @@ describe('registerMessageHandler', () => {
                 status: 'RESOLVED',
             } as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
 
-            const client = makeMockClient();
-
             await messageHandler({
                 event: {
                     user: 'U_EXTERNAL',
@@ -262,7 +259,6 @@ describe('registerMessageHandler', () => {
                     thread_ts: '1234567890.123456',
                     channel: 'C_MONITORED',
                 },
-                client,
             });
 
             expect(prisma.ticket.update).toHaveBeenCalledWith({
@@ -274,8 +270,6 @@ describe('registerMessageHandler', () => {
         it('ignores threaded replies in untracked threads', async () => {
             vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
 
-            const client = makeMockClient();
-
             await messageHandler({
                 event: {
                     user: 'U_EXTERNAL',
@@ -284,7 +278,6 @@ describe('registerMessageHandler', () => {
                     thread_ts: '9999999999.000000',
                     channel: 'C_MONITORED',
                 },
-                client,
             });
 
             expect(prisma.message.create).not.toHaveBeenCalled();

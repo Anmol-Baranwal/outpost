@@ -1,179 +1,77 @@
 import type { App } from '@slack/bolt';
-import type { WebClient } from '@slack/web-api';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { generateTicketId, truncate } from '@copilotkit/outpost/shared';
+import { createJob } from '@copilotkit/outpost/queue';
+import {
+    SlackAdapter,
+    InboundHandler,
+} from '@copilotkit/outpost/shared';
+import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
+import { TicketSource } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
-import { findTicketByThreadTs, isTeamMember, buildPermalink } from '../lib/tickets.js';
 
 /**
  * Register the Slack message event handler.
  *
- * Handles two cases:
- * 1. New top-level messages in monitored channels -> create a ticket
- * 2. Threaded replies to tracked tickets -> append message and maybe enqueue AI response
+ * Delegates to SlackAdapter (event parsing, message posting) and
+ * InboundHandler (ticket creation, message appending, job enqueuing)
+ * so the bot stays thin and the logic is reusable across platforms.
  */
 export function registerMessageHandler(app: App): void {
-    app.event('message', async ({ event, client }) => {
-        // Only handle regular user messages (not bot messages, edits, deletions, etc.)
-        if (event.subtype !== undefined) return;
-        if (!('user' in event) || !event.user) return;
-        if (!('text' in event) || !event.text) return;
-        if ('bot_id' in event && event.bot_id) return;
+    const adapter = new SlackAdapter({
+        token: config.slackBotToken,
+    });
 
-        const channelId = event.channel;
+    const handler = new InboundHandler({
+        prisma: prisma as unknown as InboundPrismaLike,
+        createJob: createJob as unknown as CreateJobFn,
+    });
 
-        // Check if this channel is monitored
-        const isMonitored =
-            config.monitoredChannelIds.length === 0 ||
-            config.monitoredChannelIds.includes(channelId);
-
-        if (!isMonitored) return;
-
+    app.event('message', async ({ event }) => {
         try {
-            const text = 'text' in event ? event.text : undefined;
-            const user = 'user' in event ? event.user : undefined;
-            if (!text || !user) return;
+            // Filter bot messages and message subtypes (edits, deletions, etc.)
+            const rawEvent = event as unknown as Record<string, unknown>;
+            if (rawEvent.bot_id || rawEvent.subtype) return;
 
-            // Determine if this is a threaded reply or a top-level message.
-            // In Slack, thread_ts is set for replies within a thread. When
-            // thread_ts equals ts, it's the parent message of the thread
-            // (i.e. a top-level message), not a reply. We only create tickets
-            // for true top-level messages — threaded replies are appended to
-            // an existing ticket if one exists, and ignored otherwise.
-            const isThreadReply = event.thread_ts && event.thread_ts !== event.ts;
+            const message = adapter.parseInboundEvent(event);
+            if (!message || !message.content) return;
 
-            if (isThreadReply) {
-                // This is a threaded reply — handle as follow-up message
-                await handleThreadReply(
-                    { user, text, thread_ts: event.thread_ts!, ts: event.ts },
-                    channelId,
-                    client,
-                );
-            } else if (event.ts) {
-                // This is a new top-level message — create a ticket
-                await handleNewMessage(
-                    { user, text, ts: event.ts },
-                    channelId,
-                    client,
+            // Filter unmonitored channels for new top-level messages
+            if (message.isThreadStart && config.monitoredChannelIds?.length) {
+                if (!config.monitoredChannelIds.includes(message.channelId ?? '')) return;
+            }
+
+            // For threaded replies, ignore if the thread isn't tracked as a ticket.
+            // This prevents InboundHandler from creating a new ticket for stray replies.
+            if (!message.isThreadStart) {
+                const sourceId = message.channelId
+                    ? `${message.channelId}:${message.threadId}`
+                    : message.threadId ?? '';
+                const existingTicket = await prisma.ticket.findFirst({
+                    where: { source: 'SLACK', sourceId },
+                });
+                if (!existingTicket) return;
+            }
+
+            const result = await handler.handle(message);
+
+            // Post acknowledgment for newly created tickets
+            if (result.isNewTicket && result.displayId) {
+                const ticket = {
+                    id: result.ticketId,
+                    sourceId: message.threadId ? `${message.channelId}:${message.threadId}` : null,
+                    channel: message.channelId ?? null,
+                    source: TicketSource.SLACK,
+                };
+                await adapter.postSystemMessage(
+                    ticket,
+                    `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your question...`,
                 );
             }
         } catch (error) {
             console.error(
-                `[Slack Bot] Failed to process message in channel ${channelId}:`,
+                `[Slack Bot] Failed to process message in channel ${(event as { channel?: string }).channel ?? 'unknown'}:`,
                 error,
             );
         }
     });
-}
-
-async function handleNewMessage(
-    event: { user: string; text: string; ts: string },
-    channelId: string,
-    client: WebClient,
-): Promise<void> {
-    const displayId = generateTicketId();
-    const sourceId = `${channelId}:${event.ts}`;
-    const sourceUrl = buildPermalink(channelId, event.ts);
-
-    // Look up user info for the author field
-    const authorLabel = `slack:${event.user}`;
-
-    // Create the ticket in the database
-    const ticket = await prisma.ticket.create({
-        data: {
-            displayId,
-            title: truncate(event.text, 200),
-            description: truncate(event.text, 4000),
-            status: 'OPEN',
-            priority: 'MEDIUM',
-            type: 'QUESTION',
-            source: 'SLACK',
-            sourceId,
-            sourceUrl,
-            channel: channelId,
-        },
-    });
-
-    // Create the first Message record
-    await prisma.message.create({
-        data: {
-            ticketId: ticket.id,
-            author: authorLabel,
-            content: truncate(event.text, 8000),
-            type: 'USER',
-        },
-    });
-
-    // Enqueue an AI response job
-    await createJob(JobType.AI_RESPONSE, {
-        ticketId: ticket.id,
-        threadId: event.ts,
-        source: 'slack' as const,
-    });
-
-    // Post acknowledgment in thread
-    await client.chat.postMessage({
-        channel: channelId,
-        thread_ts: event.ts,
-        text: `\uD83C\uDFAB Ticket ${displayId} created. Our AI assistant is reviewing your question...`,
-    });
-
-    console.log(`[Slack Bot] Created ticket ${displayId} for message ${event.ts} in ${channelId}`);
-}
-
-async function handleThreadReply(
-    event: { user: string; text: string; thread_ts: string; ts: string },
-    channelId: string,
-    _client: unknown,
-): Promise<void> {
-    const ticket = await findTicketByThreadTs(channelId, event.thread_ts);
-    if (!ticket) {
-        // This thread isn't tracked as a ticket, ignore it
-        return;
-    }
-
-    const authorLabel = `slack:${event.user}`;
-
-    // Append the message as a Message record
-    await prisma.message.create({
-        data: {
-            ticketId: ticket.id,
-            author: authorLabel,
-            content: truncate(event.text, 8000),
-            type: 'USER',
-        },
-    });
-
-    console.log(
-        `[Slack Bot] Message from ${event.user} appended to ticket ${ticket.displayId}`,
-    );
-
-    // Check if this user is a team member
-    const teamMember = await isTeamMember(event.user);
-
-    if (teamMember) {
-        // Team member message: don't enqueue AI response, but update ticket status
-        if (ticket.status === 'WAITING_ON_TEAM') {
-            await prisma.ticket.update({
-                where: { id: ticket.id },
-                data: { status: 'WAITING_ON_CUSTOMER' },
-            });
-        }
-    } else {
-        // External user: enqueue a new AI response for follow-up
-        await createJob(JobType.AI_RESPONSE, {
-            ticketId: ticket.id,
-            threadId: event.thread_ts,
-            source: 'slack' as const,
-        });
-
-        // Reopen ticket if it was waiting on customer or resolved
-        if (ticket.status === 'WAITING_ON_CUSTOMER' || ticket.status === 'RESOLVED') {
-            await prisma.ticket.update({
-                where: { id: ticket.id },
-                data: { status: 'OPEN' },
-            });
-        }
-    }
 }

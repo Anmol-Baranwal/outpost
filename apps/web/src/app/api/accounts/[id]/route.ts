@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findMockAccountFull, MOCK_ACCOUNTS_FULL } from '@/lib/mock-accounts';
+import { prisma } from '@copilotkit/outpost/db';
 
 /**
  * GET /api/accounts/:id
@@ -11,7 +11,16 @@ export async function GET(
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const account = findMockAccountFull(id);
+
+    const account = await prisma.account.findUnique({
+        where: { id },
+        include: {
+            users: true,
+            tickets: {
+                select: { id: true, status: true },
+            },
+        },
+    });
 
     if (!account) {
         return NextResponse.json(
@@ -20,7 +29,24 @@ export async function GET(
         );
     }
 
-    return NextResponse.json(account);
+    const openTickets = account.tickets.filter(
+        (t: { status: string }) => t.status === 'OPEN' || t.status === 'WAITING_ON_CUSTOMER' || t.status === 'WAITING_ON_TEAM',
+    ).length;
+    const inProgressTickets = account.tickets.filter(
+        (t: { status: string }) => t.status === 'IN_PROGRESS',
+    ).length;
+    const closedTickets = account.tickets.filter(
+        (t: { status: string }) => t.status === 'CLOSED' || t.status === 'RESOLVED',
+    ).length;
+
+    const { tickets, ...accountData } = account;
+
+    return NextResponse.json({
+        ...accountData,
+        openTickets,
+        inProgressTickets,
+        closedTickets,
+    });
 }
 
 /**
@@ -33,9 +59,10 @@ export async function PATCH(
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const account = MOCK_ACCOUNTS_FULL.find(a => a.id === id);
 
-    if (!account) {
+    const existing = await prisma.account.findUnique({ where: { id } });
+
+    if (!existing) {
         return NextResponse.json(
             { error: 'Account not found' },
             { status: 404 },
@@ -45,27 +72,29 @@ export async function PATCH(
     try {
         const body = await request.json();
         const allowedFields = ['owner', 'sentiment', 'engagement', 'acv', 'closeDate', 'name', 'domain'];
-        const updates: Record<string, unknown> = {};
+        const data: Record<string, unknown> = {};
 
         for (const field of allowedFields) {
             if (field in body) {
-                updates[field] = body[field];
+                if (field === 'closeDate' && body[field]) {
+                    data[field] = new Date(body[field]);
+                } else {
+                    data[field] = body[field];
+                }
             }
         }
 
-        if (Object.keys(updates).length === 0) {
+        if (Object.keys(data).length === 0) {
             return NextResponse.json(
                 { error: 'No valid fields to update' },
                 { status: 400 },
             );
         }
 
-        // In production, this would use prisma.account.update()
-        const updated = {
-            ...account,
-            ...updates,
-            updatedAt: new Date().toISOString(),
-        };
+        const updated = await prisma.account.update({
+            where: { id },
+            data,
+        });
 
         return NextResponse.json(updated);
     } catch {

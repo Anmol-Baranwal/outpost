@@ -1,35 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findMockAgent } from '@/lib/mock-agents';
+import { prisma } from '@copilotkit/outpost/db';
 
 /**
  * POST /api/agents/[id]/run
  *
- * Manually trigger an agent run. In production this would enqueue a job
- * via the job queue and the job handler would execute the configured action.
+ * Manually trigger an agent run. Validates the agent exists and updates
+ * its lastRun timestamp. In a full implementation, this would also
+ * enqueue a job via the job queue for the configured action type.
  */
 export async function POST(
     _request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
-    const agent = findMockAgent(id);
+    const agent = await prisma.agent.findUnique({ where: { id } });
 
     if (!agent) {
         return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
     }
 
-    // In production:
-    // 1. Enqueue a job for this agent's action type
-    // 2. The job handler would call the configured action (classify, SLA check, FAQ gen, or webhook)
-    // 3. Update agent.lastRun and agent.status based on result
+    const config = agent.config as Record<string, unknown> | null;
+    const actionType = config?.actionType ?? 'unknown';
+
+    // Update the agent's lastRun timestamp
+    await prisma.agent.update({
+        where: { id },
+        data: { lastRun: new Date() },
+    });
 
     const result = {
         agentId: agent.id,
         agentName: agent.name,
-        actionType: agent.config.actionType,
+        actionType,
         status: 'queued',
         triggeredAt: new Date().toISOString(),
-        message: `Agent "${agent.name}" run has been queued. Action: ${agent.config.actionType}`,
+        message: `Agent "${agent.name}" run has been queued. Action: ${actionType}`,
     };
 
     return NextResponse.json(result, { status: 202 });

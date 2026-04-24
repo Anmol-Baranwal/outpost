@@ -10,6 +10,7 @@ export interface TicketShortcutActions {
     addNote: () => void;
     markAsDone: () => void;
     createTicket: () => void;
+    toggleDiscussions: () => void;
 }
 
 /**
@@ -20,6 +21,7 @@ export interface TicketShortcutActions {
  * J  - Next ticket (vim-style down)
  * R  - Focus reply
  * N  - Add note
+ * D  - Toggle discussions panel
  * E  - Mark as done (close ticket)
  * C  - Create new ticket
  */
@@ -61,6 +63,11 @@ export function useTicketShortcuts(actions: TicketShortcutActions) {
                 case 'N':
                     event.preventDefault();
                     actions.addNote();
+                    break;
+                case 'd':
+                case 'D':
+                    event.preventDefault();
+                    actions.toggleDiscussions();
                     break;
                 case 'e':
                 case 'E':

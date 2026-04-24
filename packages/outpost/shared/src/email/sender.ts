@@ -1,7 +1,9 @@
 /**
  * Email sender.
  *
- * Uses Resend when RESEND_API_KEY is set. Falls back to console.log in dev.
+ * Uses Postmark when POSTMARK_SERVER_TOKEN is set.
+ * Falls back to SMTP (nodemailer) when SMTP_HOST is set.
+ * Falls back to console.log in dev when neither is configured.
  */
 import { renderTemplate } from '../templates/renderer.js';
 import { interpolate } from '../templates/interpolate.js';
@@ -15,44 +17,129 @@ interface SendEmailOptions {
     dbLookup?: (slug: string) => Promise<{ subject: string; body: string } | null>;
     /** Override the transport for testing. */
     transport?: EmailTransport;
+    /** Reply-To address, e.g. ticket+TKT-1234@support.copilotkit.ai */
+    replyTo?: string;
+    /** Custom Message-ID for threading */
+    messageId?: string;
+    /** In-Reply-To header for threading */
+    inReplyTo?: string;
+    /** References header for threading */
+    references?: string;
 }
 
 interface EmailResult {
     success: boolean;
     messageId?: string;
     error?: string;
-    method: 'resend' | 'console';
+    method: 'postmark' | 'smtp' | 'console';
+}
+
+/** Options passed to a transport's send method. */
+export interface EmailSendOptions {
+    from: string;
+    to: string[];
+    subject: string;
+    html: string;
+    text: string;
+    replyTo?: string;
+    messageId?: string;
+    inReplyTo?: string;
+    references?: string;
 }
 
 /** Abstraction over the email transport so we can inject mocks. */
 export interface EmailTransport {
-    send(opts: {
-        from: string;
-        to: string[];
-        subject: string;
-        html: string;
-        text: string;
-    }): Promise<{ id?: string; error?: string }>;
+    send(opts: EmailSendOptions): Promise<{ id?: string; error?: string }>;
 }
 
-/** Create a Resend transport. Returns null if RESEND_API_KEY is not set. */
-export async function createResendTransport(): Promise<EmailTransport | null> {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) return null;
+/** Create a Postmark transport. Returns null if POSTMARK_SERVER_TOKEN is not set. */
+export async function createPostmarkTransport(): Promise<EmailTransport | null> {
+    const serverToken = process.env.POSTMARK_SERVER_TOKEN;
+    if (!serverToken) return null;
 
     try {
-        const { Resend } = await import('resend');
-        const client = new Resend(apiKey);
+        const { ServerClient } = await import('postmark');
+        const client = new ServerClient(serverToken);
         return {
-            async send(opts) {
-                const result = await client.emails.send(opts);
-                if (result.error) {
-                    return { error: result.error.message };
+            async send(opts: EmailSendOptions) {
+                const headers: Array<{ Name: string; Value: string }> = [];
+
+                if (opts.messageId) {
+                    headers.push({ Name: 'X-PM-KeepID', Value: 'true' });
+                    headers.push({ Name: 'Message-ID', Value: opts.messageId });
                 }
-                return { id: result.data?.id };
+                if (opts.inReplyTo) {
+                    headers.push({ Name: 'In-Reply-To', Value: opts.inReplyTo });
+                }
+                if (opts.references) {
+                    headers.push({ Name: 'References', Value: opts.references });
+                }
+
+                const result = await client.sendEmail({
+                    From: opts.from,
+                    To: opts.to.join(', '),
+                    Subject: opts.subject,
+                    HtmlBody: opts.html,
+                    TextBody: opts.text,
+                    ReplyTo: opts.replyTo,
+                    Headers: headers.length > 0 ? headers : undefined,
+                    MessageStream: 'outbound',
+                });
+
+                return { id: result.MessageID };
             },
         };
-    } catch {
+    } catch (err) {
+        console.error('[Email] POSTMARK_SERVER_TOKEN is set but postmark package failed to load:', err);
+        return null;
+    }
+}
+
+/**
+ * Create an SMTP transport via nodemailer. Returns null if SMTP_HOST is not set.
+ * nodemailer is an optional peer dependency for self-hosted deployments.
+ */
+export async function createSmtpTransport(): Promise<EmailTransport | null> {
+    const host = process.env.SMTP_HOST;
+    if (!host) return null;
+
+    try {
+        // nodemailer is an optional dependency -- only installed in self-hosted setups.
+        // We use a dynamic require via createRequire to avoid TS module resolution errors.
+        const { createRequire } = await import('module');
+        const require = createRequire(import.meta.url);
+        const nodemailer = require('nodemailer') as {
+            createTransport: (config: Record<string, unknown>) => {
+                sendMail: (opts: Record<string, unknown>) => Promise<{ messageId: string }>;
+            };
+        };
+        const transporter = nodemailer.createTransport({
+            host,
+            port: Number(process.env.SMTP_PORT || '587'),
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: process.env.SMTP_USER
+                ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+                : undefined,
+        });
+
+        return {
+            async send(opts: EmailSendOptions) {
+                const info = await transporter.sendMail({
+                    from: opts.from,
+                    to: opts.to.join(', '),
+                    subject: opts.subject,
+                    html: opts.html,
+                    text: opts.text,
+                    replyTo: opts.replyTo,
+                    messageId: opts.messageId,
+                    inReplyTo: opts.inReplyTo,
+                    references: opts.references,
+                });
+                return { id: info.messageId };
+            },
+        };
+    } catch (err) {
+        console.error('[Email] SMTP_HOST is set but nodemailer package failed to load:', err);
         return null;
     }
 }
@@ -61,10 +148,20 @@ export async function createResendTransport(): Promise<EmailTransport | null> {
  * Send an email using a template.
  *
  * Loads the template, interpolates variables, renders to HTML + text,
- * and sends via the provided transport (or Resend, or console fallback).
+ * and sends via the provided transport (or Postmark, or SMTP, or console fallback).
  */
 export async function sendEmail(options: SendEmailOptions): Promise<EmailResult> {
-    const { to, template, context, dbLookup, transport: injectedTransport } = options;
+    const {
+        to,
+        template,
+        context,
+        dbLookup,
+        transport: injectedTransport,
+        replyTo,
+        messageId,
+        inReplyTo,
+        references,
+    } = options;
 
     const rendered = await renderTemplate(template, context, dbLookup);
     if (!rendered) {
@@ -77,41 +174,68 @@ export async function sendEmail(options: SendEmailOptions): Promise<EmailResult>
 
     const recipients = Array.isArray(to) ? to : [to];
 
-    const transport = injectedTransport ?? await createResendTransport();
-    if (transport) {
-        try {
-            const result = await transport.send({
-                from: fromAddress || 'Outpost <noreply@outpost.dev>',
-                to: recipients,
-                subject: rendered.subject,
-                html: rendered.html,
-                text: rendered.text,
-            });
+    const sendOpts: EmailSendOptions = {
+        from: fromAddress || 'Outpost <noreply@outpost.dev>',
+        to: recipients,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        replyTo,
+        messageId,
+        inReplyTo,
+        references,
+    };
 
-            if (result.error) {
-                return { success: false, error: result.error, method: 'resend' };
-            }
+    // Try injected transport first
+    if (injectedTransport) {
+        return await attemptSend(injectedTransport, sendOpts, 'postmark');
+    }
 
-            return { success: true, messageId: result.id, method: 'resend' };
-        } catch (err) {
-            return {
-                success: false,
-                error: err instanceof Error ? err.message : 'Send failed',
-                method: 'resend',
-            };
-        }
+    // Try Postmark
+    const postmarkTransport = await createPostmarkTransport();
+    if (postmarkTransport) {
+        return await attemptSend(postmarkTransport, sendOpts, 'postmark');
+    }
+
+    // Try SMTP
+    const smtpTransport = await createSmtpTransport();
+    if (smtpTransport) {
+        return await attemptSend(smtpTransport, sendOpts, 'smtp');
     }
 
     // Dev fallback: log to console
     console.log('=== EMAIL (dev mode) ===');
     console.log(`To: ${recipients.join(', ')}`);
-    console.log(`From: ${fromAddress || 'Outpost <noreply@outpost.dev>'}`);
+    console.log(`From: ${sendOpts.from}`);
     console.log(`Subject: ${rendered.subject}`);
+    if (replyTo) console.log(`Reply-To: ${replyTo}`);
     console.log('--- Text ---');
     console.log(rendered.text);
     console.log('========================');
 
     return { success: true, method: 'console' };
+}
+
+async function attemptSend(
+    transport: EmailTransport,
+    opts: EmailSendOptions,
+    method: 'postmark' | 'smtp',
+): Promise<EmailResult> {
+    try {
+        const result = await transport.send(opts);
+
+        if (result.error) {
+            return { success: false, error: result.error, method };
+        }
+
+        return { success: true, messageId: result.id, method };
+    } catch (err) {
+        return {
+            success: false,
+            error: err instanceof Error ? err.message : 'Send failed',
+            method,
+        };
+    }
 }
 
 export type { SendEmailOptions, EmailResult };

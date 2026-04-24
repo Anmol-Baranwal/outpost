@@ -83,7 +83,7 @@ describe('ArticleList', () => {
     it('shows empty state when no articles', () => {
         render(<ArticleList articles={[]} categorySlug="getting-started" />);
 
-        expect(screen.getByText('No articles found.')).toBeInTheDocument();
+        expect(screen.getByText(/No documentation articles yet/)).toBeInTheDocument();
     });
 
     it('links articles to their detail page', () => {

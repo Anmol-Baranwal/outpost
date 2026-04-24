@@ -10,19 +10,37 @@ import type { TicketForSla, SlaTargetMap, SlaCheckResult } from '@copilotkit/out
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
 
-const mockPrisma = {
-    slaConfig: { findMany: vi.fn() },
-    ticket: {
-        findMany: vi.fn(),
-        update: vi.fn(),
-    },
-    message: { create: vi.fn() },
-    $transaction: vi.fn(),
-};
+const mockSlaConfigFindMany = vi.fn();
+const mockTicketFindMany = vi.fn();
+const mockTicketUpdate = vi.fn();
+const mockMessageCreate = vi.fn();
+const mockSystemConfigFindUnique = vi.fn();
+const mockSystemConfigUpsert = vi.fn();
+const mockTransaction = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
-    prisma: mockPrisma,
+    prisma: {
+        slaConfig: { findMany: (...args: unknown[]) => mockSlaConfigFindMany(...args) },
+        ticket: {
+            findMany: (...args: unknown[]) => mockTicketFindMany(...args),
+            update: (...args: unknown[]) => mockTicketUpdate(...args),
+        },
+        message: { create: (...args: unknown[]) => mockMessageCreate(...args) },
+        systemConfig: {
+            findUnique: (...args: unknown[]) => mockSystemConfigFindUnique(...args),
+            upsert: (...args: unknown[]) => mockSystemConfigUpsert(...args),
+        },
+        $transaction: (...args: unknown[]) => mockTransaction(...args),
+    },
 }));
+
+// Convenience alias matching old test's usage
+const mockPrisma = {
+    slaConfig: { findMany: mockSlaConfigFindMany },
+    ticket: { findMany: mockTicketFindMany, update: mockTicketUpdate },
+    message: { create: mockMessageCreate },
+    $transaction: mockTransaction,
+};
 
 // Import after mocks
 const { checkSlaCompliance, buildBreachEvents } = await import('@copilotkit/outpost/shared');

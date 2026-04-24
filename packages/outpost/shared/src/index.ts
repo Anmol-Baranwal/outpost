@@ -9,3 +9,4 @@ export * from './integrations/index.js';
 export * from './monitoring/index.js';
 export * from './sync/index.js';
 export * from './auth/index.js';
+export * from './platforms/index.js';
