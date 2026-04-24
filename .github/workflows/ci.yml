@@ -35,6 +35,8 @@ jobs:
               run: pnpm db:generate
 
             - name: Verify Prisma schema and migrations
+              env:
+                  DATABASE_URL: 'postgresql://ci:ci@localhost:5432/ci'
               run: |
                   pnpm --filter @copilotkit/outpost exec prisma validate --schema db/prisma/schema.prisma
                   # Ensure migration directory exists with at least one migration
