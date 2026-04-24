@@ -4,8 +4,8 @@
  * Consumes ONBOARDING_DIGEST jobs from the queue, queries new members
  * from the last 24 hours, and compiles a formatted digest.
  *
- * For now the digest is logged. Later it will post to a Discord channel
- * or DM Nathan directly.
+ * Posts the digest to a Discord channel via DISCORD_DIGEST_CHANNEL_ID.
+ * Falls back to console.log when the env var is not set (development).
  */
 
 import { prisma } from '@copilotkit/outpost/db';
@@ -14,11 +14,38 @@ import type { OnboardingMember } from '@copilotkit/outpost/shared';
 import type { OnboardingDigestPayload, JobResult, JobHandlerContext } from '../types.js';
 
 /**
+ * Post a message to a Discord channel using the Discord REST API.
+ *
+ * Requires DISCORD_TOKEN to be set. Uses the raw fetch API to avoid
+ * pulling in the full discord.js dependency for a single REST call.
+ */
+async function postToDiscord(channelId: string, content: string): Promise<void> {
+    const token = process.env.DISCORD_TOKEN;
+    if (!token) {
+        throw new Error('DISCORD_TOKEN is required to post to Discord');
+    }
+
+    const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bot ${token}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Discord API error ${response.status}: ${errorBody}`);
+    }
+}
+
+/**
  * Handle an ONBOARDING_DIGEST job.
  *
  * 1. Parse the target date from the payload
  * 2. Query members who joined in the last 24 hours
- * 3. Compile and log a formatted digest
+ * 3. Compile and deliver a formatted digest
  */
 export async function handleOnboardingDigest(
     payload: OnboardingDigestPayload,
@@ -30,10 +57,11 @@ export async function handleOnboardingDigest(
 
     // Query new members from the last 24 hours
     const since = new Date(targetDate);
-    since.setHours(0, 0, 0, 0);
+    since.setUTCHours(0, 0, 0, 0);
 
     const until = new Date(since);
     until.setDate(until.getDate() + 1);
+    until.setUTCHours(0, 0, 0, 0);
 
     const newMembers = await prisma.onboardingMember.findMany({
         where: {
@@ -63,6 +91,7 @@ export async function handleOnboardingDigest(
                 hour: '2-digit',
                 minute: '2-digit',
                 hour12: true,
+                timeZone: 'UTC',
             });
             digestLines.push(`  - ${member.username} (joined at ${joinTime})`);
         }
@@ -85,8 +114,14 @@ export async function handleOnboardingDigest(
 
     await context.reportProgress(90);
 
-    // For now, log the digest. Later: post to Discord channel or DM Nathan.
-    console.log(`[Onboarding Digest]\n${digest}`);
+    // Deliver the digest
+    const channelId = process.env.DISCORD_DIGEST_CHANNEL_ID;
+    if (channelId) {
+        await postToDiscord(channelId, digest);
+    } else {
+        // Development fallback when DISCORD_DIGEST_CHANNEL_ID is not set
+        console.log(`[Onboarding Digest] DISCORD_DIGEST_CHANNEL_ID not set, logging to console:\n${digest}`);
+    }
 
     await context.reportProgress(100);
 

@@ -33,7 +33,7 @@ export enum JobType {
 export interface AiResponsePayload {
     ticketId: string;
     threadId?: string;
-    source: PlatformTarget;
+    source?: PlatformTarget;
 }
 
 export interface TicketClassifyPayload {
@@ -140,11 +140,14 @@ export interface WorkerOptions {
     jobTimeouts?: Partial<Record<JobType, number>>;
     /** Default timeout for jobs without a specific override, in ms. Default: 30000 */
     defaultTimeoutMs?: number;
+    /** Per-job-type concurrency limits. If a type's pool is full, jobs of that type are skipped until capacity frees up. */
+    concurrencyByType?: Partial<Record<JobType, number>>;
 }
 
 export interface WorkerHealthStatus {
     running: boolean;
     activeJobCount: number;
+    activeJobsByType: Record<string, number>;
     lastPollTime: Date | null;
     registeredHandlers: string[];
     upSince: Date | null;
