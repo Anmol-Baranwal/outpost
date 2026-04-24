@@ -46,4 +46,6 @@ EXPOSE 3002
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3002/health || exit 1
 
-CMD ["node", "apps/slack-bot/dist/index.js"]
+COPY --from=installer --chown=outpost:outpost /app/apps/slack-bot/start.sh ./apps/slack-bot/start.sh
+
+CMD ["sh", "apps/slack-bot/start.sh"]

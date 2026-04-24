@@ -46,4 +46,6 @@ EXPOSE 3004
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3004/health || exit 1
 
-CMD ["node", "apps/linear-sync/dist/index.js"]
+COPY --from=installer --chown=outpost:outpost /app/apps/linear-sync/start.sh ./apps/linear-sync/start.sh
+
+CMD ["sh", "apps/linear-sync/start.sh"]

@@ -47,4 +47,6 @@ EXPOSE 3003 3978
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3003/health || exit 1
 
-CMD ["node", "apps/teams-bot/dist/index.js"]
+COPY --from=installer --chown=outpost:outpost /app/apps/teams-bot/start.sh ./apps/teams-bot/start.sh
+
+CMD ["sh", "apps/teams-bot/start.sh"]

@@ -14,6 +14,7 @@ export default defineConfig({
         alias: {
             '@': path.resolve(__dirname, './src'),
             '@copilotkit/outpost/db': path.resolve(__dirname, '../../packages/outpost/db/src'),
+            '@copilotkit/outpost/shared/server': path.resolve(__dirname, '../../packages/outpost/shared/src/server'),
             '@copilotkit/outpost/shared': path.resolve(__dirname, '../../packages/outpost/shared/src'),
             '@copilotkit/outpost/ai': path.resolve(__dirname, '../../packages/outpost/ai/src'),
         },
