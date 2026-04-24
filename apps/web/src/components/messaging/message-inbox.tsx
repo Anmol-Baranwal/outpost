@@ -104,8 +104,10 @@ export function MessageInbox({ messages }: MessageInboxProps) {
             {/* Message list */}
             <div className="space-y-3 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
                 {sorted.length === 0 ? (
-                    <div className="py-12 text-center text-sm text-muted-foreground">
-                        No messages match your filters.
+                    <div className="py-12 text-center text-sm text-muted-foreground" data-testid="messages-empty">
+                        {messages.length === 0
+                            ? 'No pending messages.'
+                            : 'No messages match your filters.'}
                     </div>
                 ) : (
                     sorted.map((msg) => (

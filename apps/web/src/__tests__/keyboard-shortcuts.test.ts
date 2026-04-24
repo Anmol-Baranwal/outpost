@@ -24,6 +24,7 @@ describe('useTicketShortcuts', () => {
             addNote: vi.fn(),
             markAsDone: vi.fn(),
             createTicket: vi.fn(),
+            toggleDiscussions: vi.fn(),
         };
     });
 
@@ -67,6 +68,12 @@ describe('useTicketShortcuts', () => {
         renderHook(() => useTicketShortcuts(actions));
         fireKey('c');
         expect(actions.createTicket).toHaveBeenCalledOnce();
+    });
+
+    it('d triggers toggleDiscussions', () => {
+        renderHook(() => useTicketShortcuts(actions));
+        fireKey('d');
+        expect(actions.toggleDiscussions).toHaveBeenCalledOnce();
     });
 
     it('does not trigger on Ctrl+key combos', () => {

@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ACCOUNT_OWNERS } from '@/lib/mock-accounts';
 
 interface AccountOwnerSelectProps {
     value: string | null;
@@ -13,6 +12,7 @@ interface AccountOwnerSelectProps {
 
 export function AccountOwnerSelect({ value, onChange, className }: AccountOwnerSelectProps) {
     const [isOpen, setIsOpen] = useState(false);
+    const [owners, setOwners] = useState<string[]>([]);
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -23,6 +23,22 @@ export function AccountOwnerSelect({ value, onChange, className }: AccountOwnerS
         }
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    // Fetch team members for owner dropdown
+    useEffect(() => {
+        fetch('/api/team')
+            .then(res => res.json())
+            .then(data => {
+                const names = (data.members ?? [])
+                    .map((m: { name: string }) => m.name)
+                    .filter(Boolean);
+                setOwners(names);
+            })
+            .catch(() => {
+                // Fallback: no owners available
+                setOwners([]);
+            });
     }, []);
 
     return (
@@ -60,7 +76,7 @@ export function AccountOwnerSelect({ value, onChange, className }: AccountOwnerS
                     >
                         Unassigned
                     </button>
-                    {ACCOUNT_OWNERS.map(owner => (
+                    {owners.map(owner => (
                         <button
                             key={owner}
                             type="button"

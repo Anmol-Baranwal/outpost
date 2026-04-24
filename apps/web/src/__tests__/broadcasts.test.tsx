@@ -57,7 +57,7 @@ describe('BroadcastList', () => {
     it('shows empty state when no broadcasts', () => {
         render(<BroadcastList {...defaultProps} broadcasts={[]} />);
         expect(screen.getByTestId('broadcast-empty')).toBeDefined();
-        expect(screen.getByText('No broadcasts found.')).toBeDefined();
+        expect(screen.getByText(/No broadcasts yet/)).toBeDefined();
     });
 });
 

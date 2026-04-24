@@ -13,6 +13,8 @@ import { ConversationThread } from './conversation-thread';
 import { ReplyEditor } from './reply-editor';
 import type { ReplyEditorHandle } from './reply-editor';
 import { TicketSidebar } from './ticket-sidebar';
+import type { TicketSidebarHandle } from './ticket-sidebar';
+import { CreateTicketModal } from './create-ticket-modal';
 import { useTicketShortcuts } from '@/hooks/use-ticket-shortcuts';
 
 interface TicketsViewProps {
@@ -23,8 +25,10 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     const router = useRouter();
     const [filters, setFilters] = useState<TicketFilters>(DEFAULT_FILTERS);
     const [mobilePanel, setMobilePanel] = useState<'list' | 'thread' | 'sidebar'>('list');
+    const [createModalOpen, setCreateModalOpen] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const replyEditorRef = useRef<ReplyEditorHandle>(null);
+    const sidebarRef = useRef<TicketSidebarHandle>(null);
 
     // Local ticket state (for mock updates)
     const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<MockTicket>>>({});
@@ -78,13 +82,15 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     }, [ticketId]);
 
     const handleCreateTicket = useCallback(() => {
-        // Placeholder: in production this would open a modal
-        console.log('Create ticket');
+        setCreateModalOpen(true);
     }, []);
 
     const handleAddNote = useCallback(() => {
-        // Placeholder: in production this would open a note input
-        console.log('Add note');
+        sidebarRef.current?.openAddNote();
+    }, []);
+
+    const handleToggleDiscussions = useCallback(() => {
+        sidebarRef.current?.toggleDiscussions();
     }, []);
 
     const handleSendMessage = useCallback(
@@ -130,6 +136,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
         addNote: handleAddNote,
         markAsDone: handleMarkAsDone,
         createTicket: handleCreateTicket,
+        toggleDiscussions: handleToggleDiscussions,
     });
 
     return (
@@ -250,11 +257,18 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     )}
                 >
                     <TicketSidebar
+                        ref={sidebarRef}
                         ticket={selectedTicket}
                         onUpdate={handleTicketUpdate}
                     />
                 </div>
             )}
+
+            {/* Create ticket modal */}
+            <CreateTicketModal
+                open={createModalOpen}
+                onClose={() => setCreateModalOpen(false)}
+            />
         </div>
     );
 }

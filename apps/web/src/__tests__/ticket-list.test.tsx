@@ -34,7 +34,7 @@ describe('TicketList', () => {
 
     it('shows empty state when no tickets', () => {
         render(<TicketList tickets={[]} />);
-        expect(screen.getByText('No tickets match the current filters.')).toBeInTheDocument();
+        expect(screen.getByText('No tickets yet')).toBeInTheDocument();
     });
 
     it('renders account names for tickets with accounts', () => {

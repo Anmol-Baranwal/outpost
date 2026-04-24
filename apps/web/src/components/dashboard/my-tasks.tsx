@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Filter, AlertTriangle } from 'lucide-react';
+import { Filter, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { EmptyState } from '@/components/empty-state';
 
 interface Task {
     id: string;
@@ -132,9 +133,12 @@ export function MyTasks({ tasks: initialTasks }: MyTasksProps) {
                     Loading tasks...
                 </div>
             ) : filteredTasks.length === 0 ? (
-                <div className="px-6 py-8 text-center text-sm text-muted-foreground">
-                    No tasks assigned to you.
-                </div>
+                <EmptyState
+                    icon={<CheckCircle2 className="h-6 w-6 text-green-500" />}
+                    title="All caught up"
+                    description="No tasks assigned to you. Nice work!"
+                    className="py-8"
+                />
             ) : (
                 <div className="overflow-x-auto">
                     <table className="w-full">

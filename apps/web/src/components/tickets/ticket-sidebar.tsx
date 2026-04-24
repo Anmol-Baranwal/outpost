@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, forwardRef, useImperativeHandle, useRef } from 'react';
 import {
     TicketStatus,
     TicketPriority,
@@ -10,6 +10,8 @@ import {
 import { cn } from '@/lib/utils';
 import { MOCK_TEAM_MEMBERS } from '@/lib/mock-tickets';
 import type { MockTicket } from '@/lib/mock-tickets';
+import { AddNoteForm } from './add-note-form';
+import type { AddNoteFormHandle } from './add-note-form';
 
 interface TicketSidebarProps {
     ticket: MockTicket;
@@ -86,21 +88,37 @@ function FieldSelect({
 function ExpandableSection({
     title,
     defaultOpen = false,
+    isOpen: controlledOpen,
+    onToggle,
     count,
     children,
+    testId,
 }: {
     title: string;
     defaultOpen?: boolean;
+    isOpen?: boolean;
+    onToggle?: () => void;
     count?: number;
     children: React.ReactNode;
+    testId?: string;
 }) {
-    const [open, setOpen] = useState(defaultOpen);
+    const [internalOpen, setInternalOpen] = useState(defaultOpen);
+    const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
+
+    const handleToggle = () => {
+        if (onToggle) {
+            onToggle();
+        } else {
+            setInternalOpen(!internalOpen);
+        }
+    };
 
     return (
-        <div className="border-t border-slate-100">
+        <div className="border-t border-slate-100" data-testid={testId}>
             <button
-                onClick={() => setOpen(!open)}
+                onClick={handleToggle}
                 className="w-full flex items-center justify-between py-2 text-xs font-medium text-slate-600 hover:text-slate-800 transition-colors"
+                data-testid={testId ? `${testId}-toggle` : undefined}
             >
                 <span>
                     {title}
@@ -139,7 +157,34 @@ function formatDate(dateStr: string): string {
     });
 }
 
-export function TicketSidebar({ ticket, onUpdate, className }: TicketSidebarProps) {
+export interface TicketSidebarHandle {
+    openAddNote: () => void;
+    toggleDiscussions: () => void;
+}
+
+export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>(
+    function TicketSidebar({ ticket, onUpdate, className }, ref) {
+    const [discussionsOpen, setDiscussionsOpen] = useState(false);
+    const addNoteFormRef = useRef<AddNoteFormHandle>(null);
+
+    useImperativeHandle(ref, () => ({
+        openAddNote: () => {
+            addNoteFormRef.current?.focus();
+        },
+        toggleDiscussions: () => {
+            setDiscussionsOpen((prev) => !prev);
+        },
+    }));
+
+    const handleNoteAdded = (note: { id: string; content: string; author: string; createdAt: string }) => {
+        onUpdate({
+            notes: [
+                ...ticket.notes,
+                { ...note, ticketId: ticket.id },
+            ],
+        });
+    };
+
     return (
         <div className={cn('flex flex-col overflow-y-auto', className)} data-testid="ticket-sidebar">
             {/* Header */}
@@ -233,11 +278,9 @@ export function TicketSidebar({ ticket, onUpdate, className }: TicketSidebarProp
 
             {/* Expandable sections */}
             <div className="px-4">
-                <ExpandableSection title="Notes" count={ticket.notes.length}>
-                    {ticket.notes.length === 0 ? (
-                        <p className="text-[10px] text-slate-400">No notes yet.</p>
-                    ) : (
-                        <div className="space-y-2">
+                <ExpandableSection title="Notes" count={ticket.notes.length} defaultOpen testId="notes-section">
+                    {ticket.notes.length > 0 && (
+                        <div className="space-y-2 mb-2">
                             {ticket.notes.map((note) => (
                                 <div key={note.id} className="bg-yellow-50 rounded p-2">
                                     <div className="flex items-center gap-1.5 mb-0.5">
@@ -253,9 +296,20 @@ export function TicketSidebar({ ticket, onUpdate, className }: TicketSidebarProp
                             ))}
                         </div>
                     )}
+                    <AddNoteForm
+                        ref={addNoteFormRef}
+                        ticketId={ticket.id}
+                        onNoteAdded={handleNoteAdded}
+                    />
                 </ExpandableSection>
 
-                <ExpandableSection title="Discussions" count={0}>
+                <ExpandableSection
+                    title="Discussions"
+                    count={0}
+                    isOpen={discussionsOpen}
+                    onToggle={() => setDiscussionsOpen(!discussionsOpen)}
+                    testId="discussions-section"
+                >
                     <p className="text-[10px] text-slate-400">No discussions yet.</p>
                 </ExpandableSection>
 
@@ -309,4 +363,5 @@ export function TicketSidebar({ ticket, onUpdate, className }: TicketSidebarProp
             )}
         </div>
     );
-}
+});
+

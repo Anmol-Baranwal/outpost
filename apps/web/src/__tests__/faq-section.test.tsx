@@ -63,7 +63,7 @@ describe('FaqSection', () => {
 
     it('shows empty state when no entries', () => {
         render(<FaqSection entries={[]} />);
-        expect(screen.getByText('No FAQ entries available.')).toBeInTheDocument();
+        expect(screen.getByText(/No FAQs available yet/)).toBeInTheDocument();
     });
 
     it('renders singular "source" for count of 1', () => {

@@ -61,7 +61,9 @@ export function FaqSection({ entries: initialEntries }: FaqSectionProps) {
             {loading ? (
                 <p className="text-sm text-muted-foreground">Loading FAQ...</p>
             ) : entries.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No FAQ entries available.</p>
+                <p className="text-sm text-muted-foreground" data-testid="faq-empty">
+                    No FAQs available yet. FAQs are automatically generated from support conversations.
+                </p>
             ) : (
                 <div className="space-y-3">
                     {entries.map((entry) => {

@@ -130,7 +130,7 @@ describe('AgentTable', () => {
     it('shows empty state when no agents', () => {
         render(<AgentTable {...defaultProps} agents={[]} />);
         expect(screen.getByTestId('agent-table-empty')).toBeTruthy();
-        expect(screen.getByText(/No agents found/)).toBeTruthy();
+        expect(screen.getByText(/No agents configured/)).toBeTruthy();
     });
 
     it('shows "Never" for agents that have not run', () => {
