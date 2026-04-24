@@ -1,9 +1,27 @@
 import { ChannelType, type Message } from 'discord.js';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { truncate } from '@copilotkit/outpost/shared';
-import { findTicketByThreadId, isTeamMember } from '../lib/tickets.js';
+import { createJob } from '@copilotkit/outpost/queue';
+import { PlatformDiscordAdapter, InboundHandler } from '@copilotkit/outpost/shared';
+import type { CreateJobFn } from '@copilotkit/outpost/shared';
+import { config } from '../config.js';
 import { isShadowMode, handleShadowMessage } from '../lib/shadow-mode.js';
+import { findTicketByThreadId } from '../lib/tickets.js';
+
+/** Adapter instance shared across message-create invocations. */
+const adapter = new PlatformDiscordAdapter({ token: config.discordToken });
+
+/**
+ * Wrap the queue's createJob into the signature InboundHandler expects.
+ */
+const createJobFn: CreateJobFn = async (
+    type: string,
+    payload: { ticketId: string; threadId?: string; source: string },
+) => {
+    return createJob(
+        type as Parameters<typeof createJob>[0],
+        payload as Parameters<typeof createJob>[1],
+    );
+};
 
 export async function handleMessageCreate(message: Message): Promise<void> {
     // Ignore messages from bots
@@ -20,7 +38,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     const threadId = message.channel.id;
 
     try {
-        // Look up the ticket associated with this thread
+        // Look up the ticket associated with this thread (for shadow mode check)
         const ticket = await findTicketByThreadId(threadId);
 
         // In shadow mode, record the message silently without triggering visible responses
@@ -32,53 +50,23 @@ export async function handleMessageCreate(message: Message): Promise<void> {
                 return;
             }
         }
+
         if (!ticket) {
             // This thread isn't tracked as a ticket, ignore it
             return;
         }
 
-        // Append the message as a Message record on the ticket
-        const savedMessage = await prisma.message.create({
-            data: {
-                ticketId: ticket.id,
-                author: `${message.author.tag} (${message.author.id})`,
-                content: truncate(message.content, 8000),
-                type: 'USER',
-            },
-        });
+        // Parse the raw message through the platform adapter
+        const inboundMessage = adapter.parseInboundEvent({ message });
+
+        // Process through the shared InboundHandler
+        const handler = new InboundHandler({ prisma, createJob: createJobFn });
+        const result = await handler.handle(inboundMessage);
 
         console.log(
-            `[Discord Bot] Message from ${message.author.tag} appended to ticket ${ticket.displayId}`,
+            `[Discord Bot] Message from ${message.author.tag} processed on ticket ${result.displayId}` +
+            (result.aiJobEnqueued ? ' (AI job enqueued)' : ''),
         );
-
-        // Check if this user is a team member
-        const teamMember = await isTeamMember(message.author.id);
-
-        if (teamMember) {
-            // Team member message: don't enqueue AI response, but update ticket status
-            // if it was waiting on the team
-            if (ticket.status === 'WAITING_ON_TEAM') {
-                await prisma.ticket.update({
-                    where: { id: ticket.id },
-                    data: { status: 'WAITING_ON_CUSTOMER' },
-                });
-            }
-        } else {
-            // Original poster or other user: enqueue a new AI response for follow-up
-            await createJob(JobType.AI_RESPONSE, {
-                ticketId: ticket.id,
-                threadId,
-                source: 'discord' as const,
-            });
-
-            // Update ticket status if it was waiting on customer
-            if (ticket.status === 'WAITING_ON_CUSTOMER' || ticket.status === 'RESOLVED') {
-                await prisma.ticket.update({
-                    where: { id: ticket.id },
-                    data: { status: 'OPEN' },
-                });
-            }
-        }
     } catch (error) {
         console.error(
             `[Discord Bot] Failed to process message in thread ${threadId}:`,

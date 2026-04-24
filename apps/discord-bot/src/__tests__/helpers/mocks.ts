@@ -32,6 +32,9 @@ export function mockPrisma(): Record<string, unknown> {
             onboardingMember: {
                 upsert: vi.fn(),
             },
+            ticketExternalLink: {
+                create: vi.fn(),
+            },
         },
     };
 }

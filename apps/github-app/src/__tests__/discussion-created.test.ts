@@ -4,12 +4,46 @@ import { mockPrisma, mockQueue } from './helpers/mocks.js';
 vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 vi.mock('@copilotkit/outpost/queue', () => mockQueue());
 
+const mockHandleResult = {
+    ticketId: 'ticket-disc-id',
+    displayId: 'TKT-DS01',
+    isNewTicket: true,
+    aiJobEnqueued: true,
+    messageId: 'message-disc-id',
+};
+
+const mockHandle = vi.fn().mockResolvedValue(mockHandleResult);
+const mockParseInboundEvent = vi.fn().mockReturnValue({
+    kind: 'new_ticket',
+    source: 'GITHUB_DISCUSSION',
+    sourceId: 'CopilotKit/CopilotKit#7',
+    sourceUrl: 'https://github.com/CopilotKit/CopilotKit/discussions/7',
+    channel: 'CopilotKit/CopilotKit',
+    title: 'How to use CopilotKit with Vue?',
+    body: 'I want to integrate CopilotKit into my Vue.js app.',
+    author: 'curious-dev (888)',
+    isBot: false,
+    authorLogin: 'curious-dev',
+});
+const mockPostSystemMessage = vi.fn().mockResolvedValue(undefined);
+const mockPostResponse = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('@copilotkit/outpost/shared', () => ({
     generateTicketId: vi.fn().mockReturnValue('TKT-DS01'),
     truncate: vi.fn((str: string, _len: number) => str),
+    InboundHandler: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+        this.handle = mockHandle;
+    }),
+    GitHubPlatformAdapter: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+        this.parseInboundEvent = mockParseInboundEvent;
+        this.postSystemMessage = mockPostSystemMessage;
+        this.postResponse = mockPostResponse;
+        this.name = 'github';
+    }),
 }));
 
 vi.mock('../lib/github-client.js', () => ({
+    getOctokit: vi.fn().mockReturnValue({}),
     postDiscussionComment: vi.fn().mockResolvedValue('comment-node-id'),
 }));
 
@@ -26,8 +60,7 @@ vi.mock('../config.js', () => ({
 
 import { handleDiscussionCreated } from '../webhooks/discussion-created.js';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { postDiscussionComment } from '../lib/github-client.js';
+import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 
 function makeEvent(overrides: Record<string, unknown> = {}): EmitterWebhookEvent<'discussion.created'> {
@@ -61,70 +94,77 @@ function makeEvent(overrides: Record<string, unknown> = {}): EmitterWebhookEvent
 
 describe('handleDiscussionCreated', () => {
     beforeEach(() => {
-        vi.mocked(prisma.ticket.create).mockResolvedValue({
-            id: 'ticket-disc-id',
-            displayId: 'TKT-DS01',
-        } as ReturnType<typeof prisma.ticket.create> extends Promise<infer T> ? T : never);
-
-        vi.mocked(prisma.message.create).mockResolvedValue({
-            id: 'message-disc-id',
-        } as ReturnType<typeof prisma.message.create> extends Promise<infer T> ? T : never);
+        vi.mocked(prisma.ticketExternalLink.create).mockResolvedValue({
+            id: 'link-disc-1',
+            ticketId: 'ticket-disc-id',
+            plugin: 'github',
+            externalId: 'CopilotKit/CopilotKit#7',
+        } as ReturnType<typeof prisma.ticketExternalLink.create> extends Promise<infer T> ? T : never);
     });
 
-    it('creates a ticket with source=GITHUB_DISCUSSION and enqueues AI job', async () => {
+    it('uses GitHubPlatformAdapter to parse the event', async () => {
         const event = makeEvent();
         await handleDiscussionCreated(event);
 
-        expect(prisma.ticket.create).toHaveBeenCalledWith({
-            data: expect.objectContaining({
-                displayId: 'TKT-DS01',
-                source: 'GITHUB_DISCUSSION',
-                sourceId: 'CopilotKit/CopilotKit#7',
-                status: 'OPEN',
-                priority: 'MEDIUM',
-                type: 'QUESTION',
-                channel: 'CopilotKit/CopilotKit',
-            }),
+        expect(GitHubPlatformAdapter).toHaveBeenCalled();
+        expect(mockParseInboundEvent).toHaveBeenCalledWith({
+            action: 'created',
+            discussion: event.payload.discussion,
+            repository: event.payload.repository,
+            sender: event.payload.sender,
         });
+    });
 
-        expect(prisma.message.create).toHaveBeenCalledWith({
-            data: expect.objectContaining({
+    it('uses InboundHandler to create ticket and enqueue AI job', async () => {
+        const event = makeEvent();
+        await handleDiscussionCreated(event);
+
+        expect(InboundHandler).toHaveBeenCalled();
+        expect(mockHandle).toHaveBeenCalled();
+    });
+
+    it('creates TicketExternalLink for bidirectional sync', async () => {
+        const event = makeEvent();
+        await handleDiscussionCreated(event);
+
+        expect(prisma.ticketExternalLink.create).toHaveBeenCalledWith({
+            data: {
                 ticketId: 'ticket-disc-id',
-                type: 'USER',
-            }),
+                plugin: 'github',
+                externalId: 'CopilotKit/CopilotKit#7',
+                externalUrl: 'https://github.com/CopilotKit/CopilotKit/discussions/7',
+            },
         });
+    });
 
-        expect(createJob).toHaveBeenCalledWith(
-            JobType.AI_RESPONSE,
+    it('posts acknowledgment via adapter.postSystemMessage with discussion node_id', async () => {
+        const event = makeEvent();
+        await handleDiscussionCreated(event);
+
+        expect(mockPostSystemMessage).toHaveBeenCalledWith(
             expect.objectContaining({
-                ticketId: 'ticket-disc-id',
-                source: 'github',
+                id: 'ticket-disc-id',
+                discussionNodeId: 'D_kwDOTest1234',
+                source: 'GITHUB_DISCUSSION',
             }),
-        );
-    });
-
-    it('posts an acknowledgment comment via GraphQL', async () => {
-        const event = makeEvent();
-        await handleDiscussionCreated(event);
-
-        expect(postDiscussionComment).toHaveBeenCalledWith(
-            'D_kwDOTest1234',
             expect.stringContaining('TKT-DS01'),
         );
     });
 
-    it('stores the discussion URL as sourceUrl', async () => {
-        const event = makeEvent();
-        await handleDiscussionCreated(event);
-
-        expect(prisma.ticket.create).toHaveBeenCalledWith({
-            data: expect.objectContaining({
-                sourceUrl: 'https://github.com/CopilotKit/CopilotKit/discussions/7',
-            }),
-        });
-    });
-
     it('handles discussions with no body gracefully', async () => {
+        mockParseInboundEvent.mockReturnValueOnce({
+            kind: 'new_ticket',
+            source: 'GITHUB_DISCUSSION',
+            sourceId: 'CopilotKit/CopilotKit#8',
+            sourceUrl: 'https://github.com/CopilotKit/CopilotKit/discussions/8',
+            channel: 'CopilotKit/CopilotKit',
+            title: 'Empty discussion',
+            body: '',
+            author: 'curious-dev (888)',
+            isBot: false,
+            authorLogin: 'curious-dev',
+        });
+
         const event = makeEvent({
             discussion: {
                 number: 8,
@@ -137,8 +177,8 @@ describe('handleDiscussionCreated', () => {
 
         await handleDiscussionCreated(event);
 
-        expect(prisma.ticket.create).toHaveBeenCalled();
-        expect(prisma.message.create).not.toHaveBeenCalled();
-        expect(createJob).toHaveBeenCalled();
+        // Should still use InboundHandler (ticket creation happens there)
+        expect(InboundHandler).toHaveBeenCalled();
+        expect(mockHandle).toHaveBeenCalled();
     });
 });
