@@ -50,7 +50,7 @@ jobs:
               # Typecheck and tests still validate all web source code.
 
             - name: Lint
-              run: pnpm lint
+              run: ESLINT_USE_FLAT_CONFIG=false pnpm lint
 
             - name: Typecheck
               run: pnpm typecheck
