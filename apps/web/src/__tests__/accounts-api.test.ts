@@ -1,145 +1,213 @@
-import { describe, it, expect } from 'vitest';
-import {
-    MOCK_ACCOUNTS_FULL,
-    filterMockAccounts,
-    findMockAccountFull,
-    getAccountsWithTicketCounts,
-} from '@/lib/mock-accounts';
-import { AccountSentiment, AccountEngagement } from '@copilotkit/outpost/shared';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-describe('Accounts API logic', () => {
-    describe('MOCK_ACCOUNTS_FULL', () => {
-        it('has 10 mock accounts', () => {
-            expect(MOCK_ACCOUNTS_FULL).toHaveLength(10);
-        });
+// ─── Mock Prisma ────────────────────────────────────────────────────────────
 
-        it('every account has required fields', () => {
-            for (const account of MOCK_ACCOUNTS_FULL) {
-                expect(account.id).toBeTruthy();
-                expect(account.name).toBeTruthy();
-                expect(account.sentiment).toBeTruthy();
-                expect(account.engagement).toBeTruthy();
-                expect(account.createdAt).toBeTruthy();
-                expect(account.updatedAt).toBeTruthy();
-            }
-        });
+const mockAccountFindMany = vi.fn();
+const mockAccountFindUnique = vi.fn();
+const mockAccountCreate = vi.fn();
+const mockAccountUpdate = vi.fn();
+const mockTicketGroupBy = vi.fn();
+
+vi.mock('@copilotkit/outpost/db', () => ({
+    prisma: {
+        account: {
+            findMany: (...args: unknown[]) => mockAccountFindMany(...args),
+            findUnique: (...args: unknown[]) => mockAccountFindUnique(...args),
+            create: (...args: unknown[]) => mockAccountCreate(...args),
+            update: (...args: unknown[]) => mockAccountUpdate(...args),
+        },
+        ticket: {
+            groupBy: (...args: unknown[]) => mockTicketGroupBy(...args),
+        },
+    },
+}));
+
+// Import after mocks
+import { GET, POST } from '@/app/api/accounts/route';
+import { GET as GET_BY_ID, PATCH } from '@/app/api/accounts/[id]/route';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+import { NextRequest } from 'next/server';
+
+function makeGetRequest(url: string): NextRequest {
+    return new NextRequest(url, { method: 'GET' });
+}
+
+function makeJsonRequest(url: string, body: unknown, method = 'POST'): NextRequest {
+    return new NextRequest(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+}
+
+const MOCK_ACCOUNT = {
+    id: 'acc-1',
+    name: 'Acme Corp',
+    domain: 'acme.com',
+    owner: 'Alice',
+    sentiment: 'HAPPY',
+    engagement: 'HIGH',
+    acv: 120000,
+    closeDate: new Date('2025-06-15'),
+    createdAt: new Date('2024-09-15'),
+    updatedAt: new Date('2025-04-14'),
+    _count: { tickets: 3 },
+};
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+describe('GET /api/accounts', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
     });
 
-    describe('getAccountsWithTicketCounts', () => {
-        it('returns all accounts with ticket count properties', () => {
-            const accounts = getAccountsWithTicketCounts();
-            expect(accounts).toHaveLength(10);
-            for (const account of accounts) {
-                expect(account).toHaveProperty('openTickets');
-                expect(account).toHaveProperty('inProgressTickets');
-                expect(account).toHaveProperty('closedTickets');
-                expect(typeof account.openTickets).toBe('number');
-                expect(typeof account.inProgressTickets).toBe('number');
-                expect(typeof account.closedTickets).toBe('number');
-            }
-        });
+    it('returns accounts with ticket counts', async () => {
+        mockAccountFindMany.mockResolvedValue([MOCK_ACCOUNT]);
+        mockTicketGroupBy.mockResolvedValue([
+            { accountId: 'acc-1', status: 'OPEN', _count: 2 },
+            { accountId: 'acc-1', status: 'IN_PROGRESS', _count: 1 },
+        ]);
 
-        it('acc-1 has correct ticket counts from mock ticket data', () => {
-            const accounts = getAccountsWithTicketCounts();
-            const acme = accounts.find(a => a.id === 'acc-1');
-            expect(acme).toBeDefined();
-            // acc-1 (Acme Corp) has tickets tkt-1 (OPEN), tkt-4 (WAITING_ON_TEAM), tkt-5 (OPEN)
-            expect(acme!.openTickets).toBe(3);
-            expect(acme!.inProgressTickets).toBe(0);
-            expect(acme!.closedTickets).toBe(0);
-        });
+        const req = makeGetRequest('http://localhost:3000/api/accounts');
+        const res = await GET(req as never);
+        const body = await res.json();
+
+        expect(body.accounts).toHaveLength(1);
+        expect(body.accounts[0].openTickets).toBe(2);
+        expect(body.accounts[0].inProgressTickets).toBe(1);
+        expect(body.accounts[0].closedTickets).toBe(0);
+        expect(body.total).toBe(1);
     });
 
-    describe('findMockAccountFull', () => {
-        it('finds account by ID', () => {
-            const account = findMockAccountFull('acc-1');
-            expect(account).toBeDefined();
-            expect(account!.name).toBe('Acme Corp');
-        });
+    it('returns empty array when no accounts exist', async () => {
+        mockAccountFindMany.mockResolvedValue([]);
+        mockTicketGroupBy.mockResolvedValue([]);
 
-        it('returns ticket counts for found account', () => {
-            const account = findMockAccountFull('acc-1');
-            expect(account).toBeDefined();
-            expect(account).toHaveProperty('openTickets');
-            expect(account).toHaveProperty('inProgressTickets');
-            expect(account).toHaveProperty('closedTickets');
-        });
+        const req = makeGetRequest('http://localhost:3000/api/accounts');
+        const res = await GET(req as never);
+        const body = await res.json();
 
-        it('returns undefined for non-existent ID', () => {
-            const account = findMockAccountFull('nonexistent');
-            expect(account).toBeUndefined();
-        });
+        expect(body.accounts).toHaveLength(0);
+        expect(body.total).toBe(0);
     });
 
-    describe('filterMockAccounts', () => {
-        it('returns all accounts when no filters applied', () => {
-            const result = filterMockAccounts({});
-            expect(result).toHaveLength(10);
+    it('passes search filter to Prisma', async () => {
+        mockAccountFindMany.mockResolvedValue([]);
+        mockTicketGroupBy.mockResolvedValue([]);
+
+        const req = makeGetRequest('http://localhost:3000/api/accounts?search=acme');
+        await GET(req as never);
+
+        expect(mockAccountFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    OR: expect.arrayContaining([
+                        expect.objectContaining({ name: expect.objectContaining({ contains: 'acme' }) }),
+                    ]),
+                }),
+            }),
+        );
+    });
+});
+
+describe('POST /api/accounts', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('creates an account', async () => {
+        const created = { ...MOCK_ACCOUNT, id: 'acc-new' };
+        mockAccountCreate.mockResolvedValue(created);
+
+        const req = makeJsonRequest('http://localhost:3000/api/accounts', {
+            name: 'New Corp',
+            domain: 'new.com',
+        });
+        const res = await POST(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(201);
+        expect(body.openTickets).toBe(0);
+        expect(mockAccountCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects when name is missing', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/accounts', {});
+        const res = await POST(req as never);
+
+        expect(res.status).toBe(400);
+        const body = await res.json();
+        expect(body.error).toBe('name is required');
+    });
+});
+
+describe('GET /api/accounts/[id]', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('returns account with ticket counts', async () => {
+        mockAccountFindUnique.mockResolvedValue({
+            ...MOCK_ACCOUNT,
+            users: [],
+            tickets: [
+                { id: 't1', status: 'OPEN' },
+                { id: 't2', status: 'CLOSED' },
+            ],
         });
 
-        it('filters by search term matching name', () => {
-            const result = filterMockAccounts({ search: 'Acme' });
-            expect(result).toHaveLength(1);
-            expect(result[0].name).toBe('Acme Corp');
-        });
+        const req = makeGetRequest('http://localhost:3000/api/accounts/acc-1');
+        const res = await GET_BY_ID(req as never, { params: Promise.resolve({ id: 'acc-1' }) });
+        const body = await res.json();
 
-        it('filters by search term matching domain', () => {
-            const result = filterMockAccounts({ search: 'techstart' });
-            expect(result).toHaveLength(1);
-            expect(result[0].domain).toBe('techstart.io');
-        });
+        expect(body.openTickets).toBe(1);
+        expect(body.closedTickets).toBe(1);
+    });
 
-        it('filters by search term matching owner', () => {
-            const result = filterMockAccounts({ search: 'Jordan' });
-            expect(result.length).toBeGreaterThan(0);
-            expect(result.every(a => a.owner?.includes('Jordan'))).toBe(true);
-        });
+    it('returns 404 for non-existent account', async () => {
+        mockAccountFindUnique.mockResolvedValue(null);
 
-        it('filters by owner', () => {
-            const result = filterMockAccounts({ owner: 'Atai Barkai' });
-            expect(result.length).toBeGreaterThan(0);
-            expect(result.every(a => a.owner === 'Atai Barkai')).toBe(true);
-        });
+        const req = makeGetRequest('http://localhost:3000/api/accounts/nope');
+        const res = await GET_BY_ID(req as never, { params: Promise.resolve({ id: 'nope' }) });
 
-        it('filters by sentiment', () => {
-            const result = filterMockAccounts({ sentiment: [AccountSentiment.HAPPY] });
-            expect(result.length).toBeGreaterThan(0);
-            expect(result.every(a => a.sentiment === AccountSentiment.HAPPY)).toBe(true);
-        });
+        expect(res.status).toBe(404);
+    });
+});
 
-        it('filters by engagement', () => {
-            const result = filterMockAccounts({ engagement: [AccountEngagement.HIGH] });
-            expect(result.length).toBeGreaterThan(0);
-            expect(result.every(a => a.engagement === AccountEngagement.HIGH)).toBe(true);
-        });
+describe('PATCH /api/accounts/[id]', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
 
-        it('returns empty for non-matching search', () => {
-            const result = filterMockAccounts({ search: 'zzzznonexistent' });
-            expect(result).toHaveLength(0);
-        });
+    it('updates account fields', async () => {
+        mockAccountFindUnique.mockResolvedValue(MOCK_ACCOUNT);
+        mockAccountUpdate.mockResolvedValue({ ...MOCK_ACCOUNT, owner: 'Bob' });
 
-        it('sorts by name ascending', () => {
-            const result = filterMockAccounts({ sort: 'name', sortDir: 'asc' });
-            for (let i = 1; i < result.length; i++) {
-                expect(result[i].name.localeCompare(result[i - 1].name)).toBeGreaterThanOrEqual(0);
-            }
-        });
+        const req = makeJsonRequest('http://localhost:3000/api/accounts/acc-1', { owner: 'Bob' }, 'PATCH');
+        const res = await PATCH(req as never, { params: Promise.resolve({ id: 'acc-1' }) });
+        const body = await res.json();
 
-        it('sorts by acv descending', () => {
-            const result = filterMockAccounts({ sort: 'acv', sortDir: 'desc' });
-            const withAcv = result.filter(a => a.acv != null);
-            for (let i = 1; i < withAcv.length; i++) {
-                expect(withAcv[i].acv!).toBeLessThanOrEqual(withAcv[i - 1].acv!);
-            }
-        });
+        expect(body.owner).toBe('Bob');
+        expect(mockAccountUpdate).toHaveBeenCalledTimes(1);
+    });
 
-        it('combines search and sentiment filters', () => {
-            const result = filterMockAccounts({
-                search: 'Acme',
-                sentiment: [AccountSentiment.HAPPY],
-            });
-            expect(result).toHaveLength(1);
-            expect(result[0].name).toBe('Acme Corp');
-        });
+    it('returns 404 for non-existent account', async () => {
+        mockAccountFindUnique.mockResolvedValue(null);
+
+        const req = makeJsonRequest('http://localhost:3000/api/accounts/nope', { owner: 'Bob' }, 'PATCH');
+        const res = await PATCH(req as never, { params: Promise.resolve({ id: 'nope' }) });
+
+        expect(res.status).toBe(404);
+    });
+
+    it('returns 400 when no valid fields provided', async () => {
+        mockAccountFindUnique.mockResolvedValue(MOCK_ACCOUNT);
+
+        const req = makeJsonRequest('http://localhost:3000/api/accounts/acc-1', { invalid: 'field' }, 'PATCH');
+        const res = await PATCH(req as never, { params: Promise.resolve({ id: 'acc-1' }) });
+
+        expect(res.status).toBe(400);
     });
 });

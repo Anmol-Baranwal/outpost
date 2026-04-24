@@ -1,155 +1,255 @@
-import { describe, it, expect } from 'vitest';
-import {
-    MOCK_SYNC_EVENTS,
-    MOCK_SYSTEM_STATUS,
-    MOCK_MAPPING_CONFIG,
-    filterSyncEvents,
-    getUnresolvedConflicts,
-    getSyncHealthColor,
-} from '@/lib/mock-sync';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-describe('Sync Status API data', () => {
-    it('returns system status with correct shape', () => {
-        expect(MOCK_SYSTEM_STATUS).toBeInstanceOf(Array);
-        expect(MOCK_SYSTEM_STATUS.length).toBeGreaterThan(0);
+// ─── Mock Prisma ────────────────────────────────────────────────────────────
 
-        for (const sys of MOCK_SYSTEM_STATUS) {
-            expect(sys).toHaveProperty('plugin');
-            expect(sys).toHaveProperty('lastSuccessfulSync');
-            expect(sys).toHaveProperty('pendingCount');
-            expect(sys).toHaveProperty('failedCount');
-            expect(sys).toHaveProperty('p50LatencyMs');
-            expect(sys).toHaveProperty('p95LatencyMs');
-            expect(typeof sys.plugin).toBe('string');
-            expect(typeof sys.p50LatencyMs).toBe('number');
-            expect(typeof sys.p95LatencyMs).toBe('number');
-        }
+const mockSyncEventFindMany = vi.fn();
+const mockSyncEventFindFirst = vi.fn();
+const mockSyncEventFindUnique = vi.fn();
+const mockSyncEventCount = vi.fn();
+const mockSyncEventUpdate = vi.fn();
+const mockExternalIdentityFindMany = vi.fn();
+
+vi.mock('@copilotkit/outpost/db', () => ({
+    prisma: {
+        syncEvent: {
+            findMany: (...args: unknown[]) => mockSyncEventFindMany(...args),
+            findFirst: (...args: unknown[]) => mockSyncEventFindFirst(...args),
+            findUnique: (...args: unknown[]) => mockSyncEventFindUnique(...args),
+            count: (...args: unknown[]) => mockSyncEventCount(...args),
+            update: (...args: unknown[]) => mockSyncEventUpdate(...args),
+        },
+        externalIdentity: {
+            findMany: (...args: unknown[]) => mockExternalIdentityFindMany(...args),
+        },
+    },
+}));
+
+// ─── Mock queue ─────────────────────────────────────────────────────────────
+
+const mockCreateJob = vi.fn().mockResolvedValue('job-1');
+
+vi.mock('@copilotkit/outpost/queue', () => ({
+    createJob: (...args: unknown[]) => mockCreateJob(...args),
+    JobType: { TRACKER_SYNC: 'TRACKER_SYNC' },
+}));
+
+// Import after mocks
+import { GET as getStatus } from '@/app/api/sync/status/route';
+import { GET as getConflicts } from '@/app/api/sync/conflicts/route';
+import { POST as resolveConflict } from '@/app/api/sync/conflicts/[id]/resolve/route';
+import { GET as getEvents } from '@/app/api/sync/events/route';
+import { GET as getMappings, PUT as putMappings } from '@/app/api/sync/mappings/route';
+import { POST as forceSync } from '@/app/api/sync/force/route';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+import { NextRequest } from 'next/server';
+
+function makeGetRequest(url: string): NextRequest {
+    return new NextRequest(url, { method: 'GET' });
+}
+
+function makeJsonRequest(url: string, body: unknown, method = 'POST'): NextRequest {
+    return new NextRequest(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+describe('GET /api/sync/status', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns system status', async () => {
+        mockSyncEventFindMany.mockResolvedValue([
+            { sourcePlugin: 'github', targetPlugin: 'outpost' },
+            { sourcePlugin: 'outpost', targetPlugin: 'linear' },
+        ]);
+        mockSyncEventFindFirst.mockResolvedValue({ createdAt: new Date() });
+        mockSyncEventCount.mockResolvedValue(0);
+
+        const res = await getStatus();
+        const body = await res.json();
+
+        expect(body.systems).toBeDefined();
+        expect(Array.isArray(body.systems)).toBe(true);
     });
 
-    it('includes github and linear systems', () => {
-        const plugins = MOCK_SYSTEM_STATUS.map((s) => s.plugin);
-        expect(plugins).toContain('github');
-        expect(plugins).toContain('linear');
-    });
-});
+    it('returns empty when no sync events exist', async () => {
+        mockSyncEventFindMany.mockResolvedValue([]);
 
-describe('Sync Events filtering', () => {
-    it('returns all events when no filters applied', () => {
-        const result = filterSyncEvents({});
-        expect(result).toHaveLength(MOCK_SYNC_EVENTS.length);
-    });
+        const res = await getStatus();
+        const body = await res.json();
 
-    it('filters by sourcePlugin', () => {
-        const result = filterSyncEvents({ sourcePlugin: 'github' });
-        expect(result.length).toBeGreaterThan(0);
-        expect(result.every((e) => e.sourcePlugin === 'github')).toBe(true);
-    });
-
-    it('filters by status', () => {
-        const result = filterSyncEvents({ status: 'failed' });
-        expect(result.length).toBeGreaterThan(0);
-        expect(result.every((e) => e.status === 'failed')).toBe(true);
-    });
-
-    it('returns events sorted by date descending', () => {
-        const result = filterSyncEvents({});
-        for (let i = 1; i < result.length; i++) {
-            const a = new Date(result[i - 1].createdAt).getTime();
-            const b = new Date(result[i].createdAt).getTime();
-            expect(a).toBeGreaterThanOrEqual(b);
-        }
-    });
-
-    it('each event has required fields', () => {
-        for (const event of MOCK_SYNC_EVENTS) {
-            expect(event).toHaveProperty('id');
-            expect(event).toHaveProperty('sourcePlugin');
-            expect(event).toHaveProperty('targetPlugin');
-            expect(event).toHaveProperty('ticketId');
-            expect(event).toHaveProperty('action');
-            expect(event).toHaveProperty('status');
-            expect(event).toHaveProperty('createdAt');
-        }
-    });
-});
-
-describe('Conflicts', () => {
-    it('returns only unresolved conflicts', () => {
-        const conflicts = getUnresolvedConflicts();
-        expect(conflicts.length).toBeGreaterThan(0);
-        for (const c of conflicts) {
-            expect(c.status).toBe('conflict');
-            expect(c.resolvedAt).toBeUndefined();
-        }
-    });
-
-    it('conflicts have conflict-specific fields', () => {
-        const conflicts = getUnresolvedConflicts();
-        for (const c of conflicts) {
-            expect(c.conflictField).toBeDefined();
-            expect(c.sourceValue).toBeDefined();
-            expect(c.targetValue).toBeDefined();
-        }
+        expect(body.systems).toHaveLength(0);
     });
 });
 
-describe('getSyncHealthColor', () => {
-    it('returns green for sync less than 5 minutes ago', () => {
-        const recent = new Date(Date.now() - 2 * 60_000).toISOString();
-        expect(getSyncHealthColor(recent)).toBe('green');
+describe('GET /api/sync/conflicts', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns unresolved conflicts', async () => {
+        const conflicts = [
+            { id: 'se-1', status: 'conflict', sourcePlugin: 'linear', targetPlugin: 'outpost' },
+        ];
+        mockSyncEventFindMany.mockResolvedValue(conflicts);
+
+        const res = await getConflicts();
+        const body = await res.json();
+
+        expect(body.conflicts).toHaveLength(1);
+        expect(body.total).toBe(1);
     });
 
-    it('returns yellow for sync between 5 and 30 minutes ago', () => {
-        const medium = new Date(Date.now() - 15 * 60_000).toISOString();
-        expect(getSyncHealthColor(medium)).toBe('yellow');
-    });
+    it('returns empty when no conflicts', async () => {
+        mockSyncEventFindMany.mockResolvedValue([]);
 
-    it('returns red for sync more than 30 minutes ago', () => {
-        const old = new Date(Date.now() - 60 * 60_000).toISOString();
-        expect(getSyncHealthColor(old)).toBe('red');
-    });
+        const res = await getConflicts();
+        const body = await res.json();
 
-    it('returns green for sync exactly now', () => {
-        expect(getSyncHealthColor(new Date().toISOString())).toBe('green');
+        expect(body.conflicts).toHaveLength(0);
     });
 });
 
-describe('Mapping config shape', () => {
-    it('has statusMappings for linear and github', () => {
-        expect(MOCK_MAPPING_CONFIG.statusMappings).toHaveProperty('linear');
-        expect(MOCK_MAPPING_CONFIG.statusMappings).toHaveProperty('github');
-        expect(MOCK_MAPPING_CONFIG.statusMappings.linear.length).toBeGreaterThan(0);
-        expect(MOCK_MAPPING_CONFIG.statusMappings.github.length).toBeGreaterThan(0);
+describe('POST /api/sync/conflicts/[id]/resolve', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('resolves a conflict', async () => {
+        mockSyncEventFindUnique.mockResolvedValue({ id: 'se-1', status: 'conflict' });
+        mockSyncEventUpdate.mockResolvedValue({ id: 'se-1', status: 'success' });
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', { resolution: 'outpost' });
+        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'se-1' }) });
+        const body = await res.json();
+
+        expect(body.success).toBe(true);
+        expect(body.resolution).toBe('outpost');
     });
 
-    it('has priorityMappings for linear and github', () => {
-        expect(MOCK_MAPPING_CONFIG.priorityMappings).toHaveProperty('linear');
-        expect(MOCK_MAPPING_CONFIG.priorityMappings).toHaveProperty('github');
+    it('returns 404 for non-existent conflict', async () => {
+        mockSyncEventFindUnique.mockResolvedValue(null);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/nope/resolve', { resolution: 'outpost' });
+        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'nope' }) });
+
+        expect(res.status).toBe(404);
     });
 
-    it('has identity mappings with correct shape', () => {
-        expect(MOCK_MAPPING_CONFIG.identityMappings.length).toBeGreaterThan(0);
-        for (const mapping of MOCK_MAPPING_CONFIG.identityMappings) {
-            expect(mapping).toHaveProperty('id');
-            expect(mapping).toHaveProperty('externalPlugin');
-            expect(mapping).toHaveProperty('externalUserId');
-            expect(mapping).toHaveProperty('externalDisplayName');
-        }
+    it('rejects invalid resolution', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', { resolution: 'invalid' });
+        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'se-1' }) });
+
+        expect(res.status).toBe(400);
     });
 
-    it('has label rules for github and linear', () => {
-        expect(MOCK_MAPPING_CONFIG.labelRules).toHaveProperty('github');
-        expect(MOCK_MAPPING_CONFIG.labelRules).toHaveProperty('linear');
+    it('rejects when event is not a conflict', async () => {
+        mockSyncEventFindUnique.mockResolvedValue({ id: 'se-1', status: 'success' });
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', { resolution: 'outpost' });
+        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'se-1' }) });
+
+        expect(res.status).toBe(400);
+    });
+});
+
+describe('GET /api/sync/events', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns paginated events', async () => {
+        const events = [{ id: 'se-1', sourcePlugin: 'github', status: 'success' }];
+        mockSyncEventFindMany.mockResolvedValue(events);
+        mockSyncEventCount.mockResolvedValue(1);
+
+        const req = makeGetRequest('http://localhost:3000/api/sync/events');
+        const res = await getEvents(req as never);
+        const body = await res.json();
+
+        expect(body.events).toHaveLength(1);
+        expect(body.total).toBe(1);
+        expect(body.page).toBe(1);
     });
 
-    it('status mapping entries have correct shape', () => {
-        for (const entries of Object.values(MOCK_MAPPING_CONFIG.statusMappings)) {
-            for (const entry of entries) {
-                expect(entry).toHaveProperty('externalStatus');
-                expect(entry).toHaveProperty('outpostStatus');
-                expect(typeof entry.externalStatus).toBe('string');
-                expect(typeof entry.outpostStatus).toBe('string');
-            }
-        }
+    it('returns empty when no events', async () => {
+        mockSyncEventFindMany.mockResolvedValue([]);
+        mockSyncEventCount.mockResolvedValue(0);
+
+        const req = makeGetRequest('http://localhost:3000/api/sync/events');
+        const res = await getEvents(req as never);
+        const body = await res.json();
+
+        expect(body.events).toHaveLength(0);
+        expect(body.total).toBe(0);
+    });
+});
+
+describe('GET /api/sync/mappings', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns mapping config', async () => {
+        mockExternalIdentityFindMany.mockResolvedValue([]);
+
+        const res = await getMappings();
+        const body = await res.json();
+
+        expect(body.statusMappings).toBeDefined();
+        expect(body.priorityMappings).toBeDefined();
+        expect(body.identityMappings).toBeDefined();
+        expect(body.labelRules).toBeDefined();
+    });
+});
+
+describe('PUT /api/sync/mappings', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns 501 for valid mapping update (persistence not yet implemented)', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: { linear: [] },
+            priorityMappings: { linear: [] },
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(501);
+        const body = await res.json();
+        expect(body.error).toContain('not yet implemented');
+    });
+
+    it('rejects when required fields missing', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {}, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+    });
+});
+
+describe('POST /api/sync/force', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns 501 for force sync (bulk sync not yet implemented)', async () => {
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'github' });
+        const res = await forceSync(req as never);
+
+        expect(res.status).toBe(501);
+        const body = await res.json();
+        expect(body.error).toContain('not yet implemented');
+    });
+
+    it('returns 404 for unknown plugin', async () => {
+        mockSyncEventFindFirst.mockResolvedValue(null);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'unknown' });
+        const res = await forceSync(req as never);
+
+        expect(res.status).toBe(404);
+    });
+
+    it('rejects when plugin is missing', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', {});
+        const res = await forceSync(req as never);
+
+        expect(res.status).toBe(400);
     });
 });

@@ -1,41 +1,20 @@
 import { NextResponse } from 'next/server';
-import { MOCK_PENDING_MESSAGES } from '@/lib/mock-messages';
-import { MessageStatus, MessageSource, checkUnansweredMessages } from '@copilotkit/outpost/shared';
 
 /**
  * GET /api/messaging/stats
  *
  * Returns messaging statistics: total pending, overdue count, source breakdown.
+ *
+ * Note: There is no Prisma model for pending messages yet (Slack/Teams
+ * messages are handled externally). This endpoint returns sensible defaults
+ * until a messaging model is added to the schema.
  */
 export async function GET() {
-    const now = new Date();
-    const unanswered = MOCK_PENDING_MESSAGES.filter(
-        (m) => m.status === MessageStatus.UNANSWERED,
-    );
-    const overdue = checkUnansweredMessages(MOCK_PENDING_MESSAGES, now);
-    const slackCount = MOCK_PENDING_MESSAGES.filter(
-        (m) => m.source === MessageSource.SLACK,
-    ).length;
-    const teamsCount = MOCK_PENDING_MESSAGES.filter(
-        (m) => m.source === MessageSource.TEAMS,
-    ).length;
-
-    // Average response time for answered messages
-    const answered = MOCK_PENDING_MESSAGES.filter(
-        (m) => m.status === MessageStatus.ANSWERED && m.answeredAt,
-    );
-    const avgResponseTimeMs =
-        answered.length > 0
-            ? answered.reduce((sum, m) => {
-                  return sum + (new Date(m.answeredAt!).getTime() - new Date(m.receivedAt).getTime());
-              }, 0) / answered.length
-            : 0;
-
     return NextResponse.json({
-        totalPending: unanswered.length,
-        overdueCount: overdue.length,
-        slackCount,
-        teamsCount,
-        avgResponseTimeMs,
+        totalPending: 0,
+        overdueCount: 0,
+        slackCount: 0,
+        teamsCount: 0,
+        avgResponseTimeMs: 0,
     });
 }

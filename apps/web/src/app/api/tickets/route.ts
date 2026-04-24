@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { filterMockTickets, MOCK_TICKETS } from '@/lib/mock-tickets';
+import { prisma } from '@copilotkit/outpost/db';
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, generateTicketId } from '@copilotkit/outpost/shared';
-import { TicketStatus, TicketPriority, TicketType, TicketSource } from '@copilotkit/outpost/shared';
+import { TicketStatus, TicketPriority, TicketType, TicketSource, Prisma } from '@copilotkit/outpost/db';
 
 /**
  * GET /api/tickets
@@ -10,48 +10,89 @@ import { TicketStatus, TicketPriority, TicketType, TicketSource } from '@copilot
  * Query params: status, source, priority, type, accountId, assigneeId, search, page, pageSize
  */
 export async function GET(request: NextRequest) {
-    const { searchParams } = request.nextUrl;
+    try {
+        const { searchParams } = request.nextUrl;
 
-    const status = searchParams.getAll('status');
-    const source = searchParams.getAll('source');
-    const priority = searchParams.getAll('priority');
-    const type = searchParams.getAll('type');
-    const accountId = searchParams.get('accountId') || undefined;
-    const assigneeId = searchParams.get('assigneeId') || undefined;
-    const search = searchParams.get('search') || undefined;
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const pageSize = Math.min(
-        MAX_PAGE_SIZE,
-        Math.max(1, parseInt(searchParams.get('pageSize') || String(DEFAULT_PAGE_SIZE), 10)),
-    );
+        const status = searchParams.getAll('status');
+        const source = searchParams.getAll('source');
+        const priority = searchParams.getAll('priority');
+        const type = searchParams.getAll('type');
+        const accountId = searchParams.get('accountId') || undefined;
+        const assigneeId = searchParams.get('assigneeId') || undefined;
+        const search = searchParams.get('search') || undefined;
+        const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+        const pageSize = Math.min(
+            MAX_PAGE_SIZE,
+            Math.max(1, parseInt(searchParams.get('pageSize') || String(DEFAULT_PAGE_SIZE), 10)),
+        );
 
-    const filtered = filterMockTickets({
-        status: status.length ? status : undefined,
-        source: source.length ? source : undefined,
-        priority: priority.length ? priority : undefined,
-        type: type.length ? type : undefined,
-        accountId,
-        assigneeId,
-        search,
-    });
+        const where: Prisma.TicketWhereInput = {};
 
-    const total = filtered.length;
-    const startIndex = (page - 1) * pageSize;
-    const tickets = filtered.slice(startIndex, startIndex + pageSize);
+        if (status.length) {
+            where.status = { in: status as TicketStatus[] };
+        }
+        if (source.length) {
+            where.source = { in: source as TicketSource[] };
+        }
+        if (priority.length) {
+            where.priority = { in: priority as TicketPriority[] };
+        }
+        if (type.length) {
+            where.type = { in: type as TicketType[] };
+        }
+        if (accountId) {
+            where.accountId = accountId;
+        }
+        if (assigneeId) {
+            where.assigneeId = assigneeId;
+        }
+        if (search) {
+            const q = search.toLowerCase();
+            where.OR = [
+                { title: { contains: q, mode: 'insensitive' } },
+                { description: { contains: q, mode: 'insensitive' } },
+                { displayId: { contains: q, mode: 'insensitive' } },
+                { account: { name: { contains: q, mode: 'insensitive' } } },
+                { user: { name: { contains: q, mode: 'insensitive' } } },
+            ];
+        }
 
-    return NextResponse.json({
-        tickets,
-        total,
-        page,
-        pageSize,
-    });
+        const [tickets, total] = await Promise.all([
+            prisma.ticket.findMany({
+                where,
+                include: {
+                    account: true,
+                    user: true,
+                    assignee: true,
+                    messages: { take: 1, orderBy: { createdAt: 'desc' } },
+                },
+                orderBy: { createdAt: 'desc' },
+                take: pageSize,
+                skip: (page - 1) * pageSize,
+            }),
+            prisma.ticket.count({ where }),
+        ]);
+
+        return NextResponse.json({
+            tickets,
+            total,
+            page,
+            pageSize,
+        });
+    } catch (error) {
+        console.error('[GET /api/tickets] Error:', error);
+        return NextResponse.json(
+            { error: 'Internal server error' },
+            { status: 500 },
+        );
+    }
 }
 
 /**
  * POST /api/tickets
  *
  * Create a new ticket. Required fields: title, description.
- * Optional: priority, type, source, accountId, assigneeId.
+ * Optional: priority, type, source, accountId, assigneeId, userId, sourceUrl, additionalInfo.
  */
 export async function POST(request: NextRequest) {
     try {
@@ -64,39 +105,42 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const newTicket = {
-            id: `tkt-${Date.now()}`,
-            displayId: generateTicketId(),
-            title: body.title,
-            description: body.description,
-            status: TicketStatus.OPEN,
-            priority: (body.priority as TicketPriority) || TicketPriority.MEDIUM,
-            type: (body.type as TicketType) || TicketType.QUESTION,
-            source: (body.source as TicketSource) || TicketSource.MANUAL,
-            sourceUrl: body.sourceUrl || null,
-            additionalInfo: body.additionalInfo || null,
-            suggestedResponse: null,
-            assigneeId: body.assigneeId || null,
-            assignee: null,
-            accountId: body.accountId || null,
-            account: null,
-            userId: body.userId || null,
-            user: null,
-            messages: [],
-            notes: [],
-            slaBreachedAt: null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            unread: false,
-        };
+        const ticket = await prisma.ticket.create({
+            data: {
+                displayId: generateTicketId(),
+                title: body.title,
+                description: body.description,
+                status: TicketStatus.OPEN,
+                priority: (body.priority as TicketPriority) || TicketPriority.MEDIUM,
+                type: (body.type as TicketType) || TicketType.QUESTION,
+                source: (body.source as TicketSource) || TicketSource.MANUAL,
+                sourceUrl: body.sourceUrl || null,
+                additionalInfo: body.additionalInfo || undefined,
+                assigneeId: body.assigneeId || null,
+                accountId: body.accountId || null,
+                userId: body.userId || null,
+            },
+            include: {
+                account: true,
+                user: true,
+                assignee: true,
+                messages: true,
+                notes: true,
+            },
+        });
 
-        // In production, this would use prisma.ticket.create()
-        // For now, we return the created ticket without persisting
-        return NextResponse.json(newTicket, { status: 201 });
-    } catch {
+        return NextResponse.json(ticket, { status: 201 });
+    } catch (error) {
+        console.error('[POST /api/tickets] Error:', error);
+        if (error instanceof SyntaxError) {
+            return NextResponse.json(
+                { error: 'Invalid request body' },
+                { status: 400 },
+            );
+        }
         return NextResponse.json(
-            { error: 'Invalid request body' },
-            { status: 400 },
+            { error: 'Internal server error' },
+            { status: 500 },
         );
     }
 }

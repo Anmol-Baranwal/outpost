@@ -1,3 +1,5 @@
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { AIPipeline } from '@copilotkit/outpost/ai';
 import type { ConfidenceLevel, SearchResult } from '@copilotkit/outpost/ai';
 
@@ -16,6 +18,15 @@ import type { ConfidenceLevel, SearchResult } from '@copilotkit/outpost/ai';
  *   data: [DONE]
  */
 export async function POST(request: Request) {
+    // Auth check
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return new Response(
+            JSON.stringify({ error: 'Unauthorized' }),
+            { status: 401, headers: { 'Content-Type': 'application/json' } },
+        );
+    }
+
     let body: { question?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> };
 
     try {
@@ -48,8 +59,6 @@ export async function POST(request: Request) {
                 }
 
                 try {
-                    // First, get the full pipeline result (includes sources + confidence)
-                    // while streaming tokens
                     const result = await pipeline.generateSupportResponse(
                         question,
                         {
@@ -58,10 +67,7 @@ export async function POST(request: Request) {
                         },
                     );
 
-                    // Since the non-streaming pipeline returns the full response,
-                    // we simulate streaming by chunking the response text.
-                    // For a production setup, we'd use generateStreamingResponse
-                    // and collect metadata separately.
+                    // Stream the response text in chunks
                     const text = result.response;
                     const chunkSize = 8;
 

@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isValidLoomUrl } from '@/lib/mock-docs';
+import { prisma } from '@copilotkit/outpost/db';
+
+/**
+ * Validate that a URL is a valid Loom URL.
+ */
+function isValidLoomUrl(url: string): boolean {
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname === 'www.loom.com' || parsed.hostname === 'loom.com';
+    } catch {
+        return false;
+    }
+}
 
 /**
  * POST /api/docs/import-loom
  *
  * Accepts a Loom URL and generates a knowledge base article from the video transcript.
- * Currently stubbed -- returns a mock article after validation.
+ * Currently stubbed — creates a placeholder article after validation.
+ * In production this would fetch the Loom transcript via their API and pass it to AI.
  */
 export async function POST(request: NextRequest) {
     try {
@@ -25,22 +38,44 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Stub: In production, this would:
-        // 1. Fetch the Loom video transcript via Loom API
-        // 2. Pass transcript to AI for article generation
-        // 3. Save the generated article as a draft
-        const generatedArticle = {
-            id: `art-loom-${Date.now()}`,
-            categorySlug: body.categorySlug || 'guides',
-            title: `Article from Loom: ${body.url.split('/').pop() || 'video'}`,
-            status: 'draft' as const,
-            content: `# Generated from Loom Video\n\n> This article was auto-generated from a Loom recording.\n> Source: ${body.url}\n\n## Summary\n\nThis is a placeholder for AI-generated content from the Loom video transcript.\n\n## Key Points\n\n- Point 1 from the video\n- Point 2 from the video\n- Point 3 from the video\n\n## Next Steps\n\nReview and edit this draft before publishing.`,
-            source: 'loom' as const,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        };
+        // Find or default to a category
+        let categoryId = body.categoryId;
+        if (!categoryId) {
+            // Try to find a "guides" category, or use the first available
+            const guidesCategory = await prisma.docCategory.findFirst({
+                where: { name: { contains: 'guide', mode: 'insensitive' } },
+            });
+            if (guidesCategory) {
+                categoryId = guidesCategory.id;
+            } else {
+                const anyCategory = await prisma.docCategory.findFirst();
+                if (!anyCategory) {
+                    return NextResponse.json(
+                        { error: 'No categories exist. Create a category first.' },
+                        { status: 400 },
+                    );
+                }
+                categoryId = anyCategory.id;
+            }
+        }
 
-        return NextResponse.json(generatedArticle, { status: 201 });
+        const videoSlug = body.url.split('/').pop() || 'video';
+
+        // Stub content — in production, AI would generate this from the Loom transcript
+        const content = `# Generated from Loom Video\n\n> This article was auto-generated from a Loom recording.\n> Source: ${body.url}\n\n## Summary\n\nThis is a placeholder for AI-generated content from the Loom video transcript.\n\n## Key Points\n\n- Point 1 from the video\n- Point 2 from the video\n- Point 3 from the video\n\n## Next Steps\n\nReview and edit this draft before publishing.`;
+
+        const article = await prisma.docArticle.create({
+            data: {
+                title: `Article from Loom: ${videoSlug}`,
+                content,
+                status: 'DRAFT',
+                sourceUrl: body.url,
+                categoryId,
+            },
+            include: { category: true },
+        });
+
+        return NextResponse.json(article, { status: 201 });
     } catch {
         return NextResponse.json(
             { error: 'Invalid request body' },

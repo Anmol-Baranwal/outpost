@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { MOCK_SYSTEM_STATUS } from '@/lib/mock-sync';
+import { prisma } from '@copilotkit/outpost/db';
 
 /**
  * POST /api/sync/force
@@ -19,24 +19,30 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const system = MOCK_SYSTEM_STATUS.find((s) => s.plugin === plugin);
-        if (!system) {
+        // Verify the plugin is known by checking if any sync events exist for it
+        const knownPlugin = await prisma.syncEvent.findFirst({
+            where: {
+                OR: [
+                    { sourcePlugin: plugin },
+                    { targetPlugin: plugin },
+                ],
+            },
+        });
+
+        if (!knownPlugin) {
             return NextResponse.json(
                 { error: `Unknown plugin: ${plugin}` },
                 { status: 404 },
             );
         }
 
-        // In a real implementation this would enqueue a sync job.
-        // For mock purposes, update the last sync timestamp.
-        system.lastSuccessfulSync = new Date().toISOString();
-        system.pendingCount = 0;
-
-        return NextResponse.json({
-            success: true,
-            plugin,
-            message: `Force sync triggered for ${plugin}`,
-        });
+        // TODO: TRACKER_SYNC expects a real ticketId; bulk/full sync needs a
+        // dedicated FULL_SYNC job type or iteration over all linked tickets.
+        // For now, return 501 until the handler supports bulk sync.
+        return NextResponse.json(
+            { error: 'Bulk force sync not yet implemented' },
+            { status: 501 },
+        );
     } catch {
         return NextResponse.json(
             { error: 'Invalid request body' },

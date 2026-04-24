@@ -1,25 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-    filterMockBroadcasts,
-    MOCK_BROADCASTS,
-    MAX_BROADCAST_LENGTH,
-} from '@/lib/mock-broadcasts';
-import { MOCK_TEAM_MEMBERS, MOCK_ACCOUNTS } from '@/lib/mock-tickets';
-import type { BroadcastStatus } from '@/lib/mock-broadcasts';
+import { prisma } from '@copilotkit/outpost/db';
+import type { Prisma, BroadcastStatus } from '@copilotkit/outpost/db';
+
+const MAX_BROADCAST_LENGTH = 500;
 
 /**
  * GET /api/broadcasts
  *
  * List broadcasts with optional status filter.
- * Query params: status (draft | sent)
+ * Query params: status (DRAFT | SENT)
  */
 export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
-    const status = searchParams.get('status') as BroadcastStatus | null;
+    const status = searchParams.get('status')?.toUpperCase() as BroadcastStatus | null;
 
-    const broadcasts = filterMockBroadcasts(
-        status ? { status } : {},
-    );
+    const where: Prisma.BroadcastWhereInput = {};
+    if (status && (status === 'DRAFT' || status === 'SENT')) {
+        where.status = status;
+    }
+
+    const broadcasts = await prisma.broadcast.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+    });
 
     return NextResponse.json({ broadcasts, total: broadcasts.length });
 }
@@ -28,7 +31,7 @@ export async function GET(request: NextRequest) {
  * POST /api/broadcasts
  *
  * Create a new broadcast (draft or send immediately).
- * Body: { message, status, audienceType, audienceAccountIds, senderId }
+ * Body: { message, status?, audience?, targetAccounts?, sendAs? }
  */
 export async function POST(request: NextRequest) {
     try {
@@ -48,45 +51,19 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const status: BroadcastStatus = body.status === 'sent' ? 'sent' : 'draft';
-        const audienceType = body.audienceType === 'specific' ? 'specific' as const : 'all' as const;
-        const audienceAccountIds: string[] = audienceType === 'specific'
-            ? (body.audienceAccountIds || [])
-            : [];
+        const status: BroadcastStatus = body.status === 'SENT' ? 'SENT' : 'DRAFT';
+        const audience = body.audience || 'ALL_ACCOUNTS';
 
-        if (audienceType === 'specific' && audienceAccountIds.length === 0) {
-            return NextResponse.json(
-                { error: 'at least one account must be selected for specific audience' },
-                { status: 400 },
-            );
-        }
-
-        const sender = MOCK_TEAM_MEMBERS.find((tm) => tm.id === body.senderId);
-        if (!sender) {
-            return NextResponse.json(
-                { error: 'invalid senderId' },
-                { status: 400 },
-            );
-        }
-
-        const audienceAccounts = audienceAccountIds
-            .map((id: string) => MOCK_ACCOUNTS.find((a) => a.id === id))
-            .filter(Boolean);
-
-        const now = new Date().toISOString();
-
-        const newBroadcast = {
-            id: `bc-${Date.now()}`,
-            message: body.message,
-            status,
-            audienceType,
-            audienceAccountIds,
-            audienceAccounts,
-            senderId: sender.id,
-            sender,
-            createdAt: now,
-            sentAt: status === 'sent' ? now : null,
-        };
+        const newBroadcast = await prisma.broadcast.create({
+            data: {
+                message: body.message,
+                sendAs: body.sendAs || null,
+                audience,
+                targetAccounts: body.targetAccounts || null,
+                status,
+                sentAt: status === 'SENT' ? new Date() : null,
+            },
+        });
 
         return NextResponse.json(newBroadcast, { status: 201 });
     } catch {

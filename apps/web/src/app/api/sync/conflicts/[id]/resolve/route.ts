@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { MOCK_SYNC_EVENTS } from '@/lib/mock-sync';
+import { prisma } from '@copilotkit/outpost/db';
 
 /**
  * POST /api/sync/conflicts/[id]/resolve
@@ -24,7 +24,8 @@ export async function POST(
             );
         }
 
-        const event = MOCK_SYNC_EVENTS.find((e) => e.id === id);
+        const event = await prisma.syncEvent.findUnique({ where: { id } });
+
         if (!event) {
             return NextResponse.json(
                 { error: 'Conflict not found' },
@@ -39,15 +40,21 @@ export async function POST(
             );
         }
 
-        // In a real implementation this would update the ticket and create a new SyncEvent.
-        // For mock purposes, mark it resolved.
-        event.resolvedAt = new Date().toISOString();
-        event.status = 'success';
+        // Mark as resolved, recording the chosen resolution for audit trail.
+        // SyncEvent has no dedicated resolution field, so we store it in error
+        // (which is nullable and otherwise unused for successful events).
+        const updated = await prisma.syncEvent.update({
+            where: { id },
+            data: {
+                status: 'success',
+                error: JSON.stringify({ resolution, resolvedAt: new Date().toISOString() }),
+            },
+        });
 
         return NextResponse.json({
             success: true,
             resolution,
-            event,
+            event: updated,
         });
     } catch {
         return NextResponse.json(

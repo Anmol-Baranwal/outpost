@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { prisma } from '@copilotkit/outpost/db';
 import { peekOnCall, getOnCallMembers } from '@copilotkit/outpost/shared';
 
 /**
@@ -9,7 +10,7 @@ import { peekOnCall, getOnCallMembers } from '@copilotkit/outpost/shared';
  */
 export async function GET() {
     const members = getOnCallMembers();
-    const currentOnCall = peekOnCall(members);
+    const currentOnCall = await peekOnCall(members, prisma);
 
     return NextResponse.json({
         currentOnCall,
