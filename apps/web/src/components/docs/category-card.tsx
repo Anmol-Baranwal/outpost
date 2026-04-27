@@ -3,7 +3,14 @@
 import Link from 'next/link';
 import { FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { DocCategory } from '@/lib/mock-docs';
+
+interface DocCategory {
+    id: string;
+    name: string;
+    description: string | null;
+    articleCount: number;
+    createdAt: string;
+}
 
 interface CategoryCardProps {
     category: DocCategory;
@@ -12,7 +19,7 @@ interface CategoryCardProps {
 export function CategoryCard({ category }: CategoryCardProps) {
     return (
         <Link
-            href={`/docs/${category.slug}`}
+            href={`/docs/${category.id}`}
             className={cn(
                 'group block rounded-lg border border-border bg-card p-6',
                 'transition-colors hover:border-primary/50 hover:bg-card/80',
@@ -26,9 +33,11 @@ export function CategoryCard({ category }: CategoryCardProps) {
                     <h3 className="font-semibold text-card-foreground group-hover:text-primary transition-colors">
                         {category.name}
                     </h3>
-                    <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
-                        {category.description}
-                    </p>
+                    {category.description && (
+                        <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
+                            {category.description}
+                        </p>
+                    )}
                     <p className="mt-3 text-xs text-muted-foreground">
                         {category.articleCount} {category.articleCount === 1 ? 'article' : 'articles'}
                     </p>

@@ -2,11 +2,22 @@
 
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import type { DocArticle } from '@/lib/mock-docs';
+
+interface DocArticle {
+    id: string;
+    title: string;
+    content: string;
+    status: 'DRAFT' | 'PUBLISHED';
+    sourceUrl?: string | null;
+    categoryId: string;
+    category?: { id: string; name: string };
+    createdAt: string;
+    updatedAt: string;
+}
 
 interface ArticleListProps {
     articles: DocArticle[];
-    categorySlug: string;
+    categoryId: string;
 }
 
 function StatusBadge({ status }: { status: DocArticle['status'] }) {
@@ -14,12 +25,12 @@ function StatusBadge({ status }: { status: DocArticle['status'] }) {
         <span
             className={cn(
                 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                status === 'published'
+                status === 'PUBLISHED'
                     ? 'bg-green-500/10 text-green-400'
                     : 'bg-yellow-500/10 text-yellow-400',
             )}
         >
-            {status === 'published' ? 'Published' : 'Draft'}
+            {status === 'PUBLISHED' ? 'Published' : 'Draft'}
         </span>
     );
 }
@@ -32,7 +43,7 @@ function formatDate(iso: string): string {
     });
 }
 
-export function ArticleList({ articles, categorySlug }: ArticleListProps) {
+export function ArticleList({ articles, categoryId }: ArticleListProps) {
     if (articles.length === 0) {
         return (
             <div className="rounded-lg border border-border bg-card p-8 text-center" data-testid="articles-empty">
@@ -48,7 +59,7 @@ export function ArticleList({ articles, categorySlug }: ArticleListProps) {
             {articles.map((article) => (
                 <Link
                     key={article.id}
-                    href={`/docs/${categorySlug}/${article.id}`}
+                    href={`/docs/${categoryId || article.categoryId}/${article.id}`}
                     className={cn(
                         'flex items-center justify-between rounded-lg border border-border bg-card p-4',
                         'transition-colors hover:border-primary/50 hover:bg-card/80',

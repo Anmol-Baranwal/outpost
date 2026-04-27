@@ -1,21 +1,73 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FileText, Plus } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { CategoryCard } from '@/components/docs/category-card';
 import { ArticleList } from '@/components/docs/article-list';
 import { LoomImport } from '@/components/docs/loom-import';
-import { MOCK_CATEGORIES, MOCK_ARTICLES } from '@/lib/mock-docs';
 import { cn } from '@/lib/utils';
+
+interface DocCategory {
+    id: string;
+    name: string;
+    description: string | null;
+    articleCount: number;
+    createdAt: string;
+}
+
+interface DocArticle {
+    id: string;
+    title: string;
+    content: string;
+    status: 'DRAFT' | 'PUBLISHED';
+    sourceUrl?: string | null;
+    categoryId: string;
+    category?: { id: string; name: string };
+    createdAt: string;
+    updatedAt: string;
+}
 
 type Tab = 'ai-drafts' | 'published';
 
 export default function DocsPage() {
     const [activeTab, setActiveTab] = useState<Tab>('published');
+    const [categories, setCategories] = useState<DocCategory[]>([]);
+    const [articles, setArticles] = useState<DocArticle[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    const aiDrafts = MOCK_ARTICLES.filter(a => a.status === 'draft' && (a.source === 'ai' || a.source === 'loom'));
-    const published = MOCK_ARTICLES.filter(a => a.status === 'published');
+    useEffect(() => {
+        async function fetchData() {
+            try {
+                const [catRes, artRes] = await Promise.all([
+                    fetch('/api/docs/categories'),
+                    fetch('/api/docs/articles'),
+                ]);
+                if (catRes.ok) {
+                    const catData = await catRes.json();
+                    setCategories(catData.categories);
+                }
+                if (artRes.ok) {
+                    const artData = await artRes.json();
+                    setArticles(artData.articles);
+                }
+            } finally {
+                setLoading(false);
+            }
+        }
+        fetchData();
+    }, []);
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                <p className="text-muted-foreground">Loading...</p>
+            </div>
+        );
+    }
+
+    const aiDrafts = articles.filter(a => a.status === 'DRAFT' && a.sourceUrl);
+    const published = articles.filter(a => a.status === 'PUBLISHED');
 
     return (
         <div>
@@ -40,11 +92,17 @@ export default function DocsPage() {
                         Create New
                     </button>
                 </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    {MOCK_CATEGORIES.map((category) => (
-                        <CategoryCard key={category.slug} category={category} />
-                    ))}
-                </div>
+                {categories.length === 0 ? (
+                    <div className="rounded-lg border border-border bg-card p-8 text-center">
+                        <p className="text-muted-foreground">No categories yet.</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                        {categories.map((category) => (
+                            <CategoryCard key={category.id} category={category} />
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Tabs */}
@@ -84,7 +142,7 @@ export default function DocsPage() {
             {/* Tab Content */}
             <ArticleList
                 articles={activeTab === 'ai-drafts' ? aiDrafts : published}
-                categorySlug=""
+                categoryId=""
             />
         </div>
     );

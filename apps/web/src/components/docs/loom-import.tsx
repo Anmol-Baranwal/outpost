@@ -3,15 +3,24 @@
 import { useState } from 'react';
 import { Video, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { isValidLoomUrl } from '@/lib/mock-docs';
+
+function isValidLoomUrl(url: string): boolean {
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname === 'www.loom.com' || parsed.hostname === 'loom.com';
+    } catch {
+        return false;
+    }
+}
 
 type ImportState = 'idle' | 'validating' | 'generating' | 'complete' | 'error';
 
 interface LoomImportProps {
+    categoryId?: string;
     onArticleGenerated?: (articleId: string) => void;
 }
 
-export function LoomImport({ onArticleGenerated }: LoomImportProps) {
+export function LoomImport({ categoryId, onArticleGenerated }: LoomImportProps) {
     const [url, setUrl] = useState('');
     const [state, setState] = useState<ImportState>('idle');
     const [error, setError] = useState<string | null>(null);
@@ -34,24 +43,31 @@ export function LoomImport({ onArticleGenerated }: LoomImportProps) {
         setState('validating');
         setProgress(10);
 
-        // Simulate validation delay
-        await new Promise(r => setTimeout(r, 800));
-        setProgress(30);
+        try {
+            setState('generating');
+            setProgress(30);
 
-        setState('generating');
+            const res = await fetch('/api/docs/import-loom', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, categoryId }),
+            });
 
-        // Simulate article generation progress
-        const steps = [40, 55, 70, 85, 95, 100];
-        for (const step of steps) {
-            await new Promise(r => setTimeout(r, 600));
-            setProgress(step);
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to import Loom video');
+            }
+
+            setProgress(100);
+            setState('complete');
+
+            const article = await res.json();
+            onArticleGenerated?.(article.id);
+        } catch (err) {
+            setState('error');
+            setError(err instanceof Error ? err.message : 'Failed to import Loom video');
+            setProgress(0);
         }
-
-        setState('complete');
-
-        // Stub: in production this would return the real article ID
-        const stubbedArticleId = `art-loom-${Date.now()}`;
-        onArticleGenerated?.(stubbedArticleId);
     }
 
     function handleReset() {

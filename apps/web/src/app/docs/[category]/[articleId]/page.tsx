@@ -1,43 +1,92 @@
 'use client';
 
-import { use, useState, useCallback } from 'react';
+import { use, useState, useEffect, useCallback } from 'react';
 import { FileText } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { ArticleEditor } from '@/components/docs/article-editor';
-import { getArticleById, getCategoryBySlug } from '@/lib/mock-docs';
-import type { DocArticle } from '@/lib/mock-docs';
-import { notFound } from 'next/navigation';
+
+interface DocArticle {
+    id: string;
+    title: string;
+    content: string;
+    status: 'DRAFT' | 'PUBLISHED';
+    sourceUrl?: string | null;
+    categoryId: string;
+    category?: { id: string; name: string };
+    createdAt: string;
+    updatedAt: string;
+}
 
 interface ArticlePageProps {
     params: Promise<{ category: string; articleId: string }>;
 }
 
 export default function ArticlePage({ params }: ArticlePageProps) {
-    const { category: categorySlug, articleId } = use(params);
-    const category = getCategoryBySlug(categorySlug);
-    const originalArticle = getArticleById(articleId);
+    const { category: categoryId, articleId } = use(params);
+    const [article, setArticle] = useState<DocArticle | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [notFound, setNotFound] = useState(false);
 
-    if (!category || !originalArticle) {
-        notFound();
+    useEffect(() => {
+        async function fetchArticle() {
+            try {
+                const res = await fetch(`/api/docs/articles/${articleId}`);
+                if (!res.ok) {
+                    setNotFound(true);
+                    return;
+                }
+                const data = await res.json();
+                setArticle(data);
+            } finally {
+                setLoading(false);
+            }
+        }
+        fetchArticle();
+    }, [articleId]);
+
+    const handleSave = useCallback(async (content: string) => {
+        const res = await fetch(`/api/docs/articles/${articleId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content }),
+        });
+        if (res.ok) {
+            const updated = await res.json();
+            setArticle(updated);
+        }
+    }, [articleId]);
+
+    const handleTogglePublish = useCallback(async () => {
+        if (!article) return;
+        const newStatus = article.status === 'PUBLISHED' ? 'DRAFT' : 'PUBLISHED';
+        const res = await fetch(`/api/docs/articles/${articleId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus }),
+        });
+        if (res.ok) {
+            const updated = await res.json();
+            setArticle(updated);
+        }
+    }, [articleId, article]);
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                <p className="text-muted-foreground">Loading...</p>
+            </div>
+        );
     }
 
-    const [article, setArticle] = useState<DocArticle>(originalArticle);
+    if (notFound || !article) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                <p className="text-muted-foreground">Article not found.</p>
+            </div>
+        );
+    }
 
-    const handleSave = useCallback((content: string) => {
-        setArticle(prev => ({
-            ...prev,
-            content,
-            updatedAt: new Date().toISOString(),
-        }));
-    }, []);
-
-    const handleTogglePublish = useCallback(() => {
-        setArticle(prev => ({
-            ...prev,
-            status: prev.status === 'published' ? 'draft' : 'published',
-            updatedAt: new Date().toISOString(),
-        }));
-    }, []);
+    const categoryName = article.category?.name || 'Category';
 
     return (
         <div>
@@ -46,7 +95,7 @@ export default function ArticlePage({ params }: ArticlePageProps) {
                 icon={FileText}
                 breadcrumbs={[
                     { label: 'Docs', href: '/docs' },
-                    { label: category.name, href: `/docs/${categorySlug}` },
+                    { label: categoryName, href: `/docs/${categoryId}` },
                     { label: article.title },
                 ]}
             />
