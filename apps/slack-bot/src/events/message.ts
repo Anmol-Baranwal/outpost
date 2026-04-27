@@ -1,10 +1,7 @@
 import type { App } from '@slack/bolt';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import {
-    SlackAdapter,
-    InboundHandler,
-} from '@copilotkit/outpost/shared';
+import { SlackAdapter, InboundHandler } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { TicketSource } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';

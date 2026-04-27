@@ -20,6 +20,10 @@
             "types": "./shared/dist/index.d.ts",
             "import": "./shared/dist/index.js"
         },
+        "./shared/platforms": {
+            "types": "./shared/dist/platforms/index.d.ts",
+            "import": "./shared/dist/platforms/index.js"
+        },
         "./shared/server": {
             "types": "./shared/dist/server.d.ts",
             "import": "./shared/dist/server.js"

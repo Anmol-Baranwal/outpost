@@ -1,12 +1,9 @@
 import { type TurnContext, CardFactory, MessageFactory } from 'botbuilder';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import {
-    truncate,
-    InboundHandler,
-} from '@copilotkit/outpost/shared';
+import { truncate } from '@copilotkit/outpost/shared';
+import { InboundHandler, TeamsAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
-import { TeamsAdapter } from '@copilotkit/outpost/shared';
 import { buildTicketCreatedCard } from '../cards/ticket-created-card.js';
 import { config } from '../config.js';
 

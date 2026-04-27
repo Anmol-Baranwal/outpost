@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TeamsAdapter, TicketSource } from '@copilotkit/outpost/shared';
+import { TeamsAdapter } from '@copilotkit/outpost/shared/platforms';
+import { TicketSource } from '@copilotkit/outpost/shared';
 import type { TeamsActivity, FormattedResponse } from '@copilotkit/outpost/shared';
 
 const CONFIG = {

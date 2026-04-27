@@ -19,12 +19,12 @@ vi.mock('@slack/web-api', () => ({
     WebClient: MockWebClient,
 }));
 
-vi.mock('@copilotkit/outpost/shared', async () => {
-    const actual = await vi.importActual<Record<string, unknown>>('@copilotkit/outpost/shared');
+vi.mock('@copilotkit/outpost/shared/platforms', async () => {
+    const actual = await vi.importActual<Record<string, unknown>>('@copilotkit/outpost/shared/platforms');
     return actual;
 });
 
-import { SlackAdapter, buildPermalink } from '@copilotkit/outpost/shared';
+import { SlackAdapter, buildPermalink } from '@copilotkit/outpost/shared/platforms';
 import type { SlackMessageEvent } from '@copilotkit/outpost/shared';
 import { TicketSource } from '@copilotkit/outpost/shared';
 

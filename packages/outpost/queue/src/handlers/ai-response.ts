@@ -15,9 +15,9 @@
 
 import { prisma } from '@copilotkit/outpost/db';
 import { AIPipeline } from '@copilotkit/outpost/ai';
-import { AI_CONFIDENCE, hasAdapter, getAdapter } from '@copilotkit/outpost/shared';
-import type { PlatformTarget } from '@copilotkit/outpost/shared';
-import type { TicketSource } from '@copilotkit/outpost/shared';
+import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
+import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
+import { hasAdapter, getAdapter } from '@copilotkit/outpost/shared/platforms';
 import { createJob } from '../create-job.js';
 import { JobType } from '../types.js';
 import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.js';
