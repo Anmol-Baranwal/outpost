@@ -2,7 +2,7 @@
 set -e
 
 # Run pending database migrations before starting
-node ./node_modules/prisma/build/index.js migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+node /opt/prisma/node_modules/prisma/build/index.js migrate deploy --schema packages/outpost/db/prisma/schema.prisma
 
 # Start Next.js
 exec node apps/web/server.js

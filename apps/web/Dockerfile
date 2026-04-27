@@ -46,10 +46,8 @@ COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+cl
 COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/schema.prisma ./apps/web/.next/server/
 # Prisma schema and migrations for migrate deploy on startup
 COPY --from=installer --chown=outpost:outpost /app/packages/outpost/db/prisma ./packages/outpost/db/prisma
-# Prisma CLI needed for running migrations at startup
-COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/prisma*/node_modules/prisma ./node_modules/prisma
-COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+engines*/node_modules/@prisma/engines ./node_modules/@prisma/engines
-COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+engines-version*/node_modules/@prisma/engines-version ./node_modules/@prisma/engines-version
+# Prisma CLI for running migrations at startup (installed with all transitive deps)
+RUN npm install --prefix /opt/prisma --no-save prisma@6
 
 USER outpost
 ENV NODE_ENV=production
