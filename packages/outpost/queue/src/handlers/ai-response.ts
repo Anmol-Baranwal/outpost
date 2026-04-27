@@ -15,8 +15,9 @@
 
 import { prisma } from '@copilotkit/outpost/db';
 import { AIPipeline } from '@copilotkit/outpost/ai';
-import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
+import { AI_CONFIDENCE, hasAdapter, getAdapter } from '@copilotkit/outpost/shared';
 import type { PlatformTarget } from '@copilotkit/outpost/shared';
+import type { TicketSource } from '@copilotkit/outpost/shared';
 import { createJob } from '../create-job.js';
 import { JobType } from '../types.js';
 import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.js';
@@ -71,19 +72,18 @@ export async function handleAiResponse(
     await context.reportProgress(20);
 
     // 2. Build conversation history from DB messages
-    const conversationHistory = ticket.messages.map(
-        (m: { type: string; content: string }) => ({
+    const conversationHistory = ticket.messages
+        .filter((m: { type: string }) => m.type !== 'SYSTEM')
+        .map((m: { type: string; content: string }) => ({
             role: (m.type === 'USER' ? 'user' : 'assistant') as 'user' | 'assistant',
             content: m.content,
-        }),
-    );
+        }));
 
     // Determine the latest user message as the question
     const latestUserMessage = [...ticket.messages]
         .reverse()
         .find((m: { type: string }) => m.type === 'USER');
-    const question =
-        latestUserMessage?.content ?? ticket.description ?? ticket.title;
+    const question = latestUserMessage?.content ?? ticket.description ?? ticket.title;
 
     // Determine platform target for formatting
     const platform = payload.source ?? toPlatformTarget(ticket.source);
@@ -157,14 +157,84 @@ export async function handleAiResponse(
             },
         });
 
+        // 5b. Post the response back to the source platform
+        const ticketSource = ticket.source as TicketSource;
+        if (process.env.SHADOW_MODE === 'true') {
+            try {
+                await prisma.message.create({
+                    data: {
+                        ticketId: ticket.id,
+                        author: 'outpost-shadow',
+                        content: pipelineResult.formatted.text,
+                        type: 'SYSTEM',
+                        isAiGenerated: true,
+                        attachments: {
+                            shadowMode: true,
+                            latencyMs: pipelineResult.latencyMs,
+                            generatedAt: new Date().toISOString(),
+                        },
+                    },
+                });
+                console.log(
+                    `[AI Response] Shadow mode — logged response for ticket ${ticketId}, skipping platform post-back`,
+                );
+            } catch (error) {
+                console.error(
+                    `[AI Response] Shadow mode — failed to log response for ticket ${ticketId}:`,
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+        } else if (hasAdapter(ticketSource)) {
+            let adapter;
+            try {
+                adapter = getAdapter(ticketSource);
+            } catch (error) {
+                console.error(
+                    `[AI Response] Platform adapter misconfigured for ${ticket.source} on ticket ${ticketId}:`,
+                    error instanceof Error ? error.message : String(error),
+                );
+                // Don't attempt postResponse — adapter init failed (permanent error)
+                adapter = null;
+            }
+
+            if (adapter) {
+                try {
+                    await adapter.postResponse(
+                        {
+                            id: ticket.id,
+                            sourceId: ticket.sourceId,
+                            channel: ticket.channel,
+                            source: ticketSource,
+                        },
+                        pipelineResult.formatted,
+                    );
+                    console.log(
+                        `[AI Response] Posted response to ${ticket.source} for ticket ${ticketId}`,
+                    );
+                } catch (error) {
+                    console.error(
+                        `[AI Response] Failed to post response to ${ticket.source} for ticket ${ticketId}:`,
+                        error instanceof Error ? error.message : String(error),
+                    );
+                }
+            }
+        }
+
         await context.reportProgress(85);
 
         // 6. If confidence is below the escalation threshold, enqueue ESCALATION
         if (pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE) {
-            await createJob(JobType.ESCALATION, {
-                ticketId: ticket.id,
-                reason: `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`,
-            });
+            try {
+                await createJob(JobType.ESCALATION, {
+                    ticketId: ticket.id,
+                    reason: `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`,
+                });
+            } catch (error) {
+                console.error(
+                    `[AI Response] Failed to create escalation job for ticket ${ticketId}:`,
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
         }
     } finally {
         pipeline.destroy();

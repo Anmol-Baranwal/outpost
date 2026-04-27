@@ -48,6 +48,16 @@ vi.mock('@copilotkit/outpost/ai', () => ({
     AIPipeline: MockAIPipeline,
 }));
 
+const mockPostResponse = vi.fn().mockResolvedValue(undefined);
+const mockHasAdapter = vi.fn().mockReturnValue(true);
+const mockGetAdapter = vi.fn().mockReturnValue({
+    platform: 'DISCORD',
+    postResponse: mockPostResponse,
+    postSystemMessage: vi.fn(),
+    parseInboundEvent: vi.fn(),
+    fetchUserInfo: vi.fn(),
+});
+
 vi.mock('@copilotkit/outpost/shared', () => ({
     AI_CONFIDENCE: {
         AUTO_RESPOND: 0.9,
@@ -60,6 +70,8 @@ vi.mock('@copilotkit/outpost/shared', () => ({
     BACKOFF_BASE_MS: 1000,
     BACKOFF_MAX_MS: 300_000,
     calculateBackoff: (attempt: number) => 1000 * Math.pow(2, attempt),
+    hasAdapter: mockHasAdapter,
+    getAdapter: mockGetAdapter,
 }));
 
 // Import after mocks
@@ -83,6 +95,8 @@ const sampleTicket = {
     priority: 'MEDIUM',
     type: 'QUESTION',
     source: 'DISCORD',
+    sourceId: 'thread-123',
+    channel: 'channel-456',
     suggestedResponse: null,
     account: {
         id: 'acct-1',
@@ -145,6 +159,15 @@ describe('handleAiResponse', () => {
         mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
         mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
         mockClassifyTicket.mockResolvedValue(sampleClassification);
+        mockPostResponse.mockResolvedValue(undefined);
+        mockHasAdapter.mockReturnValue(true);
+        mockGetAdapter.mockReturnValue({
+            platform: 'DISCORD',
+            postResponse: mockPostResponse,
+            postSystemMessage: vi.fn(),
+            parseInboundEvent: vi.fn(),
+            fetchUserInfo: vi.fn(),
+        });
     });
 
     it('processes a ticket end-to-end with high confidence', async () => {
@@ -166,7 +189,10 @@ describe('handleAiResponse', () => {
             expect.objectContaining({
                 source: 'discord',
                 conversationHistory: expect.arrayContaining([
-                    expect.objectContaining({ role: 'user', content: 'How do I use CopilotKit with Next.js?' }),
+                    expect.objectContaining({
+                        role: 'user',
+                        content: 'How do I use CopilotKit with Next.js?',
+                    }),
                 ]),
             }),
         );
@@ -235,10 +261,7 @@ describe('handleAiResponse', () => {
     it('classifies the ticket and updates DB', async () => {
         mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
 
-        await handleAiResponse(
-            { ticketId: 'tkt-1', source: 'discord' },
-            makeContext(),
-        );
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
         // Should have called classifyTicket
         expect(mockClassifyTicket).toHaveBeenCalledWith(
@@ -260,10 +283,7 @@ describe('handleAiResponse', () => {
     it('persists the AI-generated response as a BOT message', async () => {
         mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
 
-        await handleAiResponse(
-            { ticketId: 'tkt-1', source: 'discord' },
-            makeContext(),
-        );
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
         expect(mockPrismaMessage.create).toHaveBeenCalledWith({
             data: {
@@ -279,10 +299,7 @@ describe('handleAiResponse', () => {
     it('stores formatted response as suggestedResponse on ticket', async () => {
         mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
 
-        await handleAiResponse(
-            { ticketId: 'tkt-1', source: 'discord' },
-            makeContext(),
-        );
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
         // Find the update call that sets suggestedResponse
         const suggestedResponseCall = mockPrismaTicket.update.mock.calls.find(
@@ -297,9 +314,7 @@ describe('handleAiResponse', () => {
 
     it('handles pipeline generation failure gracefully', async () => {
         mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
-        mockGenerateSupportResponse.mockRejectedValue(
-            new Error('Claude API rate limit'),
-        );
+        mockGenerateSupportResponse.mockRejectedValue(new Error('Claude API rate limit'));
 
         const result = await handleAiResponse(
             { ticketId: 'tkt-1', source: 'discord' },
@@ -349,10 +364,7 @@ describe('handleAiResponse', () => {
         mockPrismaTicket.findUnique.mockResolvedValue(githubTicket);
 
         // When payload.source is not set, should derive from ticket.source
-        await handleAiResponse(
-            { ticketId: 'tkt-1', source: undefined },
-            makeContext(),
-        );
+        await handleAiResponse({ ticketId: 'tkt-1', source: undefined }, makeContext());
 
         expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
             expect.anything(),
@@ -363,10 +375,7 @@ describe('handleAiResponse', () => {
     it('uses payload.source when provided, overriding ticket source', async () => {
         mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
 
-        await handleAiResponse(
-            { ticketId: 'tkt-1', source: 'slack' },
-            makeContext(),
-        );
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'slack' }, makeContext());
 
         expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
             expect.anything(),
@@ -381,10 +390,7 @@ describe('handleAiResponse', () => {
         };
         mockPrismaTicket.findUnique.mockResolvedValue(ticketNoMessages);
 
-        await handleAiResponse(
-            { ticketId: 'tkt-1', source: 'discord' },
-            makeContext(),
-        );
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
         expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
             'I want to add AI features to my Next.js app using CopilotKit.',
@@ -395,11 +401,206 @@ describe('handleAiResponse', () => {
     it('cleans up pipeline on success', async () => {
         mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
 
-        await handleAiResponse(
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+        expect(mockDestroy).toHaveBeenCalledOnce();
+    });
+
+    it('posts the formatted response back to the source platform', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockHasAdapter.mockReturnValue(true);
+
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+        expect(mockGetAdapter).toHaveBeenCalledWith('DISCORD');
+        expect(mockPostResponse).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 'tkt-1',
+                sourceId: 'thread-123',
+                channel: 'channel-456',
+                source: 'DISCORD',
+            }),
+            expect.objectContaining({
+                text: expect.stringContaining('CopilotKit'),
+            }),
+        );
+    });
+
+    it('skips post-back when platform has no adapter', async () => {
+        const webTicket = { ...sampleTicket, source: 'WEB' };
+        mockPrismaTicket.findUnique.mockResolvedValue(webTicket);
+        mockHasAdapter.mockReturnValue(false);
+
+        const result = await handleAiResponse({ ticketId: 'tkt-1', source: 'web' }, makeContext());
+
+        expect(result.success).toBe(true);
+        expect(mockPostResponse).not.toHaveBeenCalled();
+    });
+
+    it('skips post-back in shadow mode', async () => {
+        const originalShadow = process.env.SHADOW_MODE;
+        try {
+            process.env.SHADOW_MODE = 'true';
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            // Shadow response should be logged as a SYSTEM message
+            const shadowMessageCall = mockPrismaMessage.create.mock.calls.find(
+                (call: Array<Record<string, Record<string, unknown>>>) =>
+                    call[0].data.author === 'outpost-shadow',
+            );
+            expect(shadowMessageCall).toBeDefined();
+        } finally {
+            process.env.SHADOW_MODE = originalShadow;
+        }
+    });
+
+    it('succeeds even if post-back fails (non-fatal)', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockHasAdapter.mockReturnValue(true);
+        mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+
+        const result = await handleAiResponse(
             { ticketId: 'tkt-1', source: 'discord' },
             makeContext(),
         );
 
-        expect(mockDestroy).toHaveBeenCalledOnce();
+        expect(result.success).toBe(true);
+        expect(result.data?.confidenceLevel).toBe('HIGH');
+    });
+
+    it('succeeds when getAdapter throws (adapter misconfiguration)', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockHasAdapter.mockReturnValue(true);
+        mockGetAdapter.mockImplementation(() => {
+            throw new Error('Missing DISCORD_BOT_TOKEN');
+        });
+
+        const result = await handleAiResponse(
+            { ticketId: 'tkt-1', source: 'discord' },
+            makeContext(),
+        );
+
+        expect(result.success).toBe(true);
+        expect(mockPostResponse).not.toHaveBeenCalled();
+    });
+
+    it('succeeds even if shadow mode message logging fails', async () => {
+        const originalShadow = process.env.SHADOW_MODE;
+        try {
+            process.env.SHADOW_MODE = 'true';
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPrismaMessage.create
+                .mockResolvedValueOnce({ id: 'msg-bot' })
+                .mockRejectedValueOnce(new Error('DB write failed'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+        } finally {
+            process.env.SHADOW_MODE = originalShadow;
+        }
+    });
+
+    it('falls back to "web" for unknown TicketSource values', async () => {
+        const unknownSourceTicket = { ...sampleTicket, source: 'INTERCOM' };
+        mockPrismaTicket.findUnique.mockResolvedValue(unknownSourceTicket);
+        mockHasAdapter.mockReturnValue(false);
+
+        await handleAiResponse({ ticketId: 'tkt-1', source: undefined }, makeContext());
+
+        expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ source: 'web' }),
+        );
+    });
+
+    it('uses ticket title as question when no messages and description is null', async () => {
+        const ticketTitleOnly = {
+            ...sampleTicket,
+            messages: [],
+            description: null,
+        };
+        mockPrismaTicket.findUnique.mockResolvedValue(ticketTitleOnly);
+
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+        expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+            'How do I use CopilotKit with Next.js?',
+            expect.anything(),
+        );
+    });
+
+    it('does not escalate when confidence equals ESCALATE threshold exactly', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockGenerateSupportResponse.mockResolvedValue({
+            ...highConfidenceResult,
+            confidenceLevel: 'LOW',
+            confidenceScore: 0.4,
+        });
+
+        const result = await handleAiResponse(
+            { ticketId: 'tkt-1', source: 'discord' },
+            makeContext(),
+        );
+
+        expect(result.success).toBe(true);
+        expect(result.data?.escalated).toBe(false);
+        expect(mockPrismaJob.create).not.toHaveBeenCalled();
+    });
+
+    it('filters SYSTEM messages from conversation history', async () => {
+        const multiMsgTicket = {
+            ...sampleTicket,
+            messages: [
+                {
+                    id: 'msg-1',
+                    type: 'USER',
+                    content: 'Hello',
+                    createdAt: new Date('2026-04-23T10:00:00Z'),
+                },
+                {
+                    id: 'msg-2',
+                    type: 'BOT',
+                    content: 'Hi there!',
+                    createdAt: new Date('2026-04-23T10:01:00Z'),
+                },
+                {
+                    id: 'msg-3',
+                    type: 'SYSTEM',
+                    content: 'Ticket escalated',
+                    createdAt: new Date('2026-04-23T10:02:00Z'),
+                },
+                {
+                    id: 'msg-4',
+                    type: 'USER',
+                    content: 'Follow up question',
+                    createdAt: new Date('2026-04-23T10:03:00Z'),
+                },
+            ],
+        };
+        mockPrismaTicket.findUnique.mockResolvedValue(multiMsgTicket);
+
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+        expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+            'Follow up question',
+            expect.objectContaining({
+                conversationHistory: [
+                    { role: 'user', content: 'Hello' },
+                    { role: 'assistant', content: 'Hi there!' },
+                    { role: 'user', content: 'Follow up question' },
+                ],
+            }),
+        );
     });
 });
