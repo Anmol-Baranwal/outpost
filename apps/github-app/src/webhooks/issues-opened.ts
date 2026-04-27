@@ -1,7 +1,7 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
+import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { getOctokit } from '../lib/github-client.js';
 

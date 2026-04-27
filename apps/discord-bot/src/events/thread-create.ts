@@ -1,7 +1,8 @@
 import { ChannelType, type ThreadChannel } from 'discord.js';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import { PlatformDiscordAdapter, InboundHandler, generateTicketId } from '@copilotkit/outpost/shared';
+import { PlatformDiscordAdapter, InboundHandler } from '@copilotkit/outpost/shared/platforms';
+import { generateTicketId } from '@copilotkit/outpost/shared';
 import type { CreateJobFn } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
 import { isShadowMode, handleShadowThreadCreate } from '../lib/shadow-mode.js';

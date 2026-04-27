@@ -1,7 +1,7 @@
 import { ChannelType, type Message } from 'discord.js';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import { PlatformDiscordAdapter, InboundHandler } from '@copilotkit/outpost/shared';
+import { PlatformDiscordAdapter, InboundHandler } from '@copilotkit/outpost/shared/platforms';
 import type { CreateJobFn } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
 import { isShadowMode, handleShadowMessage } from '../lib/shadow-mode.js';

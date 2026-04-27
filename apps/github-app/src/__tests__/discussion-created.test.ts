@@ -31,6 +31,9 @@ const mockPostResponse = vi.fn().mockResolvedValue(undefined);
 vi.mock('@copilotkit/outpost/shared', () => ({
     generateTicketId: vi.fn().mockReturnValue('TKT-DS01'),
     truncate: vi.fn((str: string, _len: number) => str),
+}));
+
+vi.mock('@copilotkit/outpost/shared/platforms', () => ({
     InboundHandler: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
         this.handle = mockHandle;
     }),
@@ -60,7 +63,7 @@ vi.mock('../config.js', () => ({
 
 import { handleDiscussionCreated } from '../webhooks/discussion-created.js';
 import { prisma } from '@copilotkit/outpost/db';
-import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
+import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 
 function makeEvent(overrides: Record<string, unknown> = {}): EmitterWebhookEvent<'discussion.created'> {

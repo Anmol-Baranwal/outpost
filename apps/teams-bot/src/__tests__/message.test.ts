@@ -4,12 +4,16 @@ import { mockPrisma, mockQueue } from './helpers/mocks.js';
 vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 vi.mock('@copilotkit/outpost/queue', () => mockQueue());
 
-// Import the real TeamsAdapter and InboundHandler alongside mocked utilities
-vi.mock('@copilotkit/outpost/shared', async (importOriginal) => {
-    const orig = await importOriginal<typeof import('@copilotkit/outpost/shared')>();
+// Mock shared utilities; adapter classes now come from shared/platforms
+vi.mock('@copilotkit/outpost/shared', () => ({
+    generateTicketId: vi.fn().mockReturnValue('TKT-AB12'),
+    truncate: vi.fn((str: string, _len: number) => str),
+}));
+
+// Import the real TeamsAdapter and InboundHandler from the platforms entry point
+vi.mock('@copilotkit/outpost/shared/platforms', async (importOriginal) => {
+    const orig = await importOriginal<typeof import('@copilotkit/outpost/shared/platforms')>();
     return {
-        generateTicketId: vi.fn().mockReturnValue('TKT-AB12'),
-        truncate: vi.fn((str: string, _len: number) => str),
         TeamsAdapter: orig.TeamsAdapter,
         InboundHandler: orig.InboundHandler,
     };

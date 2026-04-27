@@ -20,6 +20,9 @@ const mockPostResponse = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@copilotkit/outpost/shared', () => ({
     truncate: vi.fn((str: string, _len: number) => str),
+}));
+
+vi.mock('@copilotkit/outpost/shared/platforms', () => ({
     GitHubPlatformAdapter: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
         this.parseInboundEvent = mockParseInboundEvent;
         this.postSystemMessage = mockPostSystemMessage;
@@ -47,7 +50,7 @@ vi.mock('../config.js', () => ({
 import { handleIssueComment } from '../webhooks/issue-comment.js';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
+import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 
 const TICKET = {

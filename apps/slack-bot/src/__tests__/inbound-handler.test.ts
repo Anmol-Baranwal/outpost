@@ -10,7 +10,7 @@ vi.mock('@slack/web-api', () => ({
     WebClient: MockWebClient,
 }));
 
-import { InboundHandler } from '@copilotkit/outpost/shared';
+import { InboundHandler } from '@copilotkit/outpost/shared/platforms';
 import type { InboundMessage, InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { TicketSource } from '@copilotkit/outpost/shared';
 

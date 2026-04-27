@@ -70,6 +70,9 @@ vi.mock('@copilotkit/outpost/shared', () => ({
     BACKOFF_BASE_MS: 1000,
     BACKOFF_MAX_MS: 300_000,
     calculateBackoff: (attempt: number) => 1000 * Math.pow(2, attempt),
+}));
+
+vi.mock('@copilotkit/outpost/shared/platforms', () => ({
     hasAdapter: mockHasAdapter,
     getAdapter: mockGetAdapter,
 }));

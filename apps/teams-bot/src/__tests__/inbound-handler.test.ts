@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { InboundHandler } from '@copilotkit/outpost/shared';
+import { InboundHandler } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike as PrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import type { InboundMessage } from '@copilotkit/outpost/shared';
 import { TicketSource } from '@copilotkit/outpost/shared';

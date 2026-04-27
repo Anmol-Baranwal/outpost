@@ -11,6 +11,7 @@ export default defineConfig({
             '@copilotkit/outpost/db': path.resolve(__dirname, 'db/src/index.ts'),
             '@copilotkit/outpost/ai': path.resolve(__dirname, 'ai/src/index.ts'),
             '@copilotkit/outpost/queue': path.resolve(__dirname, 'queue/src/index.ts'),
+            '@copilotkit/outpost/shared/platforms': path.resolve(__dirname, 'shared/src/platforms/index.ts'),
             '@copilotkit/outpost/shared': path.resolve(__dirname, 'shared/src/index.ts'),
         },
     },

@@ -1,7 +1,7 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared';
+import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import { getOctokit } from '../lib/github-client.js';
 import { findTicketBySourceId, isTeamMember } from '../lib/tickets.js';
 
