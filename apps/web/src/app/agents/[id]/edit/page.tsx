@@ -1,16 +1,37 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Bot } from 'lucide-react';
+import { Bot, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { AgentForm } from '@/components/agents/agent-form';
-import { findMockAgent } from '@/lib/mock-agents';
 import type { AgentFormData } from '@/components/agents/agent-form';
+import type { Agent } from '@/components/agents/agent-table';
 
 export default function EditAgentPage() {
     const router = useRouter();
     const params = useParams<{ id: string }>();
-    const agent = findMockAgent(params.id);
+    const [agent, setAgent] = useState<Agent | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        fetch(`/api/agents/${params.id}`)
+            .then(async (res) => {
+                if (res.ok) {
+                    setAgent(await res.json());
+                }
+            })
+            .finally(() => setLoading(false));
+    }, [params.id]);
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading...
+            </div>
+        );
+    }
 
     if (!agent) {
         return (
@@ -21,7 +42,6 @@ export default function EditAgentPage() {
     }
 
     const handleSubmit = async (data: AgentFormData) => {
-        // In production this would PATCH /api/agents/[id]
         const res = await fetch(`/api/agents/${params.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },

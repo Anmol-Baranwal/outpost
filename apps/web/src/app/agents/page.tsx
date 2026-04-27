@@ -1,37 +1,42 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bot, Plus, Search } from 'lucide-react';
+import { Bot, Plus, Search, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { AgentTable } from '@/components/agents/agent-table';
-import { MOCK_AGENTS, filterMockAgents } from '@/lib/mock-agents';
-import type { MockAgent } from '@/lib/mock-agents';
+import type { Agent } from '@/components/agents/agent-table';
 
 export default function AgentsPage() {
     const router = useRouter();
     const [search, setSearch] = useState('');
-    const [agents, setAgents] = useState<MockAgent[]>(MOCK_AGENTS);
+    const [agents, setAgents] = useState<Agent[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    const filteredAgents = useMemo(() => {
-        if (!search.trim()) return agents;
-        const term = search.toLowerCase();
-        return agents.filter(
-            (a) =>
-                a.name.toLowerCase().includes(term) ||
-                (a.description && a.description.toLowerCase().includes(term)),
-        );
-    }, [agents, search]);
-
-    const handleRun = useCallback((id: string) => {
-        setAgents((prev) =>
-            prev.map((a) =>
-                a.id === id
-                    ? { ...a, lastRun: new Date().toISOString(), status: 'ACTIVE' as const }
-                    : a,
-            ),
-        );
+    const fetchAgents = useCallback(async (searchTerm?: string) => {
+        const url = searchTerm?.trim()
+            ? `/api/agents?search=${encodeURIComponent(searchTerm.trim())}`
+            : '/api/agents';
+        const res = await fetch(url);
+        if (res.ok) {
+            const data = await res.json();
+            setAgents(data.agents);
+        }
     }, []);
+
+    useEffect(() => {
+        fetchAgents(search).finally(() => setLoading(false));
+    }, [fetchAgents, search]);
+
+    const handleRun = useCallback(
+        async (id: string) => {
+            const res = await fetch(`/api/agents/${id}/run`, { method: 'POST' });
+            if (res.ok) {
+                await fetchAgents(search);
+            }
+        },
+        [fetchAgents, search],
+    );
 
     const handleEdit = useCallback(
         (id: string) => {
@@ -40,9 +45,15 @@ export default function AgentsPage() {
         [router],
     );
 
-    const handleDelete = useCallback((id: string) => {
-        setAgents((prev) => prev.filter((a) => a.id !== id));
-    }, []);
+    const handleDelete = useCallback(
+        async (id: string) => {
+            const res = await fetch(`/api/agents/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                await fetchAgents(search);
+            }
+        },
+        [fetchAgents, search],
+    );
 
     return (
         <div>
@@ -78,12 +89,19 @@ export default function AgentsPage() {
 
             {/* Table */}
             <div className="rounded-lg border border-border bg-card">
-                <AgentTable
-                    agents={filteredAgents}
-                    onRun={handleRun}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                />
+                {loading ? (
+                    <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Loading...
+                    </div>
+                ) : (
+                    <AgentTable
+                        agents={agents}
+                        onRun={handleRun}
+                        onEdit={handleEdit}
+                        onDelete={handleDelete}
+                    />
+                )}
             </div>
         </div>
     );
