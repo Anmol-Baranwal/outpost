@@ -5,7 +5,15 @@ import './globals.css';
 
 export const metadata: Metadata = {
     title: 'Outpost - AI-Powered Support Operations',
-    description: 'CopilotKit support operations platform',
+    description: 'AI-powered support operations platform by CopilotKit',
+    icons: {
+        icon: '/favicon.svg',
+    },
+    openGraph: {
+        title: 'Outpost - AI-Powered Support Operations',
+        description: 'AI-powered support operations platform by CopilotKit',
+        images: [{ url: '/og-image.svg', width: 1200, height: 630, type: 'image/svg+xml' }],
+    },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
