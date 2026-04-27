@@ -6,10 +6,10 @@ import { cn } from '@/lib/utils';
 import { truncate } from '@copilotkit/outpost/shared';
 import { Inbox } from 'lucide-react';
 import { EmptyState } from '@/components/empty-state';
-import type { MockTicket } from '@/lib/mock-tickets';
+import type { Ticket } from './types';
 
 interface TicketListProps {
-    tickets: MockTicket[];
+    tickets: Ticket[];
     className?: string;
 }
 
@@ -81,9 +81,6 @@ export function TicketList({ tickets, className }: TicketListProps) {
                             data-testid={`ticket-card-${ticket.id}`}
                         >
                             <div className="flex items-start gap-2">
-                                {ticket.unread && (
-                                    <span className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-blue-500" />
-                                )}
                                 <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5 mb-0.5">
                                         <span className="text-[10px] font-mono text-slate-400">
@@ -128,7 +125,7 @@ export function TicketList({ tickets, className }: TicketListProps) {
                 {tickets.length === 0 && (
                     <EmptyState
                         icon={<Inbox className="h-6 w-6" />}
-                        title="No tickets yet"
+                        title="No tickets found"
                         description="Tickets will appear here when customers reach out via Discord, GitHub, Slack, Teams, or email."
                         className="py-8"
                     />

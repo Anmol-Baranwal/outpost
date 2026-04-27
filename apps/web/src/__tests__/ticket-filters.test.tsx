@@ -2,11 +2,24 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TicketFilterPanel, DEFAULT_FILTERS } from '@/components/tickets/ticket-filters';
 import type { TicketFilters } from '@/components/tickets/ticket-filters';
+import type { Account, TeamMember } from '@/components/tickets/types';
+
+const mockAccounts: Account[] = [
+    { id: 'acc-1', name: 'Acme Corp', domain: 'acme.com', acv: 120000, createdAt: '2024-09-15T10:00:00Z' },
+    { id: 'acc-2', name: 'TechStart Inc', domain: 'techstart.io', acv: 45000, createdAt: '2024-10-01T08:00:00Z' },
+];
+
+const mockTeamMembers: TeamMember[] = [
+    { id: 'tm-1', name: 'Atai Barkai', email: 'atai@copilotkit.ai', role: 'MEMBER', avatarUrl: null },
+    { id: 'tm-2', name: 'Markus Ecker', email: 'markus@copilotkit.ai', role: 'MEMBER', avatarUrl: null },
+];
 
 describe('TicketFilterPanel', () => {
     const defaultProps = {
         filters: DEFAULT_FILTERS,
         onFiltersChange: vi.fn(),
+        accounts: mockAccounts,
+        teamMembers: mockTeamMembers,
     };
 
     it('renders search input', () => {
@@ -74,6 +87,8 @@ describe('TicketFilterPanel', () => {
             <TicketFilterPanel
                 filters={filtersWithActive}
                 onFiltersChange={onFiltersChange}
+                accounts={mockAccounts}
+                teamMembers={mockTeamMembers}
             />,
         );
 

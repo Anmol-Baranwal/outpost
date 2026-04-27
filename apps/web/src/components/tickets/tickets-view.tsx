@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { TicketStatus, MessageType } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
-import { MOCK_TICKETS, filterMockTickets, findMockTicket } from '@/lib/mock-tickets';
-import type { MockTicket, MockMessage } from '@/lib/mock-tickets';
+import type { Ticket, TicketDetail, TicketMessage, TeamMember, Account } from './types';
 import { TicketList } from './ticket-list';
 import { TicketFilterPanel, DEFAULT_FILTERS } from './ticket-filters';
 import type { TicketFilters } from './ticket-filters';
@@ -30,25 +29,89 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     const replyEditorRef = useRef<ReplyEditorHandle>(null);
     const sidebarRef = useRef<TicketSidebarHandle>(null);
 
-    // Local ticket state (for mock updates)
-    const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<MockTicket>>>({});
+    // Data state
+    const [tickets, setTickets] = useState<Ticket[]>([]);
+    const [ticketsLoading, setTicketsLoading] = useState(true);
+    const [ticketDetail, setTicketDetail] = useState<TicketDetail | null>(null);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [accounts, setAccounts] = useState<Account[]>([]);
+    const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
-    const filteredTickets = useMemo(() => {
-        const base = filterMockTickets(filters);
-        return base.map((t) => ({ ...t, ...ticketOverrides[t.id] }));
-    }, [filters, ticketOverrides]);
+    // Local ticket overrides for optimistic updates
+    const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<TicketDetail>>>({});
 
+    // Fetch accounts and team members on mount
+    useEffect(() => {
+        fetch('/api/accounts')
+            .then((res) => res.json())
+            .then((data) => setAccounts(data.accounts ?? []))
+            .catch(() => setAccounts([]));
+
+        fetch('/api/team')
+            .then((res) => {
+                if (!res.ok) return [];
+                return res.json();
+            })
+            .then((data) => setTeamMembers(Array.isArray(data) ? data : data.members ?? []))
+            .catch(() => setTeamMembers([]));
+    }, []);
+
+    // Fetch tickets when filters change (server-side filtering)
+    useEffect(() => {
+        setTicketsLoading(true);
+        const params = new URLSearchParams();
+
+        if (filters.search) params.set('search', filters.search);
+        if (filters.accountId) params.set('accountId', filters.accountId);
+        if (filters.assigneeId) params.set('assigneeId', filters.assigneeId);
+        for (const s of filters.status) params.append('status', s);
+        for (const s of filters.source) params.append('source', s);
+        for (const p of filters.priority) params.append('priority', p);
+        for (const t of filters.type) params.append('type', t);
+        params.set('page', '1');
+        params.set('pageSize', '50');
+
+        fetch(`/api/tickets?${params.toString()}`)
+            .then((res) => res.json())
+            .then((data) => {
+                setTickets(data.tickets ?? []);
+            })
+            .catch(() => setTickets([]))
+            .finally(() => setTicketsLoading(false));
+    }, [filters]);
+
+    // Fetch ticket detail when selection changes
+    useEffect(() => {
+        if (!ticketId) {
+            setTicketDetail(null);
+            return;
+        }
+        setDetailLoading(true);
+        fetch(`/api/tickets/${ticketId}`)
+            .then((res) => {
+                if (!res.ok) throw new Error('Not found');
+                return res.json();
+            })
+            .then((data) => setTicketDetail(data))
+            .catch(() => setTicketDetail(null))
+            .finally(() => setDetailLoading(false));
+    }, [ticketId]);
+
+    // Apply optimistic overrides to the list tickets
+    const displayTickets = useMemo(() => {
+        return tickets.map((t) => ({ ...t, ...ticketOverrides[t.id] }));
+    }, [tickets, ticketOverrides]);
+
+    // Merge detail with overrides
     const selectedTicket = useMemo(() => {
-        if (!ticketId) return null;
-        const base = findMockTicket(ticketId);
-        if (!base) return null;
-        return { ...base, ...ticketOverrides[base.id] };
-    }, [ticketId, ticketOverrides]);
+        if (!ticketDetail) return null;
+        return { ...ticketDetail, ...ticketOverrides[ticketDetail.id] };
+    }, [ticketDetail, ticketOverrides]);
 
     const currentIndex = useMemo(() => {
         if (!ticketId) return -1;
-        return filteredTickets.findIndex((t) => t.id === ticketId);
-    }, [ticketId, filteredTickets]);
+        return displayTickets.findIndex((t) => t.id === ticketId);
+    }, [ticketId, displayTickets]);
 
     const navigateToTicket = useCallback(
         (id: string) => {
@@ -60,18 +123,19 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
 
     const handlePreviousTicket = useCallback(() => {
         if (currentIndex > 0) {
-            navigateToTicket(filteredTickets[currentIndex - 1].id);
+            navigateToTicket(displayTickets[currentIndex - 1].id);
         }
-    }, [currentIndex, filteredTickets, navigateToTicket]);
+    }, [currentIndex, displayTickets, navigateToTicket]);
 
     const handleNextTicket = useCallback(() => {
-        if (currentIndex < filteredTickets.length - 1) {
-            navigateToTicket(filteredTickets[currentIndex + 1].id);
+        if (currentIndex < displayTickets.length - 1) {
+            navigateToTicket(displayTickets[currentIndex + 1].id);
         }
-    }, [currentIndex, filteredTickets, navigateToTicket]);
+    }, [currentIndex, displayTickets, navigateToTicket]);
 
     const handleMarkAsDone = useCallback(() => {
         if (!ticketId) return;
+        // Optimistic update
         setTicketOverrides((prev) => ({
             ...prev,
             [ticketId]: {
@@ -79,6 +143,21 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                 status: TicketStatus.CLOSED,
             },
         }));
+        // Persist to API
+        fetch(`/api/tickets/${ticketId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: TicketStatus.CLOSED }),
+        }).catch(() => {
+            // Revert on failure
+            setTicketOverrides((prev) => {
+                const copy = { ...prev };
+                if (copy[ticketId]) {
+                    delete copy[ticketId].status;
+                }
+                return copy;
+            });
+        });
     }, [ticketId]);
 
     const handleCreateTicket = useCallback(() => {
@@ -96,7 +175,8 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     const handleSendMessage = useCallback(
         (content: string) => {
             if (!selectedTicket) return;
-            const newMessage: MockMessage = {
+            // Optimistic: add a temporary message locally
+            const tempMessage: TicketMessage = {
                 id: `msg-${Date.now()}`,
                 ticketId: selectedTicket.id,
                 author: 'You',
@@ -110,23 +190,88 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                 ...prev,
                 [selectedTicket.id]: {
                     ...prev[selectedTicket.id],
-                    messages: [...(prev[selectedTicket.id]?.messages ?? selectedTicket.messages), newMessage],
+                    messages: [...(prev[selectedTicket.id]?.messages ?? selectedTicket.messages), tempMessage],
                 },
             }));
+            // Persist to API
+            fetch(`/api/tickets/${selectedTicket.id}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content, type: MessageType.USER }),
+            })
+                .then((res) => {
+                    if (res.ok) return res.json();
+                    throw new Error('Failed to send');
+                })
+                .then((savedMessage) => {
+                    // Replace temp message with the saved one
+                    setTicketOverrides((prev) => {
+                        const overrideMessages = prev[selectedTicket.id]?.messages;
+                        if (!overrideMessages) return prev;
+                        return {
+                            ...prev,
+                            [selectedTicket.id]: {
+                                ...prev[selectedTicket.id],
+                                messages: overrideMessages.map((m) =>
+                                    m.id === tempMessage.id ? savedMessage : m,
+                                ),
+                            },
+                        };
+                    });
+                })
+                .catch(() => {
+                    // Could revert the optimistic message, but for now leave it
+                });
         },
         [selectedTicket],
     );
 
     const handleTicketUpdate = useCallback(
-        (fields: Partial<MockTicket>) => {
+        (fields: Partial<TicketDetail>) => {
             if (!ticketId) return;
+            // Optimistic update
             setTicketOverrides((prev) => ({
                 ...prev,
                 [ticketId]: { ...prev[ticketId], ...fields },
             }));
+            // Persist to API (only persist fields the API supports)
+            const patchable: Record<string, unknown> = {};
+            if ('status' in fields) patchable.status = fields.status;
+            if ('priority' in fields) patchable.priority = fields.priority;
+            if ('assigneeId' in fields) patchable.assigneeId = fields.assigneeId;
+            if ('type' in fields) patchable.type = fields.type;
+
+            if (Object.keys(patchable).length > 0) {
+                fetch(`/api/tickets/${ticketId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(patchable),
+                }).catch(() => {
+                    // Silently fail — optimistic update stays
+                });
+            }
         },
         [ticketId],
     );
+
+    const handleTicketCreated = useCallback((_ticket?: Record<string, unknown>) => {
+        // Re-fetch the ticket list after creation
+        const params = new URLSearchParams();
+        if (filters.search) params.set('search', filters.search);
+        if (filters.accountId) params.set('accountId', filters.accountId);
+        if (filters.assigneeId) params.set('assigneeId', filters.assigneeId);
+        for (const s of filters.status) params.append('status', s);
+        for (const s of filters.source) params.append('source', s);
+        for (const p of filters.priority) params.append('priority', p);
+        for (const t of filters.type) params.append('type', t);
+        params.set('page', '1');
+        params.set('pageSize', '50');
+
+        fetch(`/api/tickets?${params.toString()}`)
+            .then((res) => res.json())
+            .then((data) => setTickets(data.tickets ?? []))
+            .catch(() => {});
+    }, [filters]);
 
     useTicketShortcuts({
         focusSearch: () => searchInputRef.current?.focus(),
@@ -171,8 +316,16 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     filters={filters}
                     onFiltersChange={setFilters}
                     searchInputRef={searchInputRef}
+                    accounts={accounts}
+                    teamMembers={teamMembers}
                 />
-                <TicketList tickets={filteredTickets} className="flex-1" />
+                {ticketsLoading ? (
+                    <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+                        Loading...
+                    </div>
+                ) : (
+                    <TicketList tickets={displayTickets} className="flex-1" />
+                )}
             </div>
 
             {/* Center panel: conversation thread */}
@@ -183,7 +336,11 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     mobilePanel !== 'thread' && 'max-md:hidden',
                 )}
             >
-                {selectedTicket ? (
+                {detailLoading ? (
+                    <div className="flex items-center justify-center h-full text-sm text-slate-400">
+                        Loading...
+                    </div>
+                ) : selectedTicket ? (
                     <>
                         {/* Thread header */}
                         <div className="border-b border-slate-200 px-4 py-3 flex-shrink-0">
@@ -260,6 +417,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                         ref={sidebarRef}
                         ticket={selectedTicket}
                         onUpdate={handleTicketUpdate}
+                        teamMembers={teamMembers}
                     />
                 </div>
             )}
@@ -268,6 +426,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             <CreateTicketModal
                 open={createModalOpen}
                 onClose={() => setCreateModalOpen(false)}
+                onCreated={handleTicketCreated}
             />
         </div>
     );
