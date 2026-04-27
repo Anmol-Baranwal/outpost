@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { MAX_BROADCAST_LENGTH } from '@/lib/mock-broadcasts';
 import { AudienceSelector } from './audience-selector';
 import { SenderPicker } from './sender-picker';
-import type { AudienceType } from './audience-selector';
+import type { AudienceType, AccountOption } from './audience-selector';
+import type { TeamMemberOption } from './sender-picker';
+
+const MAX_BROADCAST_LENGTH = 500;
 
 export interface BroadcastFormData {
     message: string;
@@ -19,6 +21,8 @@ interface BroadcastComposerProps {
     onSaveDraft: (data: BroadcastFormData) => void;
     onCancel: () => void;
     initialData?: Partial<BroadcastFormData>;
+    accounts: AccountOption[];
+    teamMembers: TeamMemberOption[];
 }
 
 export function BroadcastComposer({
@@ -26,6 +30,8 @@ export function BroadcastComposer({
     onSaveDraft,
     onCancel,
     initialData,
+    accounts,
+    teamMembers,
 }: BroadcastComposerProps) {
     const [message, setMessage] = useState(initialData?.message ?? '');
     const [audienceType, setAudienceType] = useState<AudienceType>(
@@ -93,10 +99,11 @@ export function BroadcastComposer({
                 selectedAccountIds={selectedAccountIds}
                 onAudienceTypeChange={setAudienceType}
                 onAccountsChange={setSelectedAccountIds}
+                accounts={accounts}
             />
 
             {/* Sender */}
-            <SenderPicker selectedSenderId={senderId} onSenderChange={setSenderId} />
+            <SenderPicker selectedSenderId={senderId} onSenderChange={setSenderId} teamMembers={teamMembers} />
 
             {/* Actions */}
             <div className="flex items-center gap-3 border-t border-border pt-4">

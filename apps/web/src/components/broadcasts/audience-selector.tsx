@@ -1,15 +1,20 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { MOCK_ACCOUNTS } from '@/lib/mock-tickets';
 
 export type AudienceType = 'all' | 'specific';
+
+export interface AccountOption {
+    id: string;
+    name: string;
+}
 
 interface AudienceSelectorProps {
     audienceType: AudienceType;
     selectedAccountIds: string[];
     onAudienceTypeChange: (type: AudienceType) => void;
     onAccountsChange: (ids: string[]) => void;
+    accounts: AccountOption[];
 }
 
 export function AudienceSelector({
@@ -17,6 +22,7 @@ export function AudienceSelector({
     selectedAccountIds,
     onAudienceTypeChange,
     onAccountsChange,
+    accounts,
 }: AudienceSelectorProps) {
     const toggleAccount = (id: string) => {
         if (selectedAccountIds.includes(id)) {
@@ -60,7 +66,7 @@ export function AudienceSelector({
 
             {audienceType === 'specific' && (
                 <div className="mt-3 space-y-1" data-testid="account-list">
-                    {MOCK_ACCOUNTS.map((account) => (
+                    {accounts.map((account) => (
                         <label
                             key={account.id}
                             className={cn(

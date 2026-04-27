@@ -1,19 +1,33 @@
 'use client';
 
-import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { MockBroadcast, BroadcastStatus } from '@/lib/mock-broadcasts';
+
+export type BroadcastStatus = 'DRAFT' | 'SENT';
+export type BroadcastAudience = 'ALL_ACCOUNTS' | 'SELECTED_ACCOUNTS' | 'BY_SENTIMENT';
+
+export interface Broadcast {
+    id: string;
+    message: string;
+    sendAs: string | null;
+    audience: BroadcastAudience;
+    targetAccounts: unknown;
+    status: BroadcastStatus;
+    sentAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
 
 interface BroadcastListProps {
-    broadcasts: MockBroadcast[];
+    broadcasts: Broadcast[];
     onStatusFilter: (status: BroadcastStatus | null) => void;
     activeFilter: BroadcastStatus | null;
+    loading?: boolean;
 }
 
 const tabs: { label: string; value: BroadcastStatus | null }[] = [
     { label: 'All', value: null },
-    { label: 'Draft', value: 'draft' },
-    { label: 'Sent', value: 'sent' },
+    { label: 'Draft', value: 'DRAFT' },
+    { label: 'Sent', value: 'SENT' },
 ];
 
 function formatDate(dateStr: string): string {
@@ -24,14 +38,20 @@ function formatDate(dateStr: string): string {
     });
 }
 
-function audienceLabel(broadcast: MockBroadcast): string {
-    if (broadcast.audienceType === 'all') return 'All accounts';
-    const names = broadcast.audienceAccounts.map((a) => a.name);
-    if (names.length <= 2) return names.join(', ');
-    return `${names[0]} +${names.length - 1} more`;
+function audienceLabel(broadcast: Broadcast): string {
+    switch (broadcast.audience) {
+        case 'ALL_ACCOUNTS':
+            return 'All Accounts';
+        case 'SELECTED_ACCOUNTS':
+            return 'Selected Accounts';
+        case 'BY_SENTIMENT':
+            return 'By Sentiment';
+        default:
+            return 'Unknown';
+    }
 }
 
-export function BroadcastList({ broadcasts, onStatusFilter, activeFilter }: BroadcastListProps) {
+export function BroadcastList({ broadcasts, onStatusFilter, activeFilter, loading }: BroadcastListProps) {
     return (
         <div>
             {/* Filter tabs */}
@@ -54,7 +74,11 @@ export function BroadcastList({ broadcasts, onStatusFilter, activeFilter }: Broa
             </div>
 
             {/* Broadcast cards */}
-            {broadcasts.length === 0 ? (
+            {loading ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                    Loading broadcasts...
+                </div>
+            ) : broadcasts.length === 0 ? (
                 <div
                     className="rounded-lg border border-border bg-card p-6 text-center text-sm text-muted-foreground"
                     data-testid="broadcast-empty"
@@ -83,19 +107,19 @@ export function BroadcastList({ broadcasts, onStatusFilter, activeFilter }: Broa
                                         <span className="text-border">|</span>
                                         <span>{audienceLabel(broadcast)}</span>
                                         <span className="text-border">|</span>
-                                        <span>by {broadcast.sender.name}</span>
+                                        <span>by {broadcast.sendAs || 'Unknown'}</span>
                                     </div>
                                 </div>
                                 <span
                                     data-testid={`status-${broadcast.id}`}
                                     className={cn(
                                         'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
-                                        broadcast.status === 'draft'
+                                        broadcast.status === 'DRAFT'
                                             ? 'bg-yellow-100 text-yellow-800'
                                             : 'bg-green-100 text-green-800',
                                     )}
                                 >
-                                    {broadcast.status === 'draft' ? 'Draft' : 'Sent'}
+                                    {broadcast.status === 'DRAFT' ? 'Draft' : 'Sent'}
                                 </span>
                             </div>
                         </div>

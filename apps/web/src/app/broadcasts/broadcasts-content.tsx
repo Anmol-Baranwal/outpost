@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Megaphone } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { BroadcastList } from '@/components/broadcasts/broadcast-list';
 import { BroadcastComposer } from '@/components/broadcasts/broadcast-composer';
-import { filterMockBroadcasts } from '@/lib/mock-broadcasts';
-import type { BroadcastStatus } from '@/lib/mock-broadcasts';
+import type { Broadcast, BroadcastStatus } from '@/components/broadcasts/broadcast-list';
 import type { BroadcastFormData } from '@/components/broadcasts/broadcast-composer';
+import type { AccountOption } from '@/components/broadcasts/audience-selector';
+import type { TeamMemberOption } from '@/components/broadcasts/sender-picker';
 
 export default function BroadcastsContent() {
     const searchParams = useSearchParams();
@@ -16,10 +17,60 @@ export default function BroadcastsContent() {
     const showComposer = searchParams.get('action') === 'create';
 
     const [statusFilter, setStatusFilter] = useState<BroadcastStatus | null>(null);
+    const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [accounts, setAccounts] = useState<AccountOption[]>([]);
+    const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
 
-    const broadcasts = filterMockBroadcasts(
-        statusFilter ? { status: statusFilter } : {},
-    );
+    const fetchBroadcasts = useCallback(async (status: BroadcastStatus | null) => {
+        setLoading(true);
+        try {
+            const url = status
+                ? `/api/broadcasts?status=${status}`
+                : '/api/broadcasts';
+            const res = await fetch(url);
+            if (res.ok) {
+                const data = await res.json();
+                setBroadcasts(data.broadcasts);
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchBroadcasts(statusFilter);
+    }, [statusFilter, fetchBroadcasts]);
+
+    // Fetch accounts and team members for the composer
+    useEffect(() => {
+        async function loadComposerData() {
+            const [accountsRes, teamRes] = await Promise.all([
+                fetch('/api/accounts'),
+                fetch('/api/team'),
+            ]);
+            if (accountsRes.ok) {
+                const data = await accountsRes.json();
+                setAccounts(
+                    data.accounts.map((a: { id: string; name: string }) => ({
+                        id: a.id,
+                        name: a.name,
+                    })),
+                );
+            }
+            if (teamRes.ok) {
+                const members = await teamRes.json();
+                setTeamMembers(
+                    members.map((m: { id: string; name: string; email: string }) => ({
+                        id: m.id,
+                        name: m.name,
+                        email: m.email,
+                    })),
+                );
+            }
+        }
+        loadComposerData();
+    }, []);
 
     const openComposer = useCallback(() => {
         router.push('/broadcasts?action=create');
@@ -29,18 +80,49 @@ export default function BroadcastsContent() {
         router.push('/broadcasts');
     }, [router]);
 
-    const handleSend = useCallback(
-        (_data: BroadcastFormData) => {
+    const submitBroadcast = useCallback(
+        async (data: BroadcastFormData, status: 'DRAFT' | 'SENT') => {
+            const senderName =
+                teamMembers.find((m) => m.id === data.senderId)?.name || null;
+
+            const body = {
+                message: data.message,
+                sendAs: senderName,
+                audience:
+                    data.audienceType === 'all'
+                        ? 'ALL_ACCOUNTS'
+                        : 'SELECTED_ACCOUNTS',
+                targetAccounts:
+                    data.audienceType === 'specific'
+                        ? data.audienceAccountIds
+                        : null,
+                status,
+            };
+
+            await fetch('/api/broadcasts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
             closeComposer();
+            fetchBroadcasts(statusFilter);
         },
-        [closeComposer],
+        [teamMembers, closeComposer, fetchBroadcasts, statusFilter],
+    );
+
+    const handleSend = useCallback(
+        (data: BroadcastFormData) => {
+            submitBroadcast(data, 'SENT');
+        },
+        [submitBroadcast],
     );
 
     const handleSaveDraft = useCallback(
-        (_data: BroadcastFormData) => {
-            closeComposer();
+        (data: BroadcastFormData) => {
+            submitBroadcast(data, 'DRAFT');
         },
-        [closeComposer],
+        [submitBroadcast],
     );
 
     return (
@@ -61,6 +143,8 @@ export default function BroadcastsContent() {
                         onSend={handleSend}
                         onSaveDraft={handleSaveDraft}
                         onCancel={closeComposer}
+                        accounts={accounts}
+                        teamMembers={teamMembers}
                     />
                 </div>
             ) : (
@@ -79,6 +163,7 @@ export default function BroadcastsContent() {
                 broadcasts={broadcasts}
                 onStatusFilter={setStatusFilter}
                 activeFilter={statusFilter}
+                loading={loading}
             />
         </div>
     );
