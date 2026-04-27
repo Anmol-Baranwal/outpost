@@ -5,24 +5,18 @@ const nextConfig: NextConfig = {
     transpilePackages: ['@copilotkit/outpost'],
     webpack: (config, { isServer }) => {
         if (isServer) {
-            // Platform SDK packages have native/optional deps that webpack can't resolve.
-            // These are only used by bot services, not the web app, but get pulled in
-            // transitively via the shared package barrel export.
-            const externalPkgs = [
+            // Platform SDK packages are only used by bot services, not the web app,
+            // but get pulled in transitively via the queue/shared barrel exports.
+            // Replace with empty modules so webpack doesn't try to require them.
+            const nullPkgs = [
                 'discord.js', '@discordjs/rest', '@discordjs/ws', '@discordjs/collection',
                 'zlib-sync', 'bufferutil', 'utf-8-validate',
                 '@slack/web-api', '@slack/bolt',
                 'postmark', 'nodemailer',
             ];
-            config.externals = [
-                ...(Array.isArray(config.externals) ? config.externals : config.externals ? [config.externals] : []),
-                ({ request }: { request?: string }, callback: (err?: null, result?: string) => void) => {
-                    if (request && externalPkgs.some(pkg => request === pkg || request.startsWith(pkg + '/'))) {
-                        return callback(null, `commonjs ${request}`);
-                    }
-                    callback();
-                },
-            ];
+            for (const pkg of nullPkgs) {
+                config.resolve.alias[pkg] = false;
+            }
         }
         return config;
     },
