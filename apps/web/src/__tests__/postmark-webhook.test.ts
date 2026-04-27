@@ -40,8 +40,9 @@ vi.mock('@copilotkit/outpost/queue', () => ({
 
 // ─── Import route + helpers ─────────────────────────────────────────────────
 
-import { POST, extractTicketId, extractEmail, extractName } from '@/app/api/webhooks/postmark/route';
-import type { PostmarkInboundPayload } from '@/app/api/webhooks/postmark/route';
+import { POST } from '@/app/api/webhooks/postmark/route';
+import { extractTicketId, extractEmail, extractName } from '@/app/api/webhooks/postmark/utils';
+import type { PostmarkInboundPayload } from '@/app/api/webhooks/postmark/utils';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
