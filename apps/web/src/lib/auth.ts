@@ -73,7 +73,9 @@ function buildOidcProvider(): OAuthConfig<Profile> {
                 id: profile.sub ?? '',
                 name: (profile.name ?? profile.email ?? '') as string,
                 email: profile.email as string,
-                image: (profile.image ?? null) as string | null,
+                image: ((profile as Record<string, unknown>).picture ?? profile.image ?? null) as
+                    | string
+                    | null,
             };
         },
     };
@@ -84,7 +86,10 @@ function buildOidcProvider(): OAuthConfig<Profile> {
 const ALLOWED_ORG = process.env.GITHUB_ALLOWED_ORG ?? 'CopilotKit';
 const ALLOWED_EMAIL_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN ?? '';
 
-async function githubSignInGate(account: Record<string, unknown> | null, profile?: Record<string, unknown>): Promise<boolean | string> {
+async function githubSignInGate(
+    account: Record<string, unknown> | null,
+    profile?: Record<string, unknown>,
+): Promise<boolean | string> {
     if (ALLOWED_EMAIL_DOMAIN && profile?.email) {
         if ((profile.email as string).endsWith(`@${ALLOWED_EMAIL_DOMAIN}`)) {
             return true;
@@ -99,7 +104,7 @@ async function githubSignInGate(account: Record<string, unknown> | null, profile
                     headers: {
                         Authorization: `Bearer ${account.access_token}`,
                     },
-                }
+                },
             );
             if (res.status === 204) {
                 return true;
@@ -114,6 +119,51 @@ async function githubSignInGate(account: Record<string, unknown> | null, profile
     }
 
     return '/login?error=AccessDenied';
+}
+
+// ─── OIDC domain gating + auto-provisioning ───────────────────────────────
+
+async function oidcSignInGate(
+    user: { id?: string; name?: string | null; email?: string | null; image?: string | null },
+    profile?: Record<string, unknown>,
+): Promise<boolean | string> {
+    const email = ((user.email ?? profile?.email ?? '') as string).toLowerCase();
+
+    if (!email) {
+        return '/login?error=AccessDenied';
+    }
+
+    if (ALLOWED_EMAIL_DOMAIN) {
+        if (!email.endsWith(`@${ALLOWED_EMAIL_DOMAIN.toLowerCase()}`)) {
+            return '/login?error=AccessDenied';
+        }
+    }
+
+    const name = (user.name ?? profile?.name ?? email.split('@')[0]) as string;
+    try {
+        await prisma.teamMember.upsert({
+            where: { email },
+            create: {
+                name,
+                email,
+                role: 'MEMBER',
+                status: 'ACTIVE',
+                joinedAt: new Date(),
+                avatarUrl: (user.image ?? null) as string | null,
+            },
+            update: {
+                name,
+                avatarUrl: (user.image ?? null) as string | null,
+            },
+        });
+    } catch (error) {
+        console.error(
+            '[OIDC Auth] Auto-provisioning failed:',
+            error instanceof Error ? error.message : String(error),
+        );
+    }
+
+    return true;
 }
 
 // ─── Assemble Auth Options ─────────────────────────────────────────────────
@@ -138,20 +188,43 @@ function buildAuthOptions(): NextAuthOptions {
             strategy: 'jwt',
         },
         callbacks: {
-            async signIn({ account, profile }) {
+            async signIn({ user, account, profile }) {
                 if (AUTH_PROVIDER === 'github') {
                     return githubSignInGate(
                         account as unknown as Record<string, unknown> | null,
-                        profile as unknown as Record<string, unknown> | undefined
+                        profile as unknown as Record<string, unknown> | undefined,
+                    );
+                }
+                if (AUTH_PROVIDER === 'oidc') {
+                    return oidcSignInGate(
+                        user,
+                        profile as unknown as Record<string, unknown> | undefined,
                     );
                 }
                 return true;
             },
-            async jwt({ token, user }) {
-                // On initial sign-in, persist role and member ID into the JWT
+            async jwt({ token, user, account }) {
                 if (user) {
-                    token.role = (user as unknown as Record<string, unknown>).role ?? 'MEMBER';
-                    token.memberId = user.id;
+                    if (account?.provider === 'oidc' && token.email) {
+                        try {
+                            const member = await prisma.teamMember.findUnique({
+                                where: { email: token.email },
+                                select: { id: true, role: true },
+                            });
+                            token.memberId = member?.id ?? user.id;
+                            token.role = member?.role ?? 'MEMBER';
+                        } catch (error) {
+                            console.error(
+                                '[OIDC Auth] Failed to resolve TeamMember for JWT:',
+                                error instanceof Error ? error.message : String(error),
+                            );
+                            token.memberId = user.id;
+                            token.role = 'MEMBER';
+                        }
+                    } else {
+                        token.role = (user as unknown as Record<string, unknown>).role ?? 'MEMBER';
+                        token.memberId = user.id;
+                    }
                 }
                 return token;
             },
