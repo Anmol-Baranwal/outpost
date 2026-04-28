@@ -25,6 +25,7 @@ export default function BroadcastsContent() {
 
     const fetchBroadcasts = useCallback(async (status: BroadcastStatus | null) => {
         setLoading(true);
+        setError(null);
         try {
             const url = status
                 ? `/api/broadcasts?status=${status}`
@@ -33,7 +34,12 @@ export default function BroadcastsContent() {
             if (res.ok) {
                 const data = await res.json();
                 setBroadcasts(data.broadcasts);
+            } else {
+                const body = await res.json().catch(() => ({}));
+                setError(body.error ?? `Failed to fetch broadcasts (${res.status})`);
             }
+        } catch {
+            setError('Network error fetching broadcasts');
         } finally {
             setLoading(false);
         }
@@ -70,7 +76,9 @@ export default function BroadcastsContent() {
                 );
             }
         }
-        loadComposerData();
+        loadComposerData().catch(() => {
+            setError('Failed to load composer data');
+        });
     }, []);
 
     const openComposer = useCallback(() => {
