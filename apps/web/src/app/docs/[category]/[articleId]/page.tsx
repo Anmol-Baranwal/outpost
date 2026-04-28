@@ -26,6 +26,7 @@ export default function ArticlePage({ params }: ArticlePageProps) {
     const [article, setArticle] = useState<DocArticle | null>(null);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         async function fetchArticle() {
@@ -45,28 +46,44 @@ export default function ArticlePage({ params }: ArticlePageProps) {
     }, [articleId]);
 
     const handleSave = useCallback(async (content: string) => {
-        const res = await fetch(`/api/docs/articles/${articleId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content }),
-        });
-        if (res.ok) {
-            const updated = await res.json();
-            setArticle(updated);
+        setError(null);
+        try {
+            const res = await fetch(`/api/docs/articles/${articleId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content }),
+            });
+            if (res.ok) {
+                const updated = await res.json();
+                setArticle(updated);
+            } else {
+                const body = await res.json().catch(() => ({}));
+                setError(body.error ?? `Failed to save article (${res.status})`);
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Network error');
         }
     }, [articleId]);
 
     const handleTogglePublish = useCallback(async () => {
         if (!article) return;
-        const newStatus = article.status === 'PUBLISHED' ? 'DRAFT' : 'PUBLISHED';
-        const res = await fetch(`/api/docs/articles/${articleId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: newStatus }),
-        });
-        if (res.ok) {
-            const updated = await res.json();
-            setArticle(updated);
+        setError(null);
+        try {
+            const newStatus = article.status === 'PUBLISHED' ? 'DRAFT' : 'PUBLISHED';
+            const res = await fetch(`/api/docs/articles/${articleId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus }),
+            });
+            if (res.ok) {
+                const updated = await res.json();
+                setArticle(updated);
+            } else {
+                const body = await res.json().catch(() => ({}));
+                setError(body.error ?? `Failed to update publish status (${res.status})`);
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Network error');
         }
     }, [articleId, article]);
 
@@ -99,6 +116,12 @@ export default function ArticlePage({ params }: ArticlePageProps) {
                     { label: article.title },
                 ]}
             />
+
+            {error && (
+                <div className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {error}
+                </div>
+            )}
 
             <ArticleEditor
                 article={article}

@@ -152,6 +152,8 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: TicketStatus.CLOSED }),
+        }).then((res) => {
+            if (!res.ok) throw new Error();
         }).catch(() => {
             setTicketOverrides((prev) => {
                 const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
@@ -226,7 +228,18 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     });
                 })
                 .catch(() => {
-                    // Could revert the optimistic message, but for now leave it
+                    setTicketOverrides((prev) => {
+                        const existing = prev[selectedTicket.id];
+                        if (!existing?.messages) return prev;
+                        return {
+                            ...prev,
+                            [selectedTicket.id]: {
+                                ...existing,
+                                messages: existing.messages.filter((m) => m.id !== tempMessage.id),
+                            },
+                        };
+                    });
+                    setError('Failed to send message. Please try again.');
                 });
         },
         [selectedTicket],
@@ -259,6 +272,8 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(patchable),
+                }).then((res) => {
+                    if (!res.ok) throw new Error();
                 }).catch(() => {
                     setTicketOverrides((prev) => {
                         const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };

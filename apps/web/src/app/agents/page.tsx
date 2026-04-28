@@ -15,6 +15,7 @@ export default function AgentsPage() {
     const [error, setError] = useState<string | null>(null);
 
     const fetchAgents = useCallback(async (searchTerm?: string) => {
+        setError(null);
         try {
             const url = searchTerm?.trim()
                 ? `/api/agents?search=${encodeURIComponent(searchTerm.trim())}`

@@ -20,7 +20,13 @@ export default function EditAgentPage() {
             .then(async (res) => {
                 if (res.ok) {
                     setAgent(await res.json());
+                } else {
+                    const body = await res.json().catch(() => ({}));
+                    setError(body.error ?? `Failed to load agent (${res.status})`);
                 }
+            })
+            .catch((err) => {
+                setError(err instanceof Error ? err.message : 'Network error');
             })
             .finally(() => setLoading(false));
     }, [params.id]);

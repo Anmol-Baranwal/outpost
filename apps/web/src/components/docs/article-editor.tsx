@@ -20,7 +20,7 @@ interface DocArticle {
 
 interface ArticleEditorProps {
     article: DocArticle;
-    onSave?: (content: string) => void;
+    onSave?: (content: string) => void | Promise<void>;
     onTogglePublish?: () => void;
 }
 
@@ -32,9 +32,13 @@ export function ArticleEditor({ article, onSave, onTogglePublish }: ArticleEdito
         setContent(article.content);
     }, [article.content]);
 
-    function handleSave() {
-        onSave?.(content);
-        setEditing(false);
+    async function handleSave() {
+        try {
+            await onSave?.(content);
+            setEditing(false);
+        } catch {
+            // stay in edit mode
+        }
     }
 
     function handleCancel() {
@@ -112,7 +116,7 @@ export function ArticleEditor({ article, onSave, onTogglePublish }: ArticleEdito
             ) : (
                 <div className="prose prose-invert max-w-none rounded-lg border border-border bg-card p-6">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {article.content}
+                        {content}
                     </ReactMarkdown>
                 </div>
             )}

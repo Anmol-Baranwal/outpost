@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { AudienceSelector } from './audience-selector';
 import { SenderPicker } from './sender-picker';
@@ -41,6 +41,12 @@ export function BroadcastComposer({
         initialData?.audienceAccountIds ?? [],
     );
     const [senderId, setSenderId] = useState(initialData?.senderId ?? teamMembers[0]?.id ?? '');
+
+    useEffect(() => {
+        if (!senderId && teamMembers.length > 0) {
+            setSenderId(teamMembers[0].id);
+        }
+    }, [teamMembers, senderId]);
 
     const charCount = message.length;
     const isOverLimit = charCount > MAX_BROADCAST_LENGTH;
