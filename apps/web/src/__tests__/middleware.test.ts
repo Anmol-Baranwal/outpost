@@ -17,6 +17,13 @@ vi.mock('next/server', () => ({
     },
 }));
 
+// Mock CSRF helpers so they don't touch real request.cookies
+vi.mock('@/lib/csrf', () => ({
+    requiresCsrfValidation: () => false,
+    validateCsrfToken: () => null,
+    setCsrfCookie: (_req: unknown, res: unknown) => res,
+}));
+
 // Import after mocks
 import { middleware } from '@/middleware';
 
