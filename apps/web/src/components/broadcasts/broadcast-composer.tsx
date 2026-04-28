@@ -40,7 +40,7 @@ export function BroadcastComposer({
     const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>(
         initialData?.audienceAccountIds ?? [],
     );
-    const [senderId, setSenderId] = useState(initialData?.senderId ?? 'tm-3');
+    const [senderId, setSenderId] = useState(initialData?.senderId ?? teamMembers[0]?.id ?? '');
 
     const charCount = message.length;
     const isOverLimit = charCount > MAX_BROADCAST_LENGTH;
@@ -121,12 +121,12 @@ export function BroadcastComposer({
                     Send Broadcast
                 </button>
                 <button
-                    onClick={() => !isEmpty && onSaveDraft(formData)}
-                    disabled={isEmpty}
+                    onClick={() => !isEmpty && !isOverLimit && onSaveDraft(formData)}
+                    disabled={isEmpty || isOverLimit}
                     data-testid="save-draft-button"
                     className={cn(
                         'rounded-md border px-4 py-2 text-sm font-medium transition-colors',
-                        !isEmpty
+                        !isEmpty && !isOverLimit
                             ? 'border-border text-foreground hover:bg-muted'
                             : 'cursor-not-allowed border-border text-muted-foreground',
                     )}

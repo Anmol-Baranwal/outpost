@@ -29,33 +29,31 @@ export async function POST(request: Request) {
         );
     }
 
-    // Truncate all data tables (PostgreSQL TRUNCATE CASCADE handles FK ordering).
-    // We do NOT truncate Organization or _prisma_migrations.
-    await prisma.$executeRawUnsafe(`
-        TRUNCATE TABLE
-            "DiscussionMessage", "Discussion", "Message", "Note",
-            "TicketExternalLink", "Ticket", "InviteToken", "ExternalIdentity",
-            "User", "Account", "Job", "Agent", "Broadcast",
-            "DocArticle", "DocCategory", "SlaConfig", "OnboardingMember",
-            "SyncEvent", "SystemConfig", "TemplateOverride"
-        CASCADE;
-    `);
+    await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`
+            TRUNCATE TABLE
+                "DiscussionMessage", "Discussion", "Message", "Note",
+                "TicketExternalLink", "Ticket", "InviteToken", "ExternalIdentity",
+                "User", "Account", "Job", "Agent", "Broadcast",
+                "DocArticle", "DocCategory", "SlaConfig", "OnboardingMember",
+                "SyncEvent", "SystemConfig", "TemplateOverride"
+            CASCADE;
+        `);
 
-    // Truncate TeamMember separately (we will re-insert the admin)
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "TeamMember" CASCADE;`);
+        await tx.$executeRawUnsafe(`TRUNCATE TABLE "TeamMember" CASCADE;`);
 
-    // Re-insert the requesting admin's TeamMember row
-    await prisma.teamMember.create({
-        data: {
-            id: adminMember.id,
-            name: adminMember.name,
-            email: adminMember.email,
-            role: adminMember.role,
-            status: adminMember.status,
-            avatarUrl: adminMember.avatarUrl,
-            passwordHash: adminMember.passwordHash,
-            joinedAt: adminMember.joinedAt,
-        },
+        await tx.teamMember.create({
+            data: {
+                id: adminMember.id,
+                name: adminMember.name,
+                email: adminMember.email,
+                role: adminMember.role,
+                status: adminMember.status,
+                avatarUrl: adminMember.avatarUrl,
+                passwordHash: adminMember.passwordHash,
+                joinedAt: adminMember.joinedAt,
+            },
+        });
     });
 
     // Handle optional re-seed

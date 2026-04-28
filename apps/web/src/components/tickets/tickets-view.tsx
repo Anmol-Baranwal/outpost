@@ -39,6 +39,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
 
     // Local ticket overrides for optimistic updates
     const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<TicketDetail>>>({});
+    const [error, setError] = useState<string | null>(null);
 
     // Fetch accounts and team members on mount
     useEffect(() => {
@@ -135,28 +136,33 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
 
     const handleMarkAsDone = useCallback(() => {
         if (!ticketId) return;
-        // Optimistic update
-        setTicketOverrides((prev) => ({
-            ...prev,
-            [ticketId]: {
-                ...prev[ticketId],
-                status: TicketStatus.CLOSED,
-            },
-        }));
-        // Persist to API
+        let previousStatus: TicketDetail['status'] | undefined;
+        setTicketOverrides((prev) => {
+            previousStatus = prev[ticketId]?.status;
+            return {
+                ...prev,
+                [ticketId]: {
+                    ...prev[ticketId],
+                    status: TicketStatus.CLOSED,
+                },
+            };
+        });
+        setError(null);
         fetch(`/api/tickets/${ticketId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: TicketStatus.CLOSED }),
         }).catch(() => {
-            // Revert on failure
             setTicketOverrides((prev) => {
-                const copy = { ...prev };
-                if (copy[ticketId]) {
-                    delete copy[ticketId].status;
+                const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
+                if (previousStatus !== undefined) {
+                    restored[ticketId].status = previousStatus;
+                } else {
+                    delete restored[ticketId].status;
                 }
-                return copy;
+                return restored;
             });
+            setError('Failed to mark ticket as done. Please try again.');
         });
     }, [ticketId]);
 
@@ -229,12 +235,19 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     const handleTicketUpdate = useCallback(
         (fields: Partial<TicketDetail>) => {
             if (!ticketId) return;
-            // Optimistic update
-            setTicketOverrides((prev) => ({
-                ...prev,
-                [ticketId]: { ...prev[ticketId], ...fields },
-            }));
-            // Persist to API (only persist fields the API supports)
+            let previousValues: Partial<TicketDetail> | undefined;
+            setTicketOverrides((prev) => {
+                const existing = prev[ticketId] ?? {};
+                previousValues = {};
+                for (const key of Object.keys(fields) as (keyof TicketDetail)[]) {
+                    previousValues[key] = existing[key] as never;
+                }
+                return {
+                    ...prev,
+                    [ticketId]: { ...existing, ...fields },
+                };
+            });
+            setError(null);
             const patchable: Record<string, unknown> = {};
             if ('status' in fields) patchable.status = fields.status;
             if ('priority' in fields) patchable.priority = fields.priority;
@@ -247,7 +260,18 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(patchable),
                 }).catch(() => {
-                    // Silently fail — optimistic update stays
+                    setTicketOverrides((prev) => {
+                        const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
+                        for (const key of Object.keys(fields) as (keyof TicketDetail)[]) {
+                            if (previousValues && previousValues[key] !== undefined) {
+                                restored[ticketId][key] = previousValues[key] as never;
+                            } else {
+                                delete restored[ticketId][key];
+                            }
+                        }
+                        return restored;
+                    });
+                    setError('Failed to update ticket. Please try again.');
                 });
             }
         },
@@ -285,7 +309,18 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     });
 
     return (
-        <div className="flex h-full" data-testid="tickets-view">
+        <div className="flex h-full relative" data-testid="tickets-view">
+            {error && (
+                <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700">
+                    <span>{error}</span>
+                    <button
+                        onClick={() => setError(null)}
+                        className="ml-4 text-red-500 hover:text-red-700 text-xs font-medium"
+                    >
+                        Dismiss
+                    </button>
+                </div>
+            )}
             {/* Mobile tab bar */}
             <div className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-slate-200 bg-white md:hidden">
                 {(['list', 'thread', 'sidebar'] as const).map((panel) => (

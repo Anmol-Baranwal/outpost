@@ -211,7 +211,7 @@ describe('BroadcastComposer', () => {
                 message: 'Test message',
                 audienceType: 'all',
                 audienceAccountIds: [],
-                senderId: 'tm-3',
+                senderId: 'tm-1',
             }),
         );
     });

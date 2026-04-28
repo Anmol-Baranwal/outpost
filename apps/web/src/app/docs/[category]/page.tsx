@@ -12,7 +12,7 @@ interface DocArticle {
     status: 'DRAFT' | 'PUBLISHED';
     sourceUrl?: string | null;
     categoryId: string;
-    category?: { id: string; name: string };
+    category?: { id: string; name: string; description?: string | null };
     createdAt: string;
     updatedAt: string;
 }
@@ -44,6 +44,7 @@ export default function CategoryPage({ params }: CategoryPageProps) {
                 // Extract category info from articles if available
                 if (artData.articles.length > 0 && artData.articles[0].category) {
                     setCategoryName(artData.articles[0].category.name);
+                    setCategoryDescription(artData.articles[0].category.description ?? null);
                 } else {
                     // Fetch categories to get name for this ID (e.g. empty category)
                     const catRes = await fetch('/api/docs/categories');

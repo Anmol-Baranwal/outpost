@@ -12,15 +12,23 @@ export default function AgentsPage() {
     const [search, setSearch] = useState('');
     const [agents, setAgents] = useState<Agent[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     const fetchAgents = useCallback(async (searchTerm?: string) => {
-        const url = searchTerm?.trim()
-            ? `/api/agents?search=${encodeURIComponent(searchTerm.trim())}`
-            : '/api/agents';
-        const res = await fetch(url);
-        if (res.ok) {
-            const data = await res.json();
-            setAgents(data.agents);
+        try {
+            const url = searchTerm?.trim()
+                ? `/api/agents?search=${encodeURIComponent(searchTerm.trim())}`
+                : '/api/agents';
+            const res = await fetch(url);
+            if (res.ok) {
+                const data = await res.json();
+                setAgents(data.agents ?? []);
+            } else {
+                const body = await res.json().catch(() => ({}));
+                setError(body.error ?? `Failed to fetch agents (${res.status})`);
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Network error');
         }
     }, []);
 
@@ -30,9 +38,17 @@ export default function AgentsPage() {
 
     const handleRun = useCallback(
         async (id: string) => {
-            const res = await fetch(`/api/agents/${id}/run`, { method: 'POST' });
-            if (res.ok) {
-                await fetchAgents(search);
+            setError(null);
+            try {
+                const res = await fetch(`/api/agents/${id}/run`, { method: 'POST' });
+                if (res.ok) {
+                    await fetchAgents(search);
+                } else {
+                    const body = await res.json().catch(() => ({}));
+                    setError(body.error ?? `Failed to run agent (${res.status})`);
+                }
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Network error');
             }
         },
         [fetchAgents, search],
@@ -47,9 +63,17 @@ export default function AgentsPage() {
 
     const handleDelete = useCallback(
         async (id: string) => {
-            const res = await fetch(`/api/agents/${id}`, { method: 'DELETE' });
-            if (res.ok) {
-                await fetchAgents(search);
+            setError(null);
+            try {
+                const res = await fetch(`/api/agents/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    await fetchAgents(search);
+                } else {
+                    const body = await res.json().catch(() => ({}));
+                    setError(body.error ?? `Failed to delete agent (${res.status})`);
+                }
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Network error');
             }
         },
         [fetchAgents, search],
@@ -86,6 +110,12 @@ export default function AgentsPage() {
                     Create new agent
                 </button>
             </div>
+
+            {error && (
+                <div className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {error}
+                </div>
+            )}
 
             {/* Table */}
             <div className="rounded-lg border border-border bg-card">

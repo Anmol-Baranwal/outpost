@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Pencil, Eye, Check, X } from 'lucide-react';
@@ -27,6 +27,10 @@ interface ArticleEditorProps {
 export function ArticleEditor({ article, onSave, onTogglePublish }: ArticleEditorProps) {
     const [editing, setEditing] = useState(false);
     const [content, setContent] = useState(article.content);
+
+    useEffect(() => {
+        setContent(article.content);
+    }, [article.content]);
 
     function handleSave() {
         onSave?.(content);

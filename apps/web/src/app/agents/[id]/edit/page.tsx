@@ -13,6 +13,7 @@ export default function EditAgentPage() {
     const params = useParams<{ id: string }>();
     const [agent, setAgent] = useState<Agent | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         fetch(`/api/agents/${params.id}`)
@@ -42,14 +43,22 @@ export default function EditAgentPage() {
     }
 
     const handleSubmit = async (data: AgentFormData) => {
-        const res = await fetch(`/api/agents/${params.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
+        setError(null);
+        try {
+            const res = await fetch(`/api/agents/${params.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            });
 
-        if (res.ok) {
-            router.push('/agents');
+            if (res.ok) {
+                router.push('/agents');
+            } else {
+                const body = await res.json().catch(() => ({}));
+                setError(body.error ?? `Failed to update agent (${res.status})`);
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Network error');
         }
     };
 
@@ -64,6 +73,11 @@ export default function EditAgentPage() {
                     { label: agent.name },
                 ]}
             />
+            {error && (
+                <div className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {error}
+                </div>
+            )}
             <div className="max-w-xl rounded-lg border border-border bg-card p-6">
                 <AgentForm
                     agent={agent}

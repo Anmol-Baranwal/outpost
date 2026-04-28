@@ -12,10 +12,10 @@ export default function MessagingPage() {
         async function fetchMessages() {
             try {
                 const res = await fetch('/api/messaging/pending');
+                if (!res.ok) return;
                 const data = await res.json();
-                setMessages(data.messages);
+                setMessages(data.messages ?? []);
             } catch {
-                // API returns empty list; silently handle errors
             } finally {
                 setLoading(false);
             }

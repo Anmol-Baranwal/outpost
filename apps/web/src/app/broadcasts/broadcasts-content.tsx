@@ -21,6 +21,7 @@ export default function BroadcastsContent() {
     const [loading, setLoading] = useState(true);
     const [accounts, setAccounts] = useState<AccountOption[]>([]);
     const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
+    const [error, setError] = useState<string | null>(null);
 
     const fetchBroadcasts = useCallback(async (status: BroadcastStatus | null) => {
         setLoading(true);
@@ -99,12 +100,19 @@ export default function BroadcastsContent() {
                 status,
             };
 
-            await fetch('/api/broadcasts', {
+            const res = await fetch('/api/broadcasts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
 
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => null);
+                setError(errorData?.error ?? `Failed to save broadcast (${res.status})`);
+                return;
+            }
+
+            setError(null);
             closeComposer();
             fetchBroadcasts(statusFilter);
         },
@@ -113,14 +121,18 @@ export default function BroadcastsContent() {
 
     const handleSend = useCallback(
         (data: BroadcastFormData) => {
-            submitBroadcast(data, 'SENT');
+            submitBroadcast(data, 'SENT').catch((err) => {
+                setError(err instanceof Error ? err.message : 'Failed to send broadcast');
+            });
         },
         [submitBroadcast],
     );
 
     const handleSaveDraft = useCallback(
         (data: BroadcastFormData) => {
-            submitBroadcast(data, 'DRAFT');
+            submitBroadcast(data, 'DRAFT').catch((err) => {
+                setError(err instanceof Error ? err.message : 'Failed to save draft');
+            });
         },
         [submitBroadcast],
     );
@@ -133,6 +145,12 @@ export default function BroadcastsContent() {
                 icon={Megaphone}
                 breadcrumbs={[{ label: 'Broadcasts' }]}
             />
+
+            {error && (
+                <div className="mb-4 rounded-md border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive" data-testid="broadcast-error">
+                    {error}
+                </div>
+            )}
 
             {showComposer ? (
                 <div className="mb-6 rounded-lg border border-border bg-card p-6">
