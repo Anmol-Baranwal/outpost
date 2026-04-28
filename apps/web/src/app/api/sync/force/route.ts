@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
+import { requireAdmin } from '@/lib/require-admin';
 
 /**
  * POST /api/sync/force
@@ -8,6 +9,9 @@ import { prisma } from '@copilotkit/outpost/db';
  * Body: { plugin: string }
  */
 export async function POST(request: NextRequest) {
+    const { error } = await requireAdmin();
+    if (error) return error;
+
     try {
         const body = await request.json();
         const plugin = body.plugin;

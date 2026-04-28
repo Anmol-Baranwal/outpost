@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { loadFromFilesystem } from '@copilotkit/outpost/shared/server';
 
 /**
@@ -10,6 +12,11 @@ export async function GET(
     _request: NextRequest,
     { params }: { params: Promise<{ slug: string }> },
 ) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { slug } = await params;
     const loaded = loadFromFilesystem(slug);
 
@@ -38,6 +45,11 @@ export async function PUT(
     request: NextRequest,
     { params }: { params: Promise<{ slug: string }> },
 ) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { slug } = await params;
     const body = await request.json();
 
@@ -71,6 +83,11 @@ export async function DELETE(
     _request: NextRequest,
     { params }: { params: Promise<{ slug: string }> },
 ) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { slug } = await params;
 
     // In production: await prisma.templateOverride.delete({ where: { slug } })

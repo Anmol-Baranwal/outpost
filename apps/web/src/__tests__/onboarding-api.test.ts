@@ -16,6 +16,22 @@ vi.mock('@copilotkit/outpost/db', () => ({
     },
 }));
 
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // ─── Mock shared ────────────────────────────────────────────────────────────
 
 vi.mock('@copilotkit/outpost/shared', async () => {
@@ -57,10 +73,27 @@ const MOCK_MEMBER = {
     updatedAt: new Date(),
 };
 
+// ─── Session helpers ────────────────────────────────────────────────────────
+
+function userSession(memberId = 'tm-1') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role: 'MEMBER',
+            memberId,
+        },
+    };
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('GET /api/onboarding/members', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns members', async () => {
         mockOnboardingMemberFindMany.mockResolvedValue([MOCK_MEMBER]);
@@ -103,7 +136,10 @@ describe('GET /api/onboarding/members', () => {
 });
 
 describe('PATCH /api/onboarding/members/[id]', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('updates funnel stage', async () => {
         mockOnboardingMemberFindUnique.mockResolvedValue(MOCK_MEMBER);
@@ -142,7 +178,10 @@ describe('PATCH /api/onboarding/members/[id]', () => {
 });
 
 describe('GET /api/onboarding/metrics', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns funnel metrics', async () => {
         mockOnboardingMemberFindMany.mockResolvedValue([

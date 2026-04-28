@@ -20,6 +20,22 @@ vi.mock('@copilotkit/outpost/db', () => ({
     },
 }));
 
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // Import after mocks
 import { GET, POST } from '@/app/api/agents/route';
 import { GET as GET_BY_ID, PATCH, DELETE } from '@/app/api/agents/[id]/route';
@@ -55,10 +71,27 @@ const MOCK_AGENT = {
     updatedAt: new Date('2026-04-15'),
 };
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function userSession(memberId = 'tm-1', role = 'MEMBER') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role,
+            memberId,
+        },
+    };
+}
+
 // ─── Agent API Route Tests ──────────────────────────────────────────────────
 
 describe('GET /api/agents', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns all agents', async () => {
         mockAgentFindMany.mockResolvedValue([MOCK_AGENT]);
@@ -100,7 +133,10 @@ describe('GET /api/agents', () => {
 });
 
 describe('POST /api/agents', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('creates an agent', async () => {
         mockAgentCreate.mockResolvedValue({ ...MOCK_AGENT, id: 'agent-new' });
@@ -136,7 +172,10 @@ describe('POST /api/agents', () => {
 });
 
 describe('GET /api/agents/[id]', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns agent by ID', async () => {
         mockAgentFindUnique.mockResolvedValue(MOCK_AGENT);
@@ -159,7 +198,10 @@ describe('GET /api/agents/[id]', () => {
 });
 
 describe('DELETE /api/agents/[id]', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('deletes an agent', async () => {
         mockAgentFindUnique.mockResolvedValue(MOCK_AGENT);
@@ -184,7 +226,10 @@ describe('DELETE /api/agents/[id]', () => {
 });
 
 describe('POST /api/agents/[id]/run', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1', 'ADMIN'));
+    });
 
     it('triggers a run and updates lastRun', async () => {
         mockAgentFindUnique.mockResolvedValue(MOCK_AGENT);

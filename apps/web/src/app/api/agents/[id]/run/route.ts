@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
+import { requireAdmin } from '@/lib/require-admin';
 
 /**
  * POST /api/agents/[id]/run
@@ -12,6 +13,9 @@ export async function POST(
     _request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
+    const { error } = await requireAdmin();
+    if (error) return error;
+
     const { id } = await params;
     const agent = await prisma.agent.findUnique({ where: { id } });
 

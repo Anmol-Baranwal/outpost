@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
 import type { Prisma } from '@copilotkit/outpost/db';
 import { computeFunnelMetrics } from '@copilotkit/outpost/shared';
@@ -10,6 +12,11 @@ import type { OnboardingMember } from '@copilotkit/outpost/shared';
  * Return funnel metrics. Accepts optional date range query params.
  */
 export async function GET(request: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = request.nextUrl;
     const from = searchParams.get('from');
     const to = searchParams.get('to');

@@ -18,6 +18,22 @@ vi.mock('@copilotkit/outpost/db', () => ({
     },
 }));
 
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // Import after mocks
 import { GET, POST } from '@/app/api/broadcasts/route';
 import { GET as GET_BY_ID, PATCH } from '@/app/api/broadcasts/[id]/route';
@@ -50,10 +66,27 @@ const MOCK_BROADCAST = {
     updatedAt: new Date(),
 };
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function userSession(memberId = 'tm-1') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role: 'MEMBER',
+            memberId,
+        },
+    };
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('GET /api/broadcasts', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns all broadcasts', async () => {
         mockBroadcastFindMany.mockResolvedValue([MOCK_BROADCAST]);
@@ -91,7 +124,10 @@ describe('GET /api/broadcasts', () => {
 });
 
 describe('POST /api/broadcasts', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('creates a broadcast', async () => {
         mockBroadcastCreate.mockResolvedValue({ ...MOCK_BROADCAST, id: 'bc-new' });
@@ -123,7 +159,10 @@ describe('POST /api/broadcasts', () => {
 });
 
 describe('GET /api/broadcasts/[id]', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns broadcast by ID', async () => {
         mockBroadcastFindUnique.mockResolvedValue(MOCK_BROADCAST);
@@ -146,7 +185,10 @@ describe('GET /api/broadcasts/[id]', () => {
 });
 
 describe('PATCH /api/broadcasts/[id]', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('updates a draft broadcast', async () => {
         mockBroadcastFindUnique.mockResolvedValue(MOCK_BROADCAST);

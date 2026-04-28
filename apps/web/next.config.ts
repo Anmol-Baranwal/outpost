@@ -3,6 +3,19 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
     output: 'standalone',
     transpilePackages: ['@copilotkit/outpost'],
+    async headers() {
+        return [{
+            source: '/(.*)',
+            headers: [
+                { key: 'X-Content-Type-Options', value: 'nosniff' },
+                { key: 'X-Frame-Options', value: 'DENY' },
+                { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+                { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+                { key: 'X-XSS-Protection', value: '1; mode=block' },
+                { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+            ],
+        }];
+    },
     webpack: (config, { isServer }) => {
         if (isServer) {
             // Platform SDK packages are only used by bot services, not the web app,

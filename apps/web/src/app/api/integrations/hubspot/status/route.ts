@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 
 /**
  * GET /api/integrations/hubspot/status
@@ -10,6 +12,11 @@ import { NextResponse } from 'next/server';
  * HUBSPOT_SYNC job. For now it returns a mock response.
  */
 export async function GET() {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // In production: query prisma.job.findFirst({ where: { type: 'HUBSPOT_SYNC' }, orderBy: { createdAt: 'desc' } })
     const connected = !!process.env.HUBSPOT_API_KEY;
 

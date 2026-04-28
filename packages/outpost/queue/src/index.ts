@@ -9,4 +9,5 @@ export { handleOnboardingDigest } from './handlers/onboarding-digest.js';
 export { handleAccountScoring } from './handlers/account-scoring.js';
 export { handleHubSpotSync } from './handlers/hubspot-sync.js';
 export { createTrackerSyncHandler } from './handlers/tracker-sync.js';
+export { handleJobCleanup } from './handlers/job-cleanup.js';
 export * from './types.js';

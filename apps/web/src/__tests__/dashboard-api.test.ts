@@ -31,6 +31,10 @@ vi.mock('@copilotkit/outpost/db', () => ({
 
 const mockGetServerSession = vi.fn();
 
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
 vi.mock('next-auth', () => ({
     getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
 }));
@@ -78,6 +82,7 @@ function userSession(memberId = 'tm-1') {
 describe('Dashboard API', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
     });
 
     // ── GET /api/dashboard/stats ──────────────────────────────────────────

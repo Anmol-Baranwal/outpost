@@ -34,6 +34,12 @@ export const DEFAULT_SCHEDULED_JOBS: ScheduledJobDefinition[] = [
         intervalMs: 24 * 60 * 60 * 1000, // 24 hours
         description: 'Sync accounts from HubSpot CRM',
     },
+    {
+        type: JobType.JOB_CLEANUP,
+        payload: {},
+        intervalMs: 24 * 60 * 60 * 1000, // 24 hours
+        description: 'Clean up old completed/dead-letter jobs and sync events',
+    },
 ];
 
 /**

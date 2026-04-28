@@ -17,6 +17,13 @@ vi.mock('next/server', () => ({
     },
 }));
 
+// Mock CSRF helpers so they don't touch real request.cookies
+vi.mock('@/lib/csrf', () => ({
+    requiresCsrfValidation: () => false,
+    validateCsrfToken: () => null,
+    setCsrfCookie: (_req: unknown, res: unknown) => res,
+}));
+
 // Import after mocks
 import { middleware } from '@/middleware';
 
@@ -74,6 +81,13 @@ describe('Auth middleware', () => {
 
     it('allows /api/setup without authentication', async () => {
         const req = createMockRequest('/api/setup');
+        await middleware(req as never);
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockRedirect).not.toHaveBeenCalled();
+    });
+
+    it('allows /api/webhooks without authentication', async () => {
+        const req = createMockRequest('/api/webhooks/postmark/inbound');
         await middleware(req as never);
         expect(mockNext).toHaveBeenCalled();
         expect(mockRedirect).not.toHaveBeenCalled();

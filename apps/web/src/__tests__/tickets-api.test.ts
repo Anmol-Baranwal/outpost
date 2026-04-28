@@ -75,6 +75,22 @@ vi.mock('@copilotkit/outpost/shared', () => ({
     generateTicketId: vi.fn().mockReturnValue('TKT-TESTID01'),
 }));
 
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // ─── Import route handlers (must come after mocks) ────────────────────────
 
 import { GET as ticketsListGet, POST as ticketsPost } from '@/app/api/tickets/route';
@@ -133,11 +149,26 @@ const sampleMessage = {
     createdAt: new Date('2025-04-14T09:30:00Z'),
 };
 
+// ─── Session helpers ────────────────────────────────────────────────────────
+
+function userSession(memberId = 'tm-1') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role: 'MEMBER',
+            memberId,
+        },
+    };
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Tickets API', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
     });
 
     // ── GET /api/tickets ──────────────────────────────────────────────────

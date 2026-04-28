@@ -38,6 +38,9 @@ COPY --from=installer --chown=outpost:outpost /app/apps/worker/package.json ./ap
 COPY --from=installer --chown=outpost:outpost /app/packages ./packages
 COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 
+COPY --chown=outpost:outpost apps/worker/start.sh ./apps/worker/start.sh
+RUN chmod +x apps/worker/start.sh
+
 USER outpost
 ENV NODE_ENV=production
 ENV HEALTH_PORT=3005
@@ -46,4 +49,4 @@ EXPOSE 3005
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3005/health || exit 1
 
-CMD ["node", "apps/worker/dist/index.js"]
+CMD ["./apps/worker/start.sh"]

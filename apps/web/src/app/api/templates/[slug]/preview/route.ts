@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { renderTemplate } from '@copilotkit/outpost/shared/server';
 import type { TemplateContext } from '@copilotkit/outpost/shared/server';
 
@@ -39,6 +41,11 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ slug: string }> },
 ) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { slug } = await params;
 
     let context = SAMPLE_CONTEXT;

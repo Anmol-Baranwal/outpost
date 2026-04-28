@@ -22,6 +22,22 @@ vi.mock('@copilotkit/outpost/db', () => ({
     },
 }));
 
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // Import after mocks
 import { GET, POST } from '@/app/api/accounts/route';
 import { GET as GET_BY_ID, PATCH } from '@/app/api/accounts/[id]/route';
@@ -58,9 +74,22 @@ const MOCK_ACCOUNT = {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
+function userSession(memberId = 'tm-1') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role: 'MEMBER',
+            memberId,
+        },
+    };
+}
+
 describe('GET /api/accounts', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
     });
 
     it('returns accounts with ticket counts', async () => {
@@ -115,6 +144,7 @@ describe('GET /api/accounts', () => {
 describe('POST /api/accounts', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
     });
 
     it('creates an account', async () => {
@@ -146,6 +176,7 @@ describe('POST /api/accounts', () => {
 describe('GET /api/accounts/[id]', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
     });
 
     it('returns account with ticket counts', async () => {
@@ -179,6 +210,7 @@ describe('GET /api/accounts/[id]', () => {
 describe('PATCH /api/accounts/[id]', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
     });
 
     it('updates account fields', async () => {

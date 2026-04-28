@@ -24,6 +24,22 @@ vi.mock('@copilotkit/outpost/db', () => ({
     },
 }));
 
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // ─── Mock queue ─────────────────────────────────────────────────────────────
 
 const mockCreateJob = vi.fn().mockResolvedValue('job-1');
@@ -57,10 +73,27 @@ function makeJsonRequest(url: string, body: unknown, method = 'POST'): NextReque
     });
 }
 
+// ─── Session helpers ────────────────────────────────────────────────────────
+
+function userSession(memberId = 'tm-1', role = 'MEMBER') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role,
+            memberId,
+        },
+    };
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('GET /api/sync/status', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns system status', async () => {
         mockSyncEventFindMany.mockResolvedValue([
@@ -88,7 +121,10 @@ describe('GET /api/sync/status', () => {
 });
 
 describe('GET /api/sync/conflicts', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns unresolved conflicts', async () => {
         const conflicts = [
@@ -114,7 +150,10 @@ describe('GET /api/sync/conflicts', () => {
 });
 
 describe('POST /api/sync/conflicts/[id]/resolve', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('resolves a conflict', async () => {
         mockSyncEventFindUnique.mockResolvedValue({ id: 'se-1', status: 'conflict' });
@@ -155,7 +194,10 @@ describe('POST /api/sync/conflicts/[id]/resolve', () => {
 });
 
 describe('GET /api/sync/events', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns paginated events', async () => {
         const events = [{ id: 'se-1', sourcePlugin: 'github', status: 'success' }];
@@ -185,7 +227,10 @@ describe('GET /api/sync/events', () => {
 });
 
 describe('GET /api/sync/mappings', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns mapping config', async () => {
         mockExternalIdentityFindMany.mockResolvedValue([]);
@@ -201,7 +246,10 @@ describe('GET /api/sync/mappings', () => {
 });
 
 describe('PUT /api/sync/mappings', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns 501 for valid mapping update (persistence not yet implemented)', async () => {
         const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
@@ -224,7 +272,10 @@ describe('PUT /api/sync/mappings', () => {
 });
 
 describe('POST /api/sync/force', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1', 'ADMIN'));
+    });
 
     it('returns 501 for force sync (bulk sync not yet implemented)', async () => {
         mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
