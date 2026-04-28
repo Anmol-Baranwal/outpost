@@ -15,7 +15,7 @@ export default function MessagingPage() {
                 if (!res.ok) return;
                 const data = await res.json();
                 setMessages(data.messages ?? []);
-            } catch {
+            } catch { /* network error — show empty state */
             } finally {
                 setLoading(false);
             }
