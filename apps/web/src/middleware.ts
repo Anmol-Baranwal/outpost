@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { requiresCsrfValidation, validateCsrfToken, setCsrfCookie } from '@/lib/csrf';
 
-const PUBLIC_PATHS = ['/login', '/api/auth', '/setup', '/api/setup', '/api/health', '/invite/accept', '/api/team/invite/accept'];
+const PUBLIC_PATHS = ['/login', '/api/auth', '/setup', '/api/setup', '/api/health', '/invite/accept', '/api/team/invite/accept', '/api/webhooks'];
 
 export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;
@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
     // CSRF: reject mutating requests to protected API routes without a valid token
     if (requiresCsrfValidation(request)) {
         const rejection = validateCsrfToken(request);
-        if (rejection) return rejection;
+        if (rejection) return setCsrfCookie(request, rejection);
     }
 
     return setCsrfCookie(request, NextResponse.next());

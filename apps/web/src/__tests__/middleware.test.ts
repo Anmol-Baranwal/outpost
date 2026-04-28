@@ -86,6 +86,13 @@ describe('Auth middleware', () => {
         expect(mockRedirect).not.toHaveBeenCalled();
     });
 
+    it('allows /api/webhooks without authentication', async () => {
+        const req = createMockRequest('/api/webhooks/postmark/inbound');
+        await middleware(req as never);
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockRedirect).not.toHaveBeenCalled();
+    });
+
     it('allows static assets through', async () => {
         const req = createMockRequest('/_next/static/chunk.js');
         await middleware(req as never);

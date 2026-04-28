@@ -9,32 +9,19 @@ function getDatabaseUrl(): string | undefined {
     if (!baseUrl) return undefined;
 
     const limit = process.env.DB_CONNECTION_LIMIT ?? '5';
+    if (baseUrl.includes('connection_limit=')) return baseUrl;
 
-    try {
-        const url = new URL(baseUrl);
-        if (!url.searchParams.has('connection_limit')) {
-            url.searchParams.set('connection_limit', limit);
-        }
-        return url.toString();
-    } catch {
-        // If URL parsing fails (e.g. non-standard format), append as query param
-        const separator = baseUrl.includes('?') ? '&' : '?';
-        if (!baseUrl.includes('connection_limit=')) {
-            return `${baseUrl}${separator}connection_limit=${limit}`;
-        }
-        return baseUrl;
-    }
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}connection_limit=${limit}`;
 }
+
+const dbUrl = getDatabaseUrl();
 
 export const prisma =
     globalForPrisma.prisma ??
     new PrismaClient({
         log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-        datasources: {
-            db: {
-                url: getDatabaseUrl(),
-            },
-        },
+        ...(dbUrl ? { datasources: { db: { url: dbUrl } } } : {}),
     });
 
 if (process.env.NODE_ENV !== 'production') {
