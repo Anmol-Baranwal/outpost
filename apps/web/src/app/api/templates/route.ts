@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import {
     listTemplateSlugs,
     loadFromFilesystem,
@@ -13,6 +15,11 @@ import type { TemplateListEntry } from '@copilotkit/outpost/shared/server';
  * (DB overrides would be merged in production with Prisma).
  */
 export async function GET(_request: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const slugs = listTemplateSlugs();
 
     const entries: TemplateListEntry[] = slugs.map((slug) => {

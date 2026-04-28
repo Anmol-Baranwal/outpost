@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 
 /**
  * POST /api/integrations/hubspot/sync
@@ -10,6 +12,11 @@ import { NextRequest, NextResponse } from 'next/server';
  * returns a mock response matching the SyncReport shape.
  */
 export async function POST(request: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const body = await request.json().catch(() => ({}));
         const domain = typeof body.domain === 'string' ? body.domain : undefined;

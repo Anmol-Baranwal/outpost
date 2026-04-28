@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
 
 /**
@@ -7,6 +9,11 @@ import { prisma } from '@copilotkit/outpost/db';
  * Returns per-plugin sync health metrics derived from SyncEvent data.
  */
 export async function GET() {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // Get distinct plugin pairs
     const plugins = await prisma.syncEvent.findMany({
         select: { sourcePlugin: true, targetPlugin: true },

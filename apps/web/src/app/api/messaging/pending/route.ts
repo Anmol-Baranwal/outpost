@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 
 /**
  * GET /api/messaging/pending
@@ -10,6 +12,11 @@ import { NextResponse } from 'next/server';
  * an empty list until a messaging model is added to the schema.
  */
 export async function GET() {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     return NextResponse.json({
         messages: [],
         count: 0,

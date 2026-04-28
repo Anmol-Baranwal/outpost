@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
 import { TicketStatus, MessageType } from '@copilotkit/outpost/db';
 
@@ -8,6 +10,11 @@ import { TicketStatus, MessageType } from '@copilotkit/outpost/db';
  * Returns SLA metrics, ticket counts, and daily trend data for the current month.
  */
 export async function GET() {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const now = new Date();
         const currentYear = now.getFullYear();

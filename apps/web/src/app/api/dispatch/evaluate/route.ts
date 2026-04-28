@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
 import { dryRunRouting, DEFAULT_ROUTING_RULES } from '@copilotkit/outpost/shared';
 import type { RoutingTicket, RoutingTeamMember } from '@copilotkit/outpost/shared';
+import { requireAdmin } from '@/lib/require-admin';
 
 /**
  * POST /api/dispatch/evaluate
@@ -13,6 +14,9 @@ import type { RoutingTicket, RoutingTeamMember } from '@copilotkit/outpost/share
  * Body: { ticket: RoutingTicket, teamMembers: RoutingTeamMember[] }
  */
 export async function POST(request: NextRequest) {
+    const { error } = await requireAdmin();
+    if (error) return error;
+
     try {
         const body = await request.json();
 

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
 import type { Prisma } from '@copilotkit/outpost/db';
 
@@ -9,6 +11,11 @@ import type { Prisma } from '@copilotkit/outpost/db';
  * Query params: sourcePlugin, targetPlugin, status, startDate, endDate, page, limit
  */
 export async function GET(request: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = request.nextUrl;
 
     const sourcePlugin = searchParams.get('sourcePlugin') || undefined;

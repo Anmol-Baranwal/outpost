@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, generateTicketId } from '@copilotkit/outpost/shared';
 import { TicketStatus, TicketPriority, TicketType, TicketSource, Prisma } from '@copilotkit/outpost/db';
@@ -10,6 +12,11 @@ import { TicketStatus, TicketPriority, TicketType, TicketSource, Prisma } from '
  * Query params: status, source, priority, type, accountId, assigneeId, search, page, pageSize
  */
 export async function GET(request: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const { searchParams } = request.nextUrl;
 
@@ -95,6 +102,11 @@ export async function GET(request: NextRequest) {
  * Optional: priority, type, source, accountId, assigneeId, userId, sourceUrl, additionalInfo.
  */
 export async function POST(request: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const body = await request.json();
 

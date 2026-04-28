@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
 
 /**
@@ -58,6 +60,11 @@ const DEFAULT_LABEL_RULES: Record<string, Array<{ externalPrefix: string; outpos
  * mappings are code defaults.
  */
 export async function GET() {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // Fetch identity mappings from ExternalIdentity records
     const identities = await prisma.externalIdentity.findMany({
         include: { member: { select: { id: true, name: true } } },
@@ -90,6 +97,11 @@ export async function GET() {
  * A settings/config model would be needed for full persistence.
  */
 export async function PUT(request: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const body = await request.json();
 

@@ -26,6 +26,22 @@ vi.mock('@copilotkit/outpost/db', () => ({
     },
 }));
 
+// ─── Mock next-auth ─────────────────────────────────────────────────────────
+
+const mockGetServerSession = vi.fn();
+
+vi.mock('next-auth/next', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('next-auth', () => ({
+    getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
+
+vi.mock('@/lib/auth', () => ({
+    authOptions: {},
+}));
+
 // Import after mocks
 import { GET as getArticles, POST as createArticle } from '@/app/api/docs/articles/route';
 import { GET as getArticleById, PATCH as patchArticle } from '@/app/api/docs/articles/[id]/route';
@@ -68,10 +84,27 @@ const MOCK_ARTICLE = {
     updatedAt: new Date(),
 };
 
+// ─── Session helpers ────────────────────────────────────────────────────────
+
+function userSession(memberId = 'tm-1') {
+    return {
+        user: {
+            id: memberId,
+            name: 'Test User',
+            email: 'test@test.com',
+            role: 'MEMBER',
+            memberId,
+        },
+    };
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('GET /api/docs/articles', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns all articles', async () => {
         mockDocArticleFindMany.mockResolvedValue([MOCK_ARTICLE]);
@@ -113,7 +146,10 @@ describe('GET /api/docs/articles', () => {
 });
 
 describe('POST /api/docs/articles', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('creates an article', async () => {
         mockDocCategoryFindUnique.mockResolvedValue(MOCK_CATEGORY);
@@ -154,7 +190,10 @@ describe('POST /api/docs/articles', () => {
 });
 
 describe('GET /api/docs/articles/[id]', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns article by ID', async () => {
         mockDocArticleFindUnique.mockResolvedValue(MOCK_ARTICLE);
@@ -177,7 +216,10 @@ describe('GET /api/docs/articles/[id]', () => {
 });
 
 describe('PATCH /api/docs/articles/[id]', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('updates an article', async () => {
         mockDocArticleFindUnique.mockResolvedValue(MOCK_ARTICLE);
@@ -201,7 +243,10 @@ describe('PATCH /api/docs/articles/[id]', () => {
 });
 
 describe('GET /api/docs/categories', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('returns categories with article counts', async () => {
         mockDocCategoryFindMany.mockResolvedValue([MOCK_CATEGORY]);
@@ -224,7 +269,10 @@ describe('GET /api/docs/categories', () => {
 });
 
 describe('POST /api/docs/import-loom', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+    });
 
     it('creates an article from a valid Loom URL', async () => {
         mockDocCategoryFindFirst.mockResolvedValue(MOCK_CATEGORY);

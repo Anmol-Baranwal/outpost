@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import { PathfinderClient } from '@copilotkit/outpost/ai';
 
 /**
@@ -8,6 +10,11 @@ import { PathfinderClient } from '@copilotkit/outpost/ai';
  * Falls back to empty array if Pathfinder is not configured or unavailable.
  */
 export async function GET() {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const pathfinderUrl = process.env.PATHFINDER_MCP_URL;
 
     if (!pathfinderUrl) {
