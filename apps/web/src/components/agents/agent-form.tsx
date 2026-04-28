@@ -1,8 +1,35 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import type { AgentTriggerType, AgentActionType, AgentConfig, MockAgent } from '@/lib/mock-agents';
-import { ACTION_TYPE_LABELS, TRIGGER_TYPE_LABELS } from '@/lib/mock-agents';
+import type { Agent } from './agent-table';
+
+export type AgentTriggerType = 'interval' | 'cron' | 'manual';
+export type AgentActionType =
+    | 'classify_tickets'
+    | 'check_sla'
+    | 'generate_faq'
+    | 'custom_webhook';
+
+export interface AgentConfig {
+    triggerType: AgentTriggerType;
+    intervalMinutes?: number;
+    cronExpression?: string;
+    actionType: AgentActionType;
+    webhookUrl?: string;
+}
+
+const ACTION_TYPE_LABELS: Record<AgentActionType, string> = {
+    classify_tickets: 'Run AI classification on unclassified tickets',
+    check_sla: 'Check SLA compliance',
+    generate_faq: 'Generate FAQ from recent tickets',
+    custom_webhook: 'Custom webhook',
+};
+
+const TRIGGER_TYPE_LABELS: Record<AgentTriggerType, string> = {
+    interval: 'Interval',
+    cron: 'Cron',
+    manual: 'Manual',
+};
 
 export interface AgentFormData {
     name: string;
@@ -11,7 +38,7 @@ export interface AgentFormData {
 }
 
 interface AgentFormProps {
-    agent?: MockAgent;
+    agent?: Agent;
     onSubmit: (data: AgentFormData) => void;
     onCancel: () => void;
 }
@@ -58,22 +85,23 @@ export function validateAgentForm(data: AgentFormData): FormErrors {
 }
 
 export function AgentForm({ agent, onSubmit, onCancel }: AgentFormProps) {
+    const agentConfig = agent?.config as AgentConfig | undefined;
     const [name, setName] = useState(agent?.name ?? '');
     const [description, setDescription] = useState(agent?.description ?? '');
     const [triggerType, setTriggerType] = useState<AgentTriggerType>(
-        agent?.config.triggerType ?? 'manual',
+        agentConfig?.triggerType ?? 'manual',
     );
     const [intervalMinutes, setIntervalMinutes] = useState<number>(
-        agent?.config.intervalMinutes ?? 15,
+        agentConfig?.intervalMinutes ?? 15,
     );
     const [cronExpression, setCronExpression] = useState(
-        agent?.config.cronExpression ?? '',
+        agentConfig?.cronExpression ?? '',
     );
     const [actionType, setActionType] = useState<AgentActionType>(
-        agent?.config.actionType ?? 'classify_tickets',
+        agentConfig?.actionType ?? 'classify_tickets',
     );
     const [webhookUrl, setWebhookUrl] = useState(
-        agent?.config.webhookUrl ?? '',
+        agentConfig?.webhookUrl ?? '',
     );
     const [errors, setErrors] = useState<FormErrors>({});
 

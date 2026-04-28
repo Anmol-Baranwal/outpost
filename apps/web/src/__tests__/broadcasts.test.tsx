@@ -1,16 +1,91 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { BroadcastList } from '@/components/broadcasts/broadcast-list';
+import type { Broadcast } from '@/components/broadcasts/broadcast-list';
 import { BroadcastComposer } from '@/components/broadcasts/broadcast-composer';
 import { AudienceSelector } from '@/components/broadcasts/audience-selector';
+import type { AccountOption } from '@/components/broadcasts/audience-selector';
 import { SenderPicker } from '@/components/broadcasts/sender-picker';
-import { MOCK_BROADCASTS, MAX_BROADCAST_LENGTH } from '@/lib/mock-broadcasts';
+import type { TeamMemberOption } from '@/components/broadcasts/sender-picker';
+
+const MAX_BROADCAST_LENGTH = 500;
+
+const TEST_ACCOUNTS: AccountOption[] = [
+    { id: 'acc-1', name: 'Acme Corp' },
+    { id: 'acc-2', name: 'TechStart Inc' },
+    { id: 'acc-3', name: 'DataFlow Labs' },
+];
+
+const TEST_TEAM_MEMBERS: TeamMemberOption[] = [
+    { id: 'tm-1', name: 'Atai Barkai', email: 'atai@copilotkit.ai' },
+    { id: 'tm-2', name: 'Markus Ecker', email: 'markus@copilotkit.ai' },
+    { id: 'tm-3', name: 'Jordan Ritter', email: 'jordan@copilotkit.ai' },
+];
+
+const TEST_BROADCASTS: Broadcast[] = [
+    {
+        id: 'bc-1',
+        message: 'We are excited to announce CopilotKit v2.0 with full streaming support.',
+        sendAs: 'Atai Barkai',
+        audience: 'ALL_ACCOUNTS',
+        targetAccounts: [],
+        status: 'SENT',
+        sentAt: '2025-03-10T09:05:00Z',
+        createdAt: '2025-03-10T09:00:00Z',
+        updatedAt: '2025-03-10T09:05:00Z',
+    },
+    {
+        id: 'bc-2',
+        message: 'Scheduled maintenance window: Our API will undergo maintenance on March 20th.',
+        sendAs: 'Jordan Ritter',
+        audience: 'ALL_ACCOUNTS',
+        targetAccounts: [],
+        status: 'SENT',
+        sentAt: '2025-03-15T14:30:00Z',
+        createdAt: '2025-03-15T14:00:00Z',
+        updatedAt: '2025-03-15T14:30:00Z',
+    },
+    {
+        id: 'bc-3',
+        message: 'Your dedicated support engineer has changed.',
+        sendAs: 'Markus Ecker',
+        audience: 'SELECTED_ACCOUNTS',
+        targetAccounts: ['acc-1', 'acc-3'],
+        status: 'SENT',
+        sentAt: '2025-03-18T11:15:00Z',
+        createdAt: '2025-03-18T11:00:00Z',
+        updatedAt: '2025-03-18T11:15:00Z',
+    },
+    {
+        id: 'bc-4',
+        message: 'Draft: Introducing our new Enterprise tier with priority support.',
+        sendAs: 'Atai Barkai',
+        audience: 'ALL_ACCOUNTS',
+        targetAccounts: [],
+        status: 'DRAFT',
+        sentAt: null,
+        createdAt: '2025-03-20T16:00:00Z',
+        updatedAt: '2025-03-20T16:00:00Z',
+    },
+    {
+        id: 'bc-5',
+        message: 'Draft: We noticed your team has not yet migrated to the v2 SDK.',
+        sendAs: 'Jordan Ritter',
+        audience: 'SELECTED_ACCOUNTS',
+        targetAccounts: ['acc-2'],
+        status: 'DRAFT',
+        sentAt: null,
+        createdAt: '2025-03-22T10:00:00Z',
+        updatedAt: '2025-03-22T10:00:00Z',
+    },
+];
 
 describe('BroadcastList', () => {
     const defaultProps = {
-        broadcasts: MOCK_BROADCASTS,
+        broadcasts: TEST_BROADCASTS,
         onStatusFilter: vi.fn(),
-        activeFilter: null as 'draft' | 'sent' | null,
+        activeFilter: null as 'DRAFT' | 'SENT' | null,
+        loading: false,
     };
 
     it('renders all filter tabs (All, Draft, Sent)', () => {
@@ -22,15 +97,15 @@ describe('BroadcastList', () => {
 
     it('renders broadcast cards for each broadcast', () => {
         render(<BroadcastList {...defaultProps} />);
-        for (const bc of MOCK_BROADCASTS) {
+        for (const bc of TEST_BROADCASTS) {
             expect(screen.getByTestId(`broadcast-card-${bc.id}`)).toBeDefined();
         }
     });
 
     it('displays correct status badges', () => {
         render(<BroadcastList {...defaultProps} />);
-        const draftBroadcasts = MOCK_BROADCASTS.filter((b) => b.status === 'draft');
-        const sentBroadcasts = MOCK_BROADCASTS.filter((b) => b.status === 'sent');
+        const draftBroadcasts = TEST_BROADCASTS.filter((b) => b.status === 'DRAFT');
+        const sentBroadcasts = TEST_BROADCASTS.filter((b) => b.status === 'SENT');
 
         for (const bc of draftBroadcasts) {
             expect(screen.getByTestId(`status-${bc.id}`).textContent).toBe('Draft');
@@ -45,10 +120,10 @@ describe('BroadcastList', () => {
         render(<BroadcastList {...defaultProps} onStatusFilter={onStatusFilter} />);
 
         fireEvent.click(screen.getByTestId('tab-draft'));
-        expect(onStatusFilter).toHaveBeenCalledWith('draft');
+        expect(onStatusFilter).toHaveBeenCalledWith('DRAFT');
 
         fireEvent.click(screen.getByTestId('tab-sent'));
-        expect(onStatusFilter).toHaveBeenCalledWith('sent');
+        expect(onStatusFilter).toHaveBeenCalledWith('SENT');
 
         fireEvent.click(screen.getByTestId('tab-all'));
         expect(onStatusFilter).toHaveBeenCalledWith(null);
@@ -66,6 +141,8 @@ describe('BroadcastComposer', () => {
         onSend: vi.fn(),
         onSaveDraft: vi.fn(),
         onCancel: vi.fn(),
+        accounts: TEST_ACCOUNTS,
+        teamMembers: TEST_TEAM_MEMBERS,
     };
 
     it('renders the composer form', () => {
@@ -134,7 +211,7 @@ describe('BroadcastComposer', () => {
                 message: 'Test message',
                 audienceType: 'all',
                 audienceAccountIds: [],
-                senderId: 'tm-3',
+                senderId: 'tm-1',
             }),
         );
     });
@@ -167,6 +244,7 @@ describe('AudienceSelector', () => {
         selectedAccountIds: [] as string[],
         onAudienceTypeChange: vi.fn(),
         onAccountsChange: vi.fn(),
+        accounts: TEST_ACCOUNTS,
     };
 
     it('renders audience radio buttons', () => {
@@ -229,6 +307,7 @@ describe('SenderPicker', () => {
     const defaultProps = {
         selectedSenderId: 'tm-3',
         onSenderChange: vi.fn(),
+        teamMembers: TEST_TEAM_MEMBERS,
     };
 
     it('renders all team members', () => {

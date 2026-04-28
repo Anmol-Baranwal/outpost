@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { TicketStatus, MessageType } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
-import { MOCK_TICKETS, filterMockTickets, findMockTicket } from '@/lib/mock-tickets';
-import type { MockTicket, MockMessage } from '@/lib/mock-tickets';
+import type { Ticket, TicketDetail, TicketMessage, TeamMember, Account } from './types';
 import { TicketList } from './ticket-list';
 import { TicketFilterPanel, DEFAULT_FILTERS } from './ticket-filters';
 import type { TicketFilters } from './ticket-filters';
@@ -30,25 +29,90 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     const replyEditorRef = useRef<ReplyEditorHandle>(null);
     const sidebarRef = useRef<TicketSidebarHandle>(null);
 
-    // Local ticket state (for mock updates)
-    const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<MockTicket>>>({});
+    // Data state
+    const [tickets, setTickets] = useState<Ticket[]>([]);
+    const [ticketsLoading, setTicketsLoading] = useState(true);
+    const [ticketDetail, setTicketDetail] = useState<TicketDetail | null>(null);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [accounts, setAccounts] = useState<Account[]>([]);
+    const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
-    const filteredTickets = useMemo(() => {
-        const base = filterMockTickets(filters);
-        return base.map((t) => ({ ...t, ...ticketOverrides[t.id] }));
-    }, [filters, ticketOverrides]);
+    // Local ticket overrides for optimistic updates
+    const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<TicketDetail>>>({});
+    const [error, setError] = useState<string | null>(null);
 
+    // Fetch accounts and team members on mount
+    useEffect(() => {
+        fetch('/api/accounts')
+            .then((res) => res.json())
+            .then((data) => setAccounts(data.accounts ?? []))
+            .catch(() => setAccounts([]));
+
+        fetch('/api/team')
+            .then((res) => {
+                if (!res.ok) return [];
+                return res.json();
+            })
+            .then((data) => setTeamMembers(Array.isArray(data) ? data : data.members ?? []))
+            .catch(() => setTeamMembers([]));
+    }, []);
+
+    // Fetch tickets when filters change (server-side filtering)
+    useEffect(() => {
+        setTicketsLoading(true);
+        const params = new URLSearchParams();
+
+        if (filters.search) params.set('search', filters.search);
+        if (filters.accountId) params.set('accountId', filters.accountId);
+        if (filters.assigneeId) params.set('assigneeId', filters.assigneeId);
+        for (const s of filters.status) params.append('status', s);
+        for (const s of filters.source) params.append('source', s);
+        for (const p of filters.priority) params.append('priority', p);
+        for (const t of filters.type) params.append('type', t);
+        params.set('page', '1');
+        params.set('pageSize', '50');
+
+        fetch(`/api/tickets?${params.toString()}`)
+            .then((res) => res.json())
+            .then((data) => {
+                setTickets(data.tickets ?? []);
+            })
+            .catch(() => setTickets([]))
+            .finally(() => setTicketsLoading(false));
+    }, [filters]);
+
+    // Fetch ticket detail when selection changes
+    useEffect(() => {
+        if (!ticketId) {
+            setTicketDetail(null);
+            return;
+        }
+        setDetailLoading(true);
+        fetch(`/api/tickets/${ticketId}`)
+            .then((res) => {
+                if (!res.ok) throw new Error('Not found');
+                return res.json();
+            })
+            .then((data) => setTicketDetail(data))
+            .catch(() => setTicketDetail(null))
+            .finally(() => setDetailLoading(false));
+    }, [ticketId]);
+
+    // Apply optimistic overrides to the list tickets
+    const displayTickets = useMemo(() => {
+        return tickets.map((t) => ({ ...t, ...ticketOverrides[t.id] }));
+    }, [tickets, ticketOverrides]);
+
+    // Merge detail with overrides
     const selectedTicket = useMemo(() => {
-        if (!ticketId) return null;
-        const base = findMockTicket(ticketId);
-        if (!base) return null;
-        return { ...base, ...ticketOverrides[base.id] };
-    }, [ticketId, ticketOverrides]);
+        if (!ticketDetail) return null;
+        return { ...ticketDetail, ...ticketOverrides[ticketDetail.id] };
+    }, [ticketDetail, ticketOverrides]);
 
     const currentIndex = useMemo(() => {
         if (!ticketId) return -1;
-        return filteredTickets.findIndex((t) => t.id === ticketId);
-    }, [ticketId, filteredTickets]);
+        return displayTickets.findIndex((t) => t.id === ticketId);
+    }, [ticketId, displayTickets]);
 
     const navigateToTicket = useCallback(
         (id: string) => {
@@ -60,25 +124,48 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
 
     const handlePreviousTicket = useCallback(() => {
         if (currentIndex > 0) {
-            navigateToTicket(filteredTickets[currentIndex - 1].id);
+            navigateToTicket(displayTickets[currentIndex - 1].id);
         }
-    }, [currentIndex, filteredTickets, navigateToTicket]);
+    }, [currentIndex, displayTickets, navigateToTicket]);
 
     const handleNextTicket = useCallback(() => {
-        if (currentIndex < filteredTickets.length - 1) {
-            navigateToTicket(filteredTickets[currentIndex + 1].id);
+        if (currentIndex < displayTickets.length - 1) {
+            navigateToTicket(displayTickets[currentIndex + 1].id);
         }
-    }, [currentIndex, filteredTickets, navigateToTicket]);
+    }, [currentIndex, displayTickets, navigateToTicket]);
 
     const handleMarkAsDone = useCallback(() => {
         if (!ticketId) return;
-        setTicketOverrides((prev) => ({
-            ...prev,
-            [ticketId]: {
-                ...prev[ticketId],
-                status: TicketStatus.CLOSED,
-            },
-        }));
+        let previousStatus: TicketDetail['status'] | undefined;
+        setTicketOverrides((prev) => {
+            previousStatus = prev[ticketId]?.status;
+            return {
+                ...prev,
+                [ticketId]: {
+                    ...prev[ticketId],
+                    status: TicketStatus.CLOSED,
+                },
+            };
+        });
+        setError(null);
+        fetch(`/api/tickets/${ticketId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: TicketStatus.CLOSED }),
+        }).then((res) => {
+            if (!res.ok) throw new Error();
+        }).catch(() => {
+            setTicketOverrides((prev) => {
+                const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
+                if (previousStatus !== undefined) {
+                    restored[ticketId].status = previousStatus;
+                } else {
+                    delete restored[ticketId].status;
+                }
+                return restored;
+            });
+            setError('Failed to mark ticket as done. Please try again.');
+        });
     }, [ticketId]);
 
     const handleCreateTicket = useCallback(() => {
@@ -96,7 +183,8 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     const handleSendMessage = useCallback(
         (content: string) => {
             if (!selectedTicket) return;
-            const newMessage: MockMessage = {
+            // Optimistic: add a temporary message locally
+            const tempMessage: TicketMessage = {
                 id: `msg-${Date.now()}`,
                 ticketId: selectedTicket.id,
                 author: 'You',
@@ -110,23 +198,119 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                 ...prev,
                 [selectedTicket.id]: {
                     ...prev[selectedTicket.id],
-                    messages: [...(prev[selectedTicket.id]?.messages ?? selectedTicket.messages), newMessage],
+                    messages: [...(prev[selectedTicket.id]?.messages ?? selectedTicket.messages), tempMessage],
                 },
             }));
+            // Persist to API
+            fetch(`/api/tickets/${selectedTicket.id}/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content, type: MessageType.USER }),
+            })
+                .then((res) => {
+                    if (res.ok) return res.json();
+                    throw new Error('Failed to send');
+                })
+                .then((savedMessage) => {
+                    // Replace temp message with the saved one
+                    setTicketOverrides((prev) => {
+                        const overrideMessages = prev[selectedTicket.id]?.messages;
+                        if (!overrideMessages) return prev;
+                        return {
+                            ...prev,
+                            [selectedTicket.id]: {
+                                ...prev[selectedTicket.id],
+                                messages: overrideMessages.map((m) =>
+                                    m.id === tempMessage.id ? savedMessage : m,
+                                ),
+                            },
+                        };
+                    });
+                })
+                .catch(() => {
+                    setTicketOverrides((prev) => {
+                        const existing = prev[selectedTicket.id];
+                        if (!existing?.messages) return prev;
+                        return {
+                            ...prev,
+                            [selectedTicket.id]: {
+                                ...existing,
+                                messages: existing.messages.filter((m) => m.id !== tempMessage.id),
+                            },
+                        };
+                    });
+                    setError('Failed to send message. Please try again.');
+                });
         },
         [selectedTicket],
     );
 
     const handleTicketUpdate = useCallback(
-        (fields: Partial<MockTicket>) => {
+        (fields: Partial<TicketDetail>) => {
             if (!ticketId) return;
-            setTicketOverrides((prev) => ({
-                ...prev,
-                [ticketId]: { ...prev[ticketId], ...fields },
-            }));
+            let previousValues: Partial<TicketDetail> | undefined;
+            setTicketOverrides((prev) => {
+                const existing = prev[ticketId] ?? {};
+                previousValues = {};
+                for (const key of Object.keys(fields) as (keyof TicketDetail)[]) {
+                    previousValues[key] = existing[key] as never;
+                }
+                return {
+                    ...prev,
+                    [ticketId]: { ...existing, ...fields },
+                };
+            });
+            setError(null);
+            const patchable: Record<string, unknown> = {};
+            if ('status' in fields) patchable.status = fields.status;
+            if ('priority' in fields) patchable.priority = fields.priority;
+            if ('assigneeId' in fields) patchable.assigneeId = fields.assigneeId;
+            if ('type' in fields) patchable.type = fields.type;
+
+            if (Object.keys(patchable).length > 0) {
+                fetch(`/api/tickets/${ticketId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(patchable),
+                }).then((res) => {
+                    if (!res.ok) throw new Error();
+                }).catch(() => {
+                    setTicketOverrides((prev) => {
+                        const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
+                        for (const key of Object.keys(fields) as (keyof TicketDetail)[]) {
+                            if (previousValues && previousValues[key] !== undefined) {
+                                restored[ticketId][key] = previousValues[key] as never;
+                            } else {
+                                delete restored[ticketId][key];
+                            }
+                        }
+                        return restored;
+                    });
+                    setError('Failed to update ticket. Please try again.');
+                });
+            }
         },
         [ticketId],
     );
+
+    const handleTicketCreated = useCallback((_ticket?: Record<string, unknown>) => {
+        // Re-fetch the ticket list after creation
+        const params = new URLSearchParams();
+        if (filters.search) params.set('search', filters.search);
+        if (filters.accountId) params.set('accountId', filters.accountId);
+        if (filters.assigneeId) params.set('assigneeId', filters.assigneeId);
+        for (const s of filters.status) params.append('status', s);
+        for (const s of filters.source) params.append('source', s);
+        for (const p of filters.priority) params.append('priority', p);
+        for (const t of filters.type) params.append('type', t);
+        params.set('page', '1');
+        params.set('pageSize', '50');
+
+        fetch(`/api/tickets?${params.toString()}`)
+            .then((res) => res.json())
+            .then((data) => setTickets(data.tickets ?? []))
+            .catch(() => {});
+    }, [filters]);
 
     useTicketShortcuts({
         focusSearch: () => searchInputRef.current?.focus(),
@@ -140,7 +324,18 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     });
 
     return (
-        <div className="flex h-full" data-testid="tickets-view">
+        <div className="flex h-full relative" data-testid="tickets-view">
+            {error && (
+                <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700">
+                    <span>{error}</span>
+                    <button
+                        onClick={() => setError(null)}
+                        className="ml-4 text-red-500 hover:text-red-700 text-xs font-medium"
+                    >
+                        Dismiss
+                    </button>
+                </div>
+            )}
             {/* Mobile tab bar */}
             <div className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-slate-200 bg-white md:hidden">
                 {(['list', 'thread', 'sidebar'] as const).map((panel) => (
@@ -171,8 +366,16 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     filters={filters}
                     onFiltersChange={setFilters}
                     searchInputRef={searchInputRef}
+                    accounts={accounts}
+                    teamMembers={teamMembers}
                 />
-                <TicketList tickets={filteredTickets} className="flex-1" />
+                {ticketsLoading ? (
+                    <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+                        Loading...
+                    </div>
+                ) : (
+                    <TicketList tickets={displayTickets} className="flex-1" />
+                )}
             </div>
 
             {/* Center panel: conversation thread */}
@@ -183,7 +386,11 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     mobilePanel !== 'thread' && 'max-md:hidden',
                 )}
             >
-                {selectedTicket ? (
+                {detailLoading ? (
+                    <div className="flex items-center justify-center h-full text-sm text-slate-400">
+                        Loading...
+                    </div>
+                ) : selectedTicket ? (
                     <>
                         {/* Thread header */}
                         <div className="border-b border-slate-200 px-4 py-3 flex-shrink-0">
@@ -260,6 +467,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                         ref={sidebarRef}
                         ticket={selectedTicket}
                         onUpdate={handleTicketUpdate}
+                        teamMembers={teamMembers}
                     />
                 </div>
             )}
@@ -268,6 +476,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             <CreateTicketModal
                 open={createModalOpen}
                 onClose={() => setCreateModalOpen(false)}
+                onCreated={handleTicketCreated}
             />
         </div>
     );

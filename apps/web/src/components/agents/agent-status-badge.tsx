@@ -1,7 +1,8 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import type { AgentStatus } from '@/lib/mock-agents';
+
+export type AgentStatus = 'ACTIVE' | 'PAUSED' | 'ERROR';
 
 const STATUS_STYLES: Record<AgentStatus, string> = {
     ACTIVE: 'bg-green-500/10 text-green-400',

@@ -1,15 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Pencil, Eye, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { DocArticle } from '@/lib/mock-docs';
+
+interface DocArticle {
+    id: string;
+    title: string;
+    content: string;
+    status: 'DRAFT' | 'PUBLISHED';
+    sourceUrl?: string | null;
+    categoryId: string;
+    category?: { id: string; name: string };
+    createdAt: string;
+    updatedAt: string;
+}
 
 interface ArticleEditorProps {
     article: DocArticle;
-    onSave?: (content: string) => void;
+    onSave?: (content: string) => void | Promise<void>;
     onTogglePublish?: () => void;
 }
 
@@ -17,9 +28,17 @@ export function ArticleEditor({ article, onSave, onTogglePublish }: ArticleEdito
     const [editing, setEditing] = useState(false);
     const [content, setContent] = useState(article.content);
 
-    function handleSave() {
-        onSave?.(content);
-        setEditing(false);
+    useEffect(() => {
+        setContent(article.content);
+    }, [article.content]);
+
+    async function handleSave() {
+        try {
+            await onSave?.(content);
+            setEditing(false);
+        } catch {
+            // stay in edit mode
+        }
     }
 
     function handleCancel() {
@@ -34,16 +53,16 @@ export function ArticleEditor({ article, onSave, onTogglePublish }: ArticleEdito
                     <span
                         className={cn(
                             'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
-                            article.status === 'published'
+                            article.status === 'PUBLISHED'
                                 ? 'bg-green-500/10 text-green-400'
                                 : 'bg-yellow-500/10 text-yellow-400',
                         )}
                     >
-                        {article.status === 'published' ? 'Published' : 'Draft'}
+                        {article.status === 'PUBLISHED' ? 'Published' : 'Draft'}
                     </span>
-                    {article.source && (
+                    {article.sourceUrl && (
                         <span className="text-xs text-muted-foreground">
-                            Source: {article.source}
+                            Source: Imported
                         </span>
                     )}
                 </div>
@@ -52,12 +71,12 @@ export function ArticleEditor({ article, onSave, onTogglePublish }: ArticleEdito
                         onClick={onTogglePublish}
                         className={cn(
                             'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                            article.status === 'published'
+                            article.status === 'PUBLISHED'
                                 ? 'bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20'
                                 : 'bg-green-500/10 text-green-400 hover:bg-green-500/20',
                         )}
                     >
-                        {article.status === 'published' ? 'Unpublish' : 'Publish'}
+                        {article.status === 'PUBLISHED' ? 'Unpublish' : 'Publish'}
                     </button>
                     {editing ? (
                         <>
@@ -97,7 +116,7 @@ export function ArticleEditor({ article, onSave, onTogglePublish }: ArticleEdito
             ) : (
                 <div className="prose prose-invert max-w-none rounded-lg border border-border bg-card p-6">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {article.content}
+                        {content}
                     </ReactMarkdown>
                 </div>
             )}

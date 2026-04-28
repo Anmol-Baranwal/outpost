@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { CategoryCard } from '@/components/docs/category-card';
-import type { DocCategory } from '@/lib/mock-docs';
 
 // Mock next/link
 vi.mock('next/link', () => ({
@@ -10,11 +9,20 @@ vi.mock('next/link', () => ({
     ),
 }));
 
+interface DocCategory {
+    id: string;
+    name: string;
+    description: string | null;
+    articleCount: number;
+    createdAt: string;
+}
+
 const mockCategory: DocCategory = {
-    slug: 'getting-started',
+    id: 'getting-started',
     name: 'Getting Started',
     description: 'Quick start guides and tutorials for new users',
     articleCount: 5,
+    createdAt: '2024-11-01T00:00:00.000Z',
 };
 
 describe('CategoryCard', () => {

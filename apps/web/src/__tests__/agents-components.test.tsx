@@ -3,9 +3,12 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentStatusBadge } from '@/components/agents/agent-status-badge';
 import { AgentActions } from '@/components/agents/agent-actions';
 import { AgentTable } from '@/components/agents/agent-table';
+import type { Agent } from '@/components/agents/agent-table';
 import { AgentForm } from '@/components/agents/agent-form';
 import { MOCK_AGENTS } from '@/lib/mock-agents';
-import type { MockAgent } from '@/lib/mock-agents';
+
+// Cast mock data to match the API-based Agent type (config is Record<string, unknown>)
+const TEST_AGENTS = MOCK_AGENTS as unknown as Agent[];
 
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
@@ -102,7 +105,7 @@ describe('AgentActions', () => {
 
 describe('AgentTable', () => {
     const defaultProps = {
-        agents: MOCK_AGENTS,
+        agents: TEST_AGENTS,
         onRun: vi.fn(),
         onEdit: vi.fn(),
         onDelete: vi.fn(),
@@ -111,12 +114,12 @@ describe('AgentTable', () => {
     it('renders a row for each agent', () => {
         render(<AgentTable {...defaultProps} />);
         const rows = screen.getAllByTestId('agent-row');
-        expect(rows).toHaveLength(MOCK_AGENTS.length);
+        expect(rows).toHaveLength(TEST_AGENTS.length);
     });
 
     it('displays agent names', () => {
         render(<AgentTable {...defaultProps} />);
-        for (const agent of MOCK_AGENTS) {
+        for (const agent of TEST_AGENTS) {
             expect(screen.getByText(agent.name)).toBeTruthy();
         }
     });
@@ -124,7 +127,7 @@ describe('AgentTable', () => {
     it('displays status badges', () => {
         render(<AgentTable {...defaultProps} />);
         const badges = screen.getAllByTestId('agent-status-badge');
-        expect(badges).toHaveLength(MOCK_AGENTS.length);
+        expect(badges).toHaveLength(TEST_AGENTS.length);
     });
 
     it('shows empty state when no agents', () => {
@@ -134,8 +137,8 @@ describe('AgentTable', () => {
     });
 
     it('shows "Never" for agents that have not run', () => {
-        const neverRunAgent: MockAgent = {
-            ...MOCK_AGENTS[0],
+        const neverRunAgent: Agent = {
+            ...TEST_AGENTS[0],
             id: 'never-run',
             lastRun: null,
         };
@@ -213,7 +216,7 @@ describe('AgentForm', () => {
     });
 
     it('pre-populates form when editing an existing agent', () => {
-        const agent = MOCK_AGENTS[0];
+        const agent = TEST_AGENTS[0];
         render(<AgentForm agent={agent} onSubmit={vi.fn()} onCancel={vi.fn()} />);
         const nameInput = screen.getByTestId('agent-name-input') as HTMLInputElement;
         expect(nameInput.value).toBe(agent.name);

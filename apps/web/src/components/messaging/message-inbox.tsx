@@ -10,11 +10,13 @@ import {
 } from '@copilotkit/outpost/shared';
 import { MessageCard } from './message-card';
 import { MessageFiltersBar } from './message-filters';
+import { EmptyState } from '@/components/empty-state';
 import { Mail } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 
 interface MessageInboxProps {
     messages: PendingMessage[];
+    loading?: boolean;
 }
 
 function applyFilters(messages: PendingMessage[], filters: MessageFilters): PendingMessage[] {
@@ -47,7 +49,7 @@ function applySort(messages: PendingMessage[], sortKey: MessageSortKey): Pending
     return sorted;
 }
 
-export function MessageInbox({ messages }: MessageInboxProps) {
+export function MessageInbox({ messages, loading = false }: MessageInboxProps) {
     const [filters, setFilters] = useState<MessageFilters>({});
     const [sortKey, setSortKey] = useState<MessageSortKey>('recent');
 
@@ -103,11 +105,24 @@ export function MessageInbox({ messages }: MessageInboxProps) {
 
             {/* Message list */}
             <div className="space-y-3 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
-                {sorted.length === 0 ? (
-                    <div className="py-12 text-center text-sm text-muted-foreground" data-testid="messages-empty">
-                        {messages.length === 0
-                            ? 'No pending messages.'
-                            : 'No messages match your filters.'}
+                {loading ? (
+                    <div className="py-12 text-center text-sm text-muted-foreground">
+                        Loading messages...
+                    </div>
+                ) : sorted.length === 0 ? (
+                    <div data-testid="messages-empty">
+                        {messages.length === 0 ? (
+                            <EmptyState
+                                icon={<Mail className="h-6 w-6" />}
+                                title="No pending messages"
+                                description="Messages from connected platforms will appear here"
+                                className="py-8"
+                            />
+                        ) : (
+                            <div className="py-12 text-center text-sm text-muted-foreground">
+                                No messages match your filters.
+                            </div>
+                        )}
                     </div>
                 ) : (
                     sorted.map((msg) => (

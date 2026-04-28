@@ -8,14 +8,14 @@ import {
     TicketSource,
 } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
-import { MOCK_TEAM_MEMBERS } from '@/lib/mock-tickets';
-import type { MockTicket } from '@/lib/mock-tickets';
+import type { TicketDetail, TeamMember } from './types';
 import { AddNoteForm } from './add-note-form';
 import type { AddNoteFormHandle } from './add-note-form';
 
 interface TicketSidebarProps {
-    ticket: MockTicket;
-    onUpdate: (fields: Partial<MockTicket>) => void;
+    ticket: TicketDetail;
+    onUpdate: (fields: Partial<TicketDetail>) => void;
+    teamMembers: TeamMember[];
     className?: string;
 }
 
@@ -163,7 +163,7 @@ export interface TicketSidebarHandle {
 }
 
 export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>(
-    function TicketSidebar({ ticket, onUpdate, className }, ref) {
+    function TicketSidebar({ ticket, onUpdate, teamMembers, className }, ref) {
     const [discussionsOpen, setDiscussionsOpen] = useState(false);
     const addNoteFormRef = useRef<AddNoteFormHandle>(null);
 
@@ -179,11 +179,13 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
     const handleNoteAdded = (note: { id: string; content: string; author: string; createdAt: string }) => {
         onUpdate({
             notes: [
-                ...ticket.notes,
+                ...(ticket.notes ?? []),
                 { ...note, ticketId: ticket.id },
             ],
         });
     };
+
+    const discussions = ticket.discussions ?? [];
 
     return (
         <div className={cn('flex flex-col overflow-y-auto', className)} data-testid="ticket-sidebar">
@@ -204,13 +206,13 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
                         onChange={(e) =>
                             onUpdate({
                                 assigneeId: e.target.value || null,
-                                assignee: MOCK_TEAM_MEMBERS.find((tm) => tm.id === e.target.value) || null,
+                                assignee: teamMembers.find((tm) => tm.id === e.target.value) || null,
                             })
                         }
                         className="text-xs bg-transparent border border-transparent hover:border-slate-200 rounded px-1.5 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer text-right"
                     >
                         <option value="">Unassigned</option>
-                        {MOCK_TEAM_MEMBERS.map((tm) => (
+                        {teamMembers.map((tm) => (
                             <option key={tm.id} value={tm.id}>
                                 {tm.name}
                             </option>
@@ -278,10 +280,10 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
 
             {/* Expandable sections */}
             <div className="px-4">
-                <ExpandableSection title="Notes" count={ticket.notes.length} defaultOpen testId="notes-section">
-                    {ticket.notes.length > 0 && (
+                <ExpandableSection title="Notes" count={(ticket.notes ?? []).length} defaultOpen testId="notes-section">
+                    {(ticket.notes ?? []).length > 0 && (
                         <div className="space-y-2 mb-2">
-                            {ticket.notes.map((note) => (
+                            {(ticket.notes ?? []).map((note) => (
                                 <div key={note.id} className="bg-yellow-50 rounded p-2">
                                     <div className="flex items-center gap-1.5 mb-0.5">
                                         <span className="text-[10px] font-medium text-slate-600">
@@ -305,12 +307,25 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
 
                 <ExpandableSection
                     title="Discussions"
-                    count={0}
+                    count={discussions.length}
                     isOpen={discussionsOpen}
                     onToggle={() => setDiscussionsOpen(!discussionsOpen)}
                     testId="discussions-section"
                 >
-                    <p className="text-[10px] text-slate-400">No discussions yet.</p>
+                    {discussions.length > 0 ? (
+                        <div className="space-y-2">
+                            {discussions.map((d) => (
+                                <div key={d.id} className="bg-slate-50 rounded p-2">
+                                    <span className="text-xs font-medium text-slate-600">{d.title}</span>
+                                    <span className="text-[10px] text-slate-400 ml-1">
+                                        ({d.messages.length} message{d.messages.length !== 1 ? 's' : ''})
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-[10px] text-slate-400">No discussions yet.</p>
+                    )}
                 </ExpandableSection>
 
                 <ExpandableSection title="Related Tickets" count={0}>
@@ -364,4 +379,3 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
         </div>
     );
 });
-

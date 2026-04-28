@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { MAX_BROADCAST_LENGTH } from '@/lib/mock-broadcasts';
 import { AudienceSelector } from './audience-selector';
 import { SenderPicker } from './sender-picker';
-import type { AudienceType } from './audience-selector';
+import type { AudienceType, AccountOption } from './audience-selector';
+import type { TeamMemberOption } from './sender-picker';
+
+const MAX_BROADCAST_LENGTH = 500;
 
 export interface BroadcastFormData {
     message: string;
@@ -19,6 +21,8 @@ interface BroadcastComposerProps {
     onSaveDraft: (data: BroadcastFormData) => void;
     onCancel: () => void;
     initialData?: Partial<BroadcastFormData>;
+    accounts: AccountOption[];
+    teamMembers: TeamMemberOption[];
 }
 
 export function BroadcastComposer({
@@ -26,6 +30,8 @@ export function BroadcastComposer({
     onSaveDraft,
     onCancel,
     initialData,
+    accounts,
+    teamMembers,
 }: BroadcastComposerProps) {
     const [message, setMessage] = useState(initialData?.message ?? '');
     const [audienceType, setAudienceType] = useState<AudienceType>(
@@ -34,7 +40,13 @@ export function BroadcastComposer({
     const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>(
         initialData?.audienceAccountIds ?? [],
     );
-    const [senderId, setSenderId] = useState(initialData?.senderId ?? 'tm-3');
+    const [senderId, setSenderId] = useState(initialData?.senderId ?? teamMembers[0]?.id ?? '');
+
+    useEffect(() => {
+        if (!senderId && teamMembers.length > 0) {
+            setSenderId(teamMembers[0].id);
+        }
+    }, [teamMembers, senderId]);
 
     const charCount = message.length;
     const isOverLimit = charCount > MAX_BROADCAST_LENGTH;
@@ -93,10 +105,11 @@ export function BroadcastComposer({
                 selectedAccountIds={selectedAccountIds}
                 onAudienceTypeChange={setAudienceType}
                 onAccountsChange={setSelectedAccountIds}
+                accounts={accounts}
             />
 
             {/* Sender */}
-            <SenderPicker selectedSenderId={senderId} onSenderChange={setSenderId} />
+            <SenderPicker selectedSenderId={senderId} onSenderChange={setSenderId} teamMembers={teamMembers} />
 
             {/* Actions */}
             <div className="flex items-center gap-3 border-t border-border pt-4">
@@ -114,12 +127,12 @@ export function BroadcastComposer({
                     Send Broadcast
                 </button>
                 <button
-                    onClick={() => !isEmpty && onSaveDraft(formData)}
-                    disabled={isEmpty}
+                    onClick={() => !isEmpty && !isOverLimit && onSaveDraft(formData)}
+                    disabled={isEmpty || isOverLimit}
                     data-testid="save-draft-button"
                     className={cn(
                         'rounded-md border px-4 py-2 text-sm font-medium transition-colors',
-                        !isEmpty
+                        !isEmpty && !isOverLimit
                             ? 'border-border text-foreground hover:bg-muted'
                             : 'cursor-not-allowed border-border text-muted-foreground',
                     )}

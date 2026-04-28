@@ -1,11 +1,22 @@
 'use client';
 
-import type { MockAgent } from '@/lib/mock-agents';
+import type { AgentStatus } from './agent-status-badge';
 import { AgentStatusBadge } from './agent-status-badge';
 import { AgentActions } from './agent-actions';
 
+export interface Agent {
+    id: string;
+    name: string;
+    description: string | null;
+    config: Record<string, unknown>;
+    lastRun: string | null;
+    status: AgentStatus;
+    createdAt: string;
+    updatedAt: string;
+}
+
 interface AgentTableProps {
-    agents: MockAgent[];
+    agents: Agent[];
     onRun: (id: string) => void;
     onEdit: (id: string) => void;
     onDelete: (id: string) => void;

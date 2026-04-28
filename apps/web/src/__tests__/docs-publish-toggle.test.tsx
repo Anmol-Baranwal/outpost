@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ArticleEditor } from '@/components/docs/article-editor';
-import type { DocArticle } from '@/lib/mock-docs';
 
 // Mock react-markdown since it's ESM and problematic in test
 vi.mock('react-markdown', () => ({
@@ -12,20 +11,32 @@ vi.mock('remark-gfm', () => ({
     default: () => {},
 }));
 
+interface DocArticle {
+    id: string;
+    title: string;
+    content: string;
+    status: 'DRAFT' | 'PUBLISHED';
+    sourceUrl?: string | null;
+    categoryId: string;
+    category?: { id: string; name: string };
+    createdAt: string;
+    updatedAt: string;
+}
+
 const draftArticle: DocArticle = {
     id: 'art-001',
-    categorySlug: 'getting-started',
+    categoryId: 'getting-started',
     title: 'Test Article',
-    status: 'draft',
+    status: 'DRAFT',
     content: '# Hello World',
     updatedAt: '2024-12-01T00:00:00.000Z',
     createdAt: '2024-11-01T00:00:00.000Z',
-    source: 'manual',
+    sourceUrl: 'https://example.com/source',
 };
 
 const publishedArticle: DocArticle = {
     ...draftArticle,
-    status: 'published',
+    status: 'PUBLISHED',
 };
 
 describe('ArticleEditor - Publish Toggle', () => {
@@ -95,9 +106,9 @@ describe('ArticleEditor - Publish Toggle', () => {
         expect(screen.queryByText('Save')).not.toBeInTheDocument();
     });
 
-    it('renders article source when available', () => {
+    it('renders source indicator when sourceUrl is present', () => {
         render(<ArticleEditor article={draftArticle} />);
 
-        expect(screen.getByText('Source: manual')).toBeInTheDocument();
+        expect(screen.getByText('Source: Imported')).toBeInTheDocument();
     });
 });

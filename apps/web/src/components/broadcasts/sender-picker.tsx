@@ -1,11 +1,17 @@
 'use client';
 
-import { MOCK_TEAM_MEMBERS } from '@/lib/mock-tickets';
 import { cn } from '@/lib/utils';
+
+export interface TeamMemberOption {
+    id: string;
+    name: string;
+    email: string;
+}
 
 interface SenderPickerProps {
     selectedSenderId: string;
     onSenderChange: (senderId: string) => void;
+    teamMembers: TeamMemberOption[];
 }
 
 function getInitials(name: string): string {
@@ -17,14 +23,14 @@ function getInitials(name: string): string {
         .slice(0, 2);
 }
 
-export function SenderPicker({ selectedSenderId, onSenderChange }: SenderPickerProps) {
+export function SenderPicker({ selectedSenderId, onSenderChange, teamMembers }: SenderPickerProps) {
     return (
         <div data-testid="sender-picker">
             <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Send as
             </label>
             <div className="space-y-1">
-                {MOCK_TEAM_MEMBERS.map((member) => (
+                {teamMembers.map((member) => (
                     <button
                         key={member.id}
                         type="button"

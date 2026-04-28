@@ -8,7 +8,7 @@ import {
     TicketSource,
 } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
-import { MOCK_ACCOUNTS, MOCK_TEAM_MEMBERS } from '@/lib/mock-tickets';
+import type { Account, TeamMember } from './types';
 
 export interface TicketFilters {
     search: string;
@@ -34,6 +34,8 @@ interface TicketFilterPanelProps {
     filters: TicketFilters;
     onFiltersChange: (filters: TicketFilters) => void;
     searchInputRef?: React.RefObject<HTMLInputElement | null>;
+    accounts: Account[];
+    teamMembers: TeamMember[];
     className?: string;
 }
 
@@ -122,6 +124,8 @@ export function TicketFilterPanel({
     filters,
     onFiltersChange,
     searchInputRef,
+    accounts,
+    teamMembers,
     className,
 }: TicketFilterPanelProps) {
     const [expanded, setExpanded] = useState(false);
@@ -222,7 +226,7 @@ export function TicketFilterPanel({
                                 className="w-full text-xs bg-white border border-slate-200 rounded px-2 py-1.5 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
                             >
                                 <option value="">All accounts</option>
-                                {MOCK_ACCOUNTS.map((acc) => (
+                                {accounts.map((acc) => (
                                     <option key={acc.id} value={acc.id}>
                                         {acc.name}
                                     </option>
@@ -239,7 +243,7 @@ export function TicketFilterPanel({
                                 className="w-full text-xs bg-white border border-slate-200 rounded px-2 py-1.5 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
                             >
                                 <option value="">All assignees</option>
-                                {MOCK_TEAM_MEMBERS.map((tm) => (
+                                {teamMembers.map((tm) => (
                                     <option key={tm.id} value={tm.id}>
                                         {tm.name}
                                     </option>

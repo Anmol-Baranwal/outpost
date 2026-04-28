@@ -3,10 +3,10 @@
 import { useEffect, useRef } from 'react';
 import { MessageType } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
-import type { MockMessage } from '@/lib/mock-tickets';
+import type { TicketMessage } from './types';
 
 interface ConversationThreadProps {
-    messages: MockMessage[];
+    messages: TicketMessage[];
     className?: string;
 }
 
@@ -46,7 +46,7 @@ function DateSeparator({ date }: { date: string }) {
     );
 }
 
-function SystemMessage({ message }: { message: MockMessage }) {
+function SystemMessage({ message }: { message: TicketMessage }) {
     return (
         <div className="flex justify-center py-1.5">
             <span className="text-xs text-slate-400 bg-slate-50 px-3 py-1 rounded-full">
@@ -148,7 +148,7 @@ function MessageContent({ content }: { content: string }) {
     );
 }
 
-function UserMessage({ message }: { message: MockMessage }) {
+function UserMessage({ message }: { message: TicketMessage }) {
     const isBot = message.type === MessageType.BOT;
 
     return (
@@ -162,12 +162,12 @@ function UserMessage({ message }: { message: MockMessage }) {
                             : 'bg-blue-100 text-blue-700',
                     )}
                 >
-                    {isBot ? 'AI' : message.author.charAt(0).toUpperCase()}
+                    {isBot ? 'AI' : (message.author ?? 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-0.5">
                         <span className="text-sm font-medium text-slate-800">
-                            {message.author}
+                            {message.author ?? 'Unknown'}
                         </span>
                         {isBot && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 font-medium">
@@ -179,7 +179,7 @@ function UserMessage({ message }: { message: MockMessage }) {
                         </span>
                     </div>
                     <MessageContent content={message.content} />
-                    {message.attachments && message.attachments.length > 0 && (
+                    {message.attachments && Array.isArray(message.attachments) && message.attachments.length > 0 && (
                         <div className="flex flex-wrap gap-2 mt-2">
                             {message.attachments.map((att, idx) => (
                                 <AttachmentCard key={idx} attachment={att} />
@@ -203,7 +203,7 @@ export function ConversationThread({ messages, className }: ConversationThreadPr
     let lastDate = '';
     const elements: React.ReactNode[] = [];
 
-    messages.forEach((message, idx) => {
+    messages.forEach((message) => {
         const messageDate = new Date(message.createdAt).toDateString();
         if (messageDate !== lastDate) {
             lastDate = messageDate;
