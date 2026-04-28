@@ -7,6 +7,7 @@
  * - MailboxHash (plus-addressing: ticket+TKT-1234 -> TKT-1234)
  * - Headers, Attachments, MessageID
  */
+import crypto from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
 import { generateTicketId } from '@copilotkit/outpost/shared';
@@ -15,12 +16,24 @@ import { extractTicketId, extractEmail, extractName } from './utils';
 import type { PostmarkInboundPayload } from './utils';
 
 export async function POST(request: Request) {
-    // Opt-in webhook authentication via POSTMARK_WEBHOOK_TOKEN
+    // Webhook authentication via POSTMARK_WEBHOOK_TOKEN
+    // Required in production; optional in development for local testing
     const webhookToken = process.env.POSTMARK_WEBHOOK_TOKEN;
-    if (webhookToken) {
-        const authHeader = request.headers.get('authorization');
+    if (!webhookToken) {
+        if (process.env.NODE_ENV === 'production') {
+            return NextResponse.json(
+                { error: 'Webhook authentication not configured' },
+                { status: 500 },
+            );
+        }
+        // Allow unauthenticated requests in non-production (local dev)
+    } else {
+        const authHeader = request.headers.get('authorization') ?? '';
         const expected = `Basic ${Buffer.from(webhookToken).toString('base64')}`;
-        if (authHeader !== expected) {
+        // Use timing-safe comparison to prevent timing attacks
+        const authBuf = Buffer.from(authHeader);
+        const expectedBuf = Buffer.from(expected);
+        if (authBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(authBuf, expectedBuf)) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
     }
