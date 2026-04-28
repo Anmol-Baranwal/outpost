@@ -9,7 +9,7 @@ export async function GET() {
     try {
         let timer: ReturnType<typeof setTimeout>;
         await Promise.race([
-            prisma.$queryRawUnsafe('SELECT 1').then((r) => { clearTimeout(timer); return r; }),
+            prisma.$queryRawUnsafe('SELECT 1').then((r) => { clearTimeout(timer); return r; }).catch(() => { clearTimeout(timer); throw new Error('Database error'); }),
             new Promise((_, reject) => {
                 timer = setTimeout(() => reject(new Error('Database timeout')), 3000);
             }),
