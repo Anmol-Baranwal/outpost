@@ -45,11 +45,12 @@ jobs:
                   test -f packages/outpost/db/prisma/migrations/migration_lock.toml
                   test -d packages/outpost/db/prisma/migrations/0001_init
 
+            - name: Check for schema drift
+              run: npx prisma migrate diff --from-migrations ./prisma/migrations --to-schema-datamodel ./prisma/schema.prisma --exit-code
+              working-directory: packages/outpost/db
+
             - name: Build
-              run: pnpm build --filter '!@copilotkit/outpost-web'
-              # Web build excluded: shared barrel re-exports platform adapters (discord.js)
-              # which have native deps webpack can't resolve. Fix: split shared exports.
-              # Typecheck and tests still validate all web source code.
+              run: pnpm build
 
             # Lint skipped: ESLint 9 requires flat config but repo uses legacy .eslintrc.cjs.
             # TODO: Migrate to eslint.config.js and re-enable.
@@ -62,7 +63,13 @@ jobs:
 
     # Railway auto-deploys on push to main via GitHub integration.
     # No explicit deploy step needed — Railway watches the repo directly.
-    # To use CLI deploys instead, uncomment the job below and set RAILWAY_TOKEN secret.
+    #
+    # IMPORTANT: Configure branch protection on `main` to require the
+    # "Lint, Typecheck & Test" check to pass before merging. This ensures
+    # Railway only auto-deploys code that has passed CI.
+    #
+    # To switch to CLI-driven deploys instead, uncomment the job below
+    # and set the RAILWAY_TOKEN repository secret.
     #
     # deploy:
     #     name: Deploy to Railway
