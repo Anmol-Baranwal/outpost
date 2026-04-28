@@ -58,10 +58,11 @@ export default function ArticlePage({ params }: ArticlePageProps) {
                 setArticle(updated);
             } else {
                 const body = await res.json().catch(() => ({}));
-                setError(body.error ?? `Failed to save article (${res.status})`);
+                throw new Error(body.error ?? `Failed to save article (${res.status})`);
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Network error');
+            throw err;
         }
     }, [articleId]);
 
