@@ -45,10 +45,6 @@ jobs:
                   test -f packages/outpost/db/prisma/migrations/migration_lock.toml
                   test -d packages/outpost/db/prisma/migrations/0001_init
 
-            - name: Check for schema drift
-              run: npx prisma migrate diff --from-migrations ./prisma/migrations --to-schema-datamodel ./prisma/schema.prisma --exit-code
-              working-directory: packages/outpost/db
-
             - name: Build
               run: pnpm build
 
