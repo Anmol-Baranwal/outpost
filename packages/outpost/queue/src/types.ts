@@ -26,6 +26,8 @@ export enum JobType {
     HUBSPOT_SYNC = 'HUBSPOT_SYNC',
     /** Push a change to an external tracker plugin */
     TRACKER_SYNC = 'TRACKER_SYNC',
+    /** Periodic cleanup of old completed/dead-letter jobs and sync events */
+    JOB_CLEANUP = 'JOB_CLEANUP',
 }
 
 // ─── Payload Shapes ─────────────────────────────────────────────────────────
@@ -75,6 +77,10 @@ export interface TrackerSyncPayload {
     changeData: Record<string, unknown>;
 }
 
+export interface JobCleanupPayload {
+    // No payload needed — runs on a fixed schedule
+}
+
 /** Map from JobType to its specific payload shape */
 export interface JobPayload {
     [JobType.AI_RESPONSE]: AiResponsePayload;
@@ -85,6 +91,7 @@ export interface JobPayload {
     [JobType.ACCOUNT_SCORING]: AccountScoringPayload;
     [JobType.HUBSPOT_SYNC]: HubSpotSyncPayload;
     [JobType.TRACKER_SYNC]: TrackerSyncPayload;
+    [JobType.JOB_CLEANUP]: JobCleanupPayload;
 }
 
 // ─── Job Results ────────────────────────────────────────────────────────────

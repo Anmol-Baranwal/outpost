@@ -13,6 +13,7 @@
  *   - ACCOUNT_SCORING:  Sentiment + engagement analysis
  *   - HUBSPOT_SYNC:     CRM sync
  *   - TRACKER_SYNC:     Push changes to external trackers
+ *   - JOB_CLEANUP:      Periodic cleanup of old jobs and sync events
  */
 
 import http from 'node:http';
@@ -28,6 +29,7 @@ import {
     handleAccountScoring,
     handleHubSpotSync,
     createTrackerSyncHandler,
+    handleJobCleanup,
     createJob,
 } from '@copilotkit/outpost/queue';
 import { SyncEngine } from '@copilotkit/outpost/shared';
@@ -51,6 +53,7 @@ const worker = new Worker({
         [JobType.ACCOUNT_SCORING]: 1,
         [JobType.HUBSPOT_SYNC]: 1,
         [JobType.TRACKER_SYNC]: 1,
+        [JobType.JOB_CLEANUP]: 1,
     },
     jobTimeouts: {
         [JobType.AI_RESPONSE]: 120_000,   // 2 minutes — AI pipeline is slow
@@ -68,6 +71,7 @@ worker.on(JobType.ONBOARDING_DIGEST, handleOnboardingDigest);
 worker.on(JobType.ACCOUNT_SCORING, handleAccountScoring);
 worker.on(JobType.HUBSPOT_SYNC, handleHubSpotSync);
 worker.on(JobType.TRACKER_SYNC, handleTrackerSync);
+worker.on(JobType.JOB_CLEANUP, handleJobCleanup);
 
 // ─── Start Scheduler ──────────────────────────────────────────────────────
 
