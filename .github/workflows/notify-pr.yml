@@ -9,6 +9,7 @@ permissions: {}
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Notify Slack
