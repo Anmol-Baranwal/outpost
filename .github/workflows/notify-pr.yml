@@ -1,10 +1,15 @@
 name: PR Notification
+
 on:
   pull_request_target:
     types: [opened]
+
+permissions: {}
+
 jobs:
   notify:
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Notify Slack
         if: github.actor != 'github-actions[bot]'
