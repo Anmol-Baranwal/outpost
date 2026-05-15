@@ -17,6 +17,7 @@ jobs:
     lint-typecheck-test:
         name: Lint, Typecheck & Test
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         env:
             ESLINT_USE_FLAT_CONFIG: 'false'
 
