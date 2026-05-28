@@ -24,8 +24,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Sidebar />
             <main
                 className={cn(
-                    'flex-1 min-w-0 overflow-auto',
-                    isFullBleed ? 'pb-14 md:pb-0' : 'p-6 pb-20 md:pb-6',
+                    'flex-1 min-w-0',
+                    isFullBleed
+                        ? 'overflow-hidden pb-14 md:pb-0'
+                        : 'overflow-auto p-6 pb-20 md:pb-6',
                 )}
             >
                 <KeyboardShortcutProvider />

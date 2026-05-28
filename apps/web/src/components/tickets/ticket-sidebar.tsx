@@ -188,7 +188,7 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
     const discussions = ticket.discussions ?? [];
 
     return (
-        <div className={cn('flex flex-col overflow-y-auto', className)} data-testid="ticket-sidebar">
+        <div className={cn('flex h-full flex-col overflow-y-auto', className)} data-testid="ticket-sidebar">
             {/* Header */}
             <div className="px-4 py-3 border-b border-border">
                 <span className="text-xs font-mono text-muted-foreground">{ticket.displayId}</span>

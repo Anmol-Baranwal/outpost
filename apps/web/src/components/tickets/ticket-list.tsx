@@ -60,13 +60,13 @@ export function TicketList({ tickets, className }: TicketListProps) {
     const selectedTicketId = params?.ticketId as string | undefined;
 
     return (
-        <div className={cn('flex flex-col', className)}>
+        <div className={cn('flex flex-col min-h-0', className)}>
             <div className="border-b border-border px-3 py-2">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     {tickets.length} ticket{tickets.length !== 1 ? 's' : ''}
                 </span>
             </div>
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto">
                 {tickets.map((ticket) => {
                     const isSelected = selectedTicketId === ticket.id;
                     return (

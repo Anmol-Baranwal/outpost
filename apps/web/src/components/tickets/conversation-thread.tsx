@@ -196,7 +196,13 @@ export function ConversationThread({ messages, className }: ConversationThreadPr
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // Scroll only the conversation panel itself, not any ancestor (which
+        // would yank the whole page when scrollIntoView walks up the tree).
+        const el = bottomRef.current;
+        const container = el?.parentElement;
+        if (container) {
+            container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+        }
     }, [messages.length]);
 
     // Group messages by date for separators
@@ -220,7 +226,7 @@ export function ConversationThread({ messages, className }: ConversationThreadPr
     });
 
     return (
-        <div className={cn('flex-1 overflow-y-auto', className)} data-testid="conversation-thread">
+        <div className={cn('flex-1 min-h-0 overflow-y-auto', className)} data-testid="conversation-thread">
             {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                     No messages yet. Start the conversation below.
