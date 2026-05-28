@@ -63,28 +63,28 @@ export const ReplyEditor = forwardRef<ReplyEditorHandle, ReplyEditorProps>(
         };
 
         return (
-            <div className={cn('border-t border-slate-200', className)}>
+            <div className={cn('border-t border-border', className)}>
                 {suggestedResponse && (
                     <div className="px-4 pt-3">
                         <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-purple-600">
+                            <span className="text-xs font-medium text-violet-600 dark:text-violet-400">
                                 Suggested response
                             </span>
                             <button
                                 onClick={() => setShowSuggestion(!showSuggestion)}
-                                className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
+                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
                             >
                                 {showSuggestion ? 'Hide' : 'Show suggestion'}
                             </button>
                         </div>
                         {showSuggestion && (
-                            <div className="mt-1.5 p-2.5 rounded bg-purple-50 border border-purple-100">
-                                <p className="text-xs text-purple-800 leading-relaxed whitespace-pre-wrap">
+                            <div className="mt-1.5 p-2.5 rounded bg-violet-500/10 border border-violet-500/20">
+                                <p className="text-xs text-violet-700 dark:text-violet-200 leading-relaxed whitespace-pre-wrap">
                                     {suggestedResponse}
                                 </p>
                                 <button
                                     onClick={useSuggestion}
-                                    className="mt-2 text-[10px] font-medium text-purple-600 hover:text-purple-800 transition-colors"
+                                    className="mt-2 text-[10px] font-medium text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300 transition-colors"
                                 >
                                     Use this response
                                 </button>
@@ -97,35 +97,35 @@ export const ReplyEditor = forwardRef<ReplyEditorHandle, ReplyEditorProps>(
                     <div className="flex items-center gap-1 mb-2">
                         <button
                             onClick={() => insertFormatting('**', '**')}
-                            className="p-1 rounded text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors"
+                            className="p-1 rounded text-xs font-bold text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="Bold"
                         >
                             B
                         </button>
                         <button
                             onClick={() => insertFormatting('*', '*')}
-                            className="p-1 rounded text-xs italic text-slate-500 hover:bg-slate-100 transition-colors"
+                            className="p-1 rounded text-xs italic text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="Italic"
                         >
                             I
                         </button>
                         <button
                             onClick={() => insertFormatting('`', '`')}
-                            className="p-1 rounded text-xs font-mono text-slate-500 hover:bg-slate-100 transition-colors"
+                            className="p-1 rounded text-xs font-mono text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="Inline Code"
                         >
                             {'</>'}
                         </button>
                         <button
                             onClick={() => insertFormatting('\n```\n', '\n```\n')}
-                            className="p-1 rounded text-[10px] font-mono text-slate-500 hover:bg-slate-100 transition-colors"
+                            className="p-1 rounded text-[10px] font-mono text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="Code Block"
                         >
                             {'{ }'}
                         </button>
                         <button
                             onClick={() => insertFormatting('[', '](url)')}
-                            className="p-1 rounded text-xs text-slate-500 hover:bg-slate-100 transition-colors"
+                            className="p-1 rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="Link"
                         >
                             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -134,7 +134,7 @@ export const ReplyEditor = forwardRef<ReplyEditorHandle, ReplyEditorProps>(
                         </button>
                         <button
                             onClick={() => insertFormatting('- ', '')}
-                            className="p-1 rounded text-xs text-slate-500 hover:bg-slate-100 transition-colors"
+                            className="p-1 rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="List"
                         >
                             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -143,7 +143,7 @@ export const ReplyEditor = forwardRef<ReplyEditorHandle, ReplyEditorProps>(
                         </button>
                         <div className="flex-1" />
                         <button
-                            className="p-1 rounded text-xs text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                            className="p-1 rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="Attach file"
                         >
                             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -159,7 +159,7 @@ export const ReplyEditor = forwardRef<ReplyEditorHandle, ReplyEditorProps>(
                         onKeyDown={handleKeyDown}
                         placeholder="Press R to reply..."
                         rows={3}
-                        className="w-full text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 resize-none"
+                        className="w-full text-sm bg-background border border-input rounded-lg px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring resize-none"
                         data-testid="reply-textarea"
                     />
                     {/* Send button */}
@@ -170,8 +170,8 @@ export const ReplyEditor = forwardRef<ReplyEditorHandle, ReplyEditorProps>(
                             className={cn(
                                 'text-xs font-medium px-4 py-1.5 rounded transition-colors',
                                 content.trim()
-                                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                                    : 'bg-slate-100 text-slate-400 cursor-not-allowed',
+                                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                                    : 'bg-muted text-muted-foreground cursor-not-allowed',
                             )}
                             data-testid="send-button"
                         >

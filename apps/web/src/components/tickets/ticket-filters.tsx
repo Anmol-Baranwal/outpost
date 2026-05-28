@@ -97,7 +97,7 @@ function MultiSelect({
 
     return (
         <div>
-            <label className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1 block">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1 block">
                 {label}
             </label>
             <div className="flex flex-wrap gap-1">
@@ -108,8 +108,8 @@ function MultiSelect({
                         className={cn(
                             'text-xs px-2 py-1 rounded border transition-colors',
                             selected.includes(value)
-                                ? 'bg-blue-50 border-blue-300 text-blue-700'
-                                : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300',
+                                ? 'bg-primary/10 border-primary/40 text-primary'
+                                : 'bg-card border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground',
                         )}
                     >
                         {displayLabel}
@@ -159,7 +159,7 @@ export function TicketFilterPanel({
     };
 
     return (
-        <div className={cn('border-b border-slate-200', className)}>
+        <div className={cn('border-b border-border', className)}>
             <div className="px-3 py-2">
                 <div className="flex items-center gap-2">
                     <input
@@ -168,7 +168,7 @@ export function TicketFilterPanel({
                         value={filters.search}
                         onChange={(e) => updateFilter('search', e.target.value)}
                         placeholder="Search tickets... (press /)"
-                        className="flex-1 text-sm bg-slate-50 border border-slate-200 rounded px-2.5 py-1.5 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+                        className="flex-1 text-sm bg-background border border-input rounded px-2.5 py-1.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring"
                         data-testid="ticket-search-input"
                     />
                     <button
@@ -176,15 +176,15 @@ export function TicketFilterPanel({
                         className={cn(
                             'text-xs px-2 py-1.5 rounded border transition-colors',
                             expanded || activeFilterCount > 0
-                                ? 'bg-blue-50 border-blue-300 text-blue-700'
-                                : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300',
+                                ? 'bg-primary/10 border-primary/40 text-primary'
+                                : 'bg-card border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground',
                         )}
                     >
                         Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
                     </button>
                 </div>
                 {activeFilterCount > 0 && !expanded && (
-                    <p className="text-[10px] text-slate-400 mt-1 truncate">
+                    <p className="text-[10px] text-muted-foreground mt-1 truncate">
                         {activeFilterSummary()}
                     </p>
                 )}
@@ -217,13 +217,13 @@ export function TicketFilterPanel({
                     />
                     <div className="grid grid-cols-2 gap-2">
                         <div>
-                            <label className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1 block">
+                            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1 block">
                                 Account
                             </label>
                             <select
                                 value={filters.accountId}
                                 onChange={(e) => updateFilter('accountId', e.target.value)}
-                                className="w-full text-xs bg-white border border-slate-200 rounded px-2 py-1.5 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                className="w-full text-xs bg-background border border-input rounded px-2 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                             >
                                 <option value="">All accounts</option>
                                 {accounts.map((acc) => (
@@ -234,13 +234,13 @@ export function TicketFilterPanel({
                             </select>
                         </div>
                         <div>
-                            <label className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1 block">
+                            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1 block">
                                 Assignee
                             </label>
                             <select
                                 value={filters.assigneeId}
                                 onChange={(e) => updateFilter('assigneeId', e.target.value)}
-                                className="w-full text-xs bg-white border border-slate-200 rounded px-2 py-1.5 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                className="w-full text-xs bg-background border border-input rounded px-2 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                             >
                                 <option value="">All assignees</option>
                                 {teamMembers.map((tm) => (
@@ -254,7 +254,7 @@ export function TicketFilterPanel({
                     <div className="flex gap-2 pt-1">
                         <button
                             onClick={resetFilters}
-                            className="text-xs px-3 py-1.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
+                            className="text-xs px-3 py-1.5 rounded border border-border text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                         >
                             Reset
                         </button>

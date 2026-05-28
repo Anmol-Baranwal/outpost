@@ -14,10 +14,10 @@ interface TicketListProps {
 }
 
 const priorityColors: Record<string, string> = {
-    [TicketPriority.CRITICAL]: 'bg-red-600 text-white',
-    [TicketPriority.HIGH]: 'bg-red-100 text-red-700',
-    [TicketPriority.MEDIUM]: 'bg-yellow-100 text-yellow-700',
-    [TicketPriority.LOW]: 'bg-slate-100 text-slate-600',
+    [TicketPriority.CRITICAL]: 'bg-destructive text-destructive-foreground',
+    [TicketPriority.HIGH]: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
+    [TicketPriority.MEDIUM]: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+    [TicketPriority.LOW]: 'bg-muted text-muted-foreground',
 };
 
 const priorityLabels: Record<string, string> = {
@@ -61,8 +61,8 @@ export function TicketList({ tickets, className }: TicketListProps) {
 
     return (
         <div className={cn('flex flex-col', className)}>
-            <div className="border-b border-slate-200 px-3 py-2">
-                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+            <div className="border-b border-border px-3 py-2">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     {tickets.length} ticket{tickets.length !== 1 ? 's' : ''}
                 </span>
             </div>
@@ -74,16 +74,16 @@ export function TicketList({ tickets, className }: TicketListProps) {
                             key={ticket.id}
                             onClick={() => router.push(`/tickets/${ticket.id}`)}
                             className={cn(
-                                'w-full text-left px-3 py-2.5 border-b border-slate-100 transition-colors',
-                                'hover:bg-slate-50 focus:outline-none focus:bg-slate-50',
-                                isSelected && 'bg-blue-50 border-l-2 border-l-blue-500',
+                                'w-full text-left px-3 py-2.5 border-b border-border/60 transition-colors',
+                                'hover:bg-accent/50 focus:outline-none focus:bg-accent/50',
+                                isSelected && 'bg-primary/10 border-l-2 border-l-primary',
                             )}
                             data-testid={`ticket-card-${ticket.id}`}
                         >
                             <div className="flex items-start gap-2">
                                 <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5 mb-0.5">
-                                        <span className="text-[10px] font-mono text-slate-400">
+                                        <span className="text-[10px] font-mono text-muted-foreground">
                                             {ticket.displayId}
                                         </span>
                                         <span
@@ -95,23 +95,23 @@ export function TicketList({ tickets, className }: TicketListProps) {
                                             {priorityLabels[ticket.priority]}
                                         </span>
                                     </div>
-                                    <p className="text-sm font-medium text-slate-800 leading-snug">
+                                    <p className="text-sm font-medium text-foreground leading-snug">
                                         {truncate(ticket.title, 60)}
                                     </p>
-                                    <p className="text-xs text-slate-500 mt-0.5 leading-snug">
+                                    <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
                                         {truncate(ticket.description, 80)}
                                     </p>
                                     <div className="flex items-center gap-2 mt-1.5">
                                         {ticket.account && (
-                                            <span className="text-[10px] text-slate-400">
+                                            <span className="text-[10px] text-muted-foreground">
                                                 {ticket.account.name}
                                             </span>
                                         )}
-                                        <span className="text-[10px] text-slate-400">
+                                        <span className="text-[10px] text-muted-foreground">
                                             {formatRelativeTime(ticket.createdAt)}
                                         </span>
                                         <span
-                                            className="text-[10px] font-mono text-slate-300 bg-slate-50 px-1 rounded"
+                                            className="text-[10px] font-mono text-muted-foreground bg-muted px-1 rounded"
                                             title={ticket.source}
                                         >
                                             {sourceIcons[ticket.source]}
