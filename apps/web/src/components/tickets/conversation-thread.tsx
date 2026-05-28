@@ -94,7 +94,7 @@ function MessageContent({ content }: { content: string }) {
     const parts = content.split(/(```[\s\S]*?```)/g);
 
     return (
-        <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+        <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
             {parts.map((part, i) => {
                 // Code block
                 if (part.startsWith('```') && part.endsWith('```')) {

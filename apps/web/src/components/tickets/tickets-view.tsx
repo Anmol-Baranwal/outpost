@@ -381,7 +381,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             {/* Center panel: conversation thread */}
             <div
                 className={cn(
-                    'flex-1 flex flex-col min-w-0 bg-card',
+                    'flex-1 flex flex-col min-w-0 overflow-hidden bg-card',
                     'max-md:absolute max-md:inset-0 max-md:z-40',
                     mobilePanel !== 'thread' && 'max-md:hidden',
                 )}
@@ -422,7 +422,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                                     {selectedTicket.status.replace(/_/g, ' ')}
                                 </span>
                             </div>
-                            <h2 className="text-sm font-semibold text-foreground mt-0.5">
+                            <h2 className="text-sm font-semibold text-foreground mt-0.5 break-words">
                                 {selectedTicket.title}
                             </h2>
                         </div>
