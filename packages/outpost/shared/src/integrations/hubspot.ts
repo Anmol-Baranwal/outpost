@@ -6,7 +6,7 @@
  */
 
 import { Client } from '@hubspot/api-client';
-import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/companies/models/Filter';
+import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/companies/models/Filter.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
