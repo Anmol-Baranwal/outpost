@@ -43,6 +43,10 @@ COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 COPY --chown=outpost:outpost apps/worker/start.sh ./apps/worker/start.sh
 RUN chmod +x apps/worker/start.sh
 
+# Prisma CLI for running migrations at startup (installed standalone, mirrors apps/web/Dockerfile —
+# the pnpm workspace .bin paths don't resolve reliably in the pruned production image).
+RUN npm install --prefix /opt/prisma --no-save prisma@6
+
 USER outpost
 ENV NODE_ENV=production
 ENV HEALTH_PORT=3005
