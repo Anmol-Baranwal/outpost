@@ -21,8 +21,13 @@ function buildCredentialsProvider() {
                 return null;
             }
 
+            // Setup, OIDC, and invite-accept all store emails lowercased, so
+            // normalize here too. Otherwise `Alex@…` silently fails with the
+            // right password.
+            const email = credentials.email.toLowerCase();
+
             const member = await prisma.teamMember.findUnique({
-                where: { email: credentials.email },
+                where: { email },
             });
 
             if (!member || !member.passwordHash) {

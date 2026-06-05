@@ -3,9 +3,5 @@ export default function TicketsLayout({
 }: {
     children: React.ReactNode;
 }) {
-    return (
-        <div className="h-full -m-8">
-            {children}
-        </div>
-    );
+    return <div className="h-full">{children}</div>;
 }

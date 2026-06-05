@@ -326,18 +326,18 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     return (
         <div className="flex h-full relative" data-testid="tickets-view">
             {error && (
-                <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700">
+                <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
                     <span>{error}</span>
                     <button
                         onClick={() => setError(null)}
-                        className="ml-4 text-red-500 hover:text-red-700 text-xs font-medium"
+                        className="ml-4 text-xs font-medium text-destructive/80 hover:text-destructive"
                     >
                         Dismiss
                     </button>
                 </div>
             )}
             {/* Mobile tab bar */}
-            <div className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-slate-200 bg-white md:hidden">
+            <div className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-border bg-card md:hidden">
                 {(['list', 'thread', 'sidebar'] as const).map((panel) => (
                     <button
                         key={panel}
@@ -345,8 +345,8 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                         className={cn(
                             'flex-1 py-2 text-xs font-medium capitalize transition-colors',
                             mobilePanel === panel
-                                ? 'text-blue-600 bg-blue-50'
-                                : 'text-slate-500',
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-muted-foreground',
                         )}
                     >
                         {panel === 'thread' ? 'Conversation' : panel}
@@ -357,7 +357,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             {/* Left panel: ticket list */}
             <div
                 className={cn(
-                    'w-[250px] flex-shrink-0 border-r border-slate-200 flex flex-col bg-white',
+                    'w-[250px] flex-shrink-0 border-r border-border flex flex-col bg-card',
                     'max-md:absolute max-md:inset-0 max-md:w-full max-md:z-40',
                     mobilePanel !== 'list' && 'max-md:hidden',
                 )}
@@ -370,7 +370,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     teamMembers={teamMembers}
                 />
                 {ticketsLoading ? (
-                    <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+                    <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
                         Loading...
                     </div>
                 ) : (
@@ -381,48 +381,48 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             {/* Center panel: conversation thread */}
             <div
                 className={cn(
-                    'flex-1 flex flex-col min-w-0 bg-white',
+                    'flex-1 flex flex-col min-w-0 overflow-hidden bg-card',
                     'max-md:absolute max-md:inset-0 max-md:z-40',
                     mobilePanel !== 'thread' && 'max-md:hidden',
                 )}
             >
                 {detailLoading ? (
-                    <div className="flex items-center justify-center h-full text-sm text-slate-400">
+                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                         Loading...
                     </div>
                 ) : selectedTicket ? (
                     <>
                         {/* Thread header */}
-                        <div className="border-b border-slate-200 px-4 py-3 flex-shrink-0">
+                        <div className="border-b border-border px-4 py-3 flex-shrink-0">
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => {
                                         router.push('/tickets');
                                         setMobilePanel('list');
                                     }}
-                                    className="md:hidden text-xs text-blue-600"
+                                    className="md:hidden text-xs text-primary"
                                 >
                                     Back
                                 </button>
-                                <span className="text-xs font-mono text-slate-400">
+                                <span className="text-xs font-mono text-muted-foreground">
                                     {selectedTicket.displayId}
                                 </span>
                                 <span
                                     className={cn(
                                         'text-[10px] px-1.5 py-0.5 rounded font-medium',
-                                        selectedTicket.status === TicketStatus.OPEN && 'bg-green-100 text-green-700',
-                                        selectedTicket.status === TicketStatus.IN_PROGRESS && 'bg-blue-100 text-blue-700',
-                                        selectedTicket.status === TicketStatus.RESOLVED && 'bg-slate-100 text-slate-600',
-                                        selectedTicket.status === TicketStatus.CLOSED && 'bg-slate-100 text-slate-500',
+                                        selectedTicket.status === TicketStatus.OPEN && 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+                                        selectedTicket.status === TicketStatus.IN_PROGRESS && 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
+                                        selectedTicket.status === TicketStatus.RESOLVED && 'bg-muted text-muted-foreground',
+                                        selectedTicket.status === TicketStatus.CLOSED && 'bg-muted text-muted-foreground/80',
                                         (selectedTicket.status === TicketStatus.WAITING_ON_CUSTOMER ||
                                             selectedTicket.status === TicketStatus.WAITING_ON_TEAM) &&
-                                            'bg-yellow-100 text-yellow-700',
+                                            'bg-amber-500/15 text-amber-600 dark:text-amber-400',
                                     )}
                                 >
                                     {selectedTicket.status.replace(/_/g, ' ')}
                                 </span>
                             </div>
-                            <h2 className="text-sm font-semibold text-slate-800 mt-0.5">
+                            <h2 className="text-sm font-semibold text-foreground mt-0.5 break-words">
                                 {selectedTicket.title}
                             </h2>
                         </div>
@@ -437,17 +437,17 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                         />
                     </>
                 ) : (
-                    <div className="flex items-center justify-center h-full text-sm text-slate-400">
+                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                         <div className="text-center">
-                            <p className="text-lg mb-1">Select a ticket</p>
-                            <p className="text-xs text-slate-400">
+                            <p className="text-lg mb-1 text-foreground">Select a ticket</p>
+                            <p className="text-xs text-muted-foreground">
                                 Choose a ticket from the list to view its conversation
                             </p>
-                            <div className="mt-4 flex flex-wrap justify-center gap-2 text-[10px] text-slate-400">
-                                <span className="bg-slate-50 px-2 py-1 rounded font-mono">J</span> next
-                                <span className="bg-slate-50 px-2 py-1 rounded font-mono">F</span> prev
-                                <span className="bg-slate-50 px-2 py-1 rounded font-mono">/</span> search
-                                <span className="bg-slate-50 px-2 py-1 rounded font-mono">C</span> create
+                            <div className="mt-4 flex flex-wrap justify-center gap-2 text-[10px] text-muted-foreground">
+                                <span className="bg-muted px-2 py-1 rounded font-mono">J</span> next
+                                <span className="bg-muted px-2 py-1 rounded font-mono">F</span> prev
+                                <span className="bg-muted px-2 py-1 rounded font-mono">/</span> search
+                                <span className="bg-muted px-2 py-1 rounded font-mono">C</span> create
                             </div>
                         </div>
                     </div>
@@ -458,7 +458,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             {selectedTicket && (
                 <div
                     className={cn(
-                        'w-[300px] flex-shrink-0 border-l border-slate-200 bg-white',
+                        'w-[300px] flex-shrink-0 border-l border-border bg-card',
                         'max-md:absolute max-md:inset-0 max-md:w-full max-md:z-40',
                         mobilePanel !== 'sidebar' && 'max-md:hidden',
                     )}

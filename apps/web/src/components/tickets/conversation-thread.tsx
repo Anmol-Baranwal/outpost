@@ -37,11 +37,11 @@ function formatDate(dateStr: string): string {
 function DateSeparator({ date }: { date: string }) {
     return (
         <div className="flex items-center gap-3 py-3">
-            <div className="flex-1 border-t border-slate-200" />
-            <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
+            <div className="flex-1 border-t border-border" />
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                 {formatDate(date)}
             </span>
-            <div className="flex-1 border-t border-slate-200" />
+            <div className="flex-1 border-t border-border" />
         </div>
     );
 }
@@ -49,7 +49,7 @@ function DateSeparator({ date }: { date: string }) {
 function SystemMessage({ message }: { message: TicketMessage }) {
     return (
         <div className="flex justify-center py-1.5">
-            <span className="text-xs text-slate-400 bg-slate-50 px-3 py-1 rounded-full">
+            <span className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-full">
                 {message.content}
             </span>
         </div>
@@ -60,12 +60,12 @@ function AttachmentCard({ attachment }: { attachment: { name: string; url: strin
     return (
         <a
             href={attachment.url}
-            className="inline-flex items-center gap-2 mt-1.5 px-3 py-2 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors"
+            className="inline-flex items-center gap-2 mt-1.5 px-3 py-2 rounded border border-border bg-muted/50 hover:bg-muted transition-colors"
             target="_blank"
             rel="noopener noreferrer"
         >
             <svg
-                className="h-4 w-4 text-slate-400"
+                className="h-4 w-4 text-muted-foreground"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -78,8 +78,8 @@ function AttachmentCard({ attachment }: { attachment: { name: string; url: strin
                 />
             </svg>
             <div>
-                <p className="text-xs font-medium text-slate-700">{attachment.name}</p>
-                <p className="text-[10px] text-slate-400">{attachment.size}</p>
+                <p className="text-xs font-medium text-foreground">{attachment.name}</p>
+                <p className="text-[10px] text-muted-foreground">{attachment.size}</p>
             </div>
         </a>
     );
@@ -94,7 +94,7 @@ function MessageContent({ content }: { content: string }) {
     const parts = content.split(/(```[\s\S]*?```)/g);
 
     return (
-        <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+        <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
             {parts.map((part, i) => {
                 // Code block
                 if (part.startsWith('```') && part.endsWith('```')) {
@@ -105,7 +105,7 @@ function MessageContent({ content }: { content: string }) {
                     return (
                         <pre
                             key={i}
-                            className="mt-2 mb-2 p-3 bg-slate-900 text-slate-100 rounded text-xs overflow-x-auto font-mono"
+                            className="mt-2 mb-2 p-3 bg-slate-950 text-slate-100 rounded text-xs overflow-x-auto font-mono"
                         >
                             {lang && (
                                 <span className="block text-[10px] text-slate-400 mb-1 uppercase">{lang}</span>
@@ -123,7 +123,7 @@ function MessageContent({ content }: { content: string }) {
                                 return (
                                     <code
                                         key={j}
-                                        className="px-1 py-0.5 bg-slate-100 text-slate-700 rounded text-xs font-mono"
+                                        className="px-1 py-0.5 bg-muted text-foreground rounded text-xs font-mono"
                                     >
                                         {segment.slice(1, -1)}
                                     </code>
@@ -152,29 +152,29 @@ function UserMessage({ message }: { message: TicketMessage }) {
     const isBot = message.type === MessageType.BOT;
 
     return (
-        <div className="px-4 py-3 hover:bg-slate-50 transition-colors" data-testid="message">
+        <div className="px-4 py-3 hover:bg-accent/40 transition-colors" data-testid="message">
             <div className="flex items-start gap-3">
                 <div
                     className={cn(
                         'flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center text-xs font-medium',
                         isBot
-                            ? 'bg-purple-100 text-purple-700'
-                            : 'bg-blue-100 text-blue-700',
+                            ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
+                            : 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
                     )}
                 >
                     {isBot ? 'AI' : (message.author ?? 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-medium text-slate-800">
+                        <span className="text-sm font-medium text-foreground">
                             {message.author ?? 'Unknown'}
                         </span>
                         {isBot && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 font-medium">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 font-medium">
                                 AI generated
                             </span>
                         )}
-                        <span className="text-[10px] text-slate-400">
+                        <span className="text-[10px] text-muted-foreground">
                             {formatTimestamp(message.createdAt)}
                         </span>
                     </div>
@@ -196,7 +196,13 @@ export function ConversationThread({ messages, className }: ConversationThreadPr
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // Scroll only the conversation panel itself, not any ancestor (which
+        // would yank the whole page when scrollIntoView walks up the tree).
+        const el = bottomRef.current;
+        const container = el?.parentElement;
+        if (container) {
+            container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+        }
     }, [messages.length]);
 
     // Group messages by date for separators
@@ -220,9 +226,9 @@ export function ConversationThread({ messages, className }: ConversationThreadPr
     });
 
     return (
-        <div className={cn('flex-1 overflow-y-auto', className)} data-testid="conversation-thread">
+        <div className={cn('flex-1 min-h-0 overflow-y-auto', className)} data-testid="conversation-thread">
             {messages.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-sm text-slate-400">
+                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                     No messages yet. Start the conversation below.
                 </div>
             ) : (
