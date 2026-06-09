@@ -15,6 +15,8 @@ A new Notion page under **Community Signals** parent (`3673aa38-1852-80bc-a71f-d
 Weekly Community Signal — <Mon DD>-<DD>, <YYYY>
 ```
 
+The main page **is the CopilotKit report** — its body carries the CopilotKit community sections plus the cross-community 🏢 Enterprise section. **AG-UI always lives on its own sub-page**, created as a child of the main page and linked at the very top of the main page (via a `<page url="…">` block). There is **no top-level cross-community TL;DR** — each page leads with its own per-community TL;DR.
+
 Covering the **most recent complete Friday→Friday week** (Friday end-date inclusive). State the window before pulling data.
 
 ## Orchestrator flow
@@ -54,26 +56,30 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    Markers: `🛠️ Fix PR [#NNNN](url) OPEN` · `🛠️ Fix PR [#NNNN](url) MERGED <date>` · `🛠️ No fix PR yet.`
    Procedurally-closed PRs (branch-name violation etc.) don't count as competing fixes — read closing comment.
 
-10. **Build the Notion page** under the Community Signals parent via `mcp__plugin_Notion_notion__notion-create-pages`. See "Page structure" below.
+10. **Build the Notion pages** via `mcp__plugin_Notion_notion__notion-create-pages`. Create the AG-UI sub-page FIRST (as a child of the main page), then the main CopilotKit page references it at top with a `<page url="…">` block. See "Page structure" below.
+
+   **Notion tooling gotchas (learned the hard way):**
+   - `notion-create-pages` interprets `\n` / `\t` escapes correctly — author content with them.
+   - `notion-update-page` `replace_content` / `insert_content` do **NOT** interpret `\n` / `\t` — they pass through as literal `n` / `t` and mangle the page. Use **real newline and tab characters** in `new_str`.
+   - `notion-update-page` `update_content` (search/replace via `content_updates`) **does** interpret `\n` — handy for surgical inline edits and small block inserts without rewriting the whole page.
+   - `replace_content` deletes any child page not referenced in `new_str`. To preserve the AG-UI sub-page, include its `<page url="…">` block in the new content (don't rely on `allow_deleting_content`).
 
 11. **Draft Slack TL;DR** via `slack-tldr` skill. Save to `/tmp/slack-msg.json`. Show Nathan to review before he curls.
 
 ## Page structure
 
+**MAIN PAGE — CopilotKit + cross-community Enterprise**
+
 ```
 [H1 title]
 **Week:** Fri YYYY-MM-DD → Fri YYYY-MM-DD     ← only line in the header block
 
-## TL;DR                                        ← cross-community, top of report
-   **Story this week**                           ← 3-5 narrative bullets, each tagged [CK] / [AG-UI] / [CK + AG-UI], each leading bold linked to its primary artifact
-   **Metrics this window**                       ← 6-8 metric bullets — front-door count, per-community top pain / top demand, resolved, open fix PRs, enterprise trend
+## 📦 CopilotKit                                ← community header at the very top of the page
+*↓ Companion report — the AG-UI half of this week is on its own page:*   ← italic label so the link reads as nav, not a heading
+<page url="…">AG-UI sub-page title</page>      ← AG-UI sub-page link (give the sub-page a DISTINCT icon, e.g. 🔷, so it doesn't mirror the 📦 header)
+---                                             ← divider before the TL;DR
 
-## 🏢 Enterprise                                ← cross-community
-   ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
-   ### Reporters this week                      ← prior-week comparison line + per-company bullets
-
-## 📦 CopilotKit
-   ### TL;DR                                    ← metrics, 4 hyperlinked bullets
+## TL;DR                                        ← CopilotKit metrics, 4 hyperlinked bullets, front-door line first
    ### 🚨 Front-door flags                      ← toggle headings per flag
    ### 🔥 Demand
    ### 💢 Pain
@@ -81,8 +87,24 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 📊 Pulse                                 ← Volume + open fix PRs
    ### Community ops
 
-## 📦 AG-UI                                     ← same shape as CopilotKit
-   ### TL;DR
+## 🏢 Enterprise                                ← cross-community, BELOW the CopilotKit sections
+   ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
+   ### Reporters this week                      ← prior-week comparison line + per-company bullets
+
+## 🔄 Patterns — CopilotKit                     ← CK-scoped, <details><summary> wrapped
+## Gaps & follow-ups — CopilotKit               ← CK-scoped checklist
+## Methodology                                  ← <details><summary> wrapped; threshold, window, sources
+```
+
+**AG-UI SUB-PAGE — same shape, AG-UI only**
+
+```
+[H1 title]
+**Week:** Fri YYYY-MM-DD → Fri YYYY-MM-DD
+
+## 📦 AG-UI                                     ← community header at the very top of every AG-UI page
+
+## TL;DR
    ### 🚨 Front-door flags
    ### 🔥 Demand
    ### 💢 Pain
@@ -90,23 +112,28 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 📊 Pulse
    ### Community ops
 
-## 🔄 Patterns across the ecosystem             ← cross-community, <details><summary> wrapped
-
-## Gaps & follow-ups                            ← cross-community checklist
-
-## Methodology                                  ← <details><summary> wrapped; threshold, window, sources
+## 🔄 Patterns — AG-UI                          ← AG-UI-scoped
+## Gaps & follow-ups — AG-UI                     ← AG-UI-scoped checklist
+## Methodology
 ```
 
 If a per-community subsection is empty, render "No X this week." Don't omit the heading.
 
-**Sub-page naming.** When a per-community section is moved to its own Notion sub-page (because content is thick), title the sub-page `Weekly Community Signal — <Community> — <Mon DD>-<DD>, <YYYY>` (e.g. `Weekly Community Signal — AG-UI — May 26-Jun 08, 2026`). Main page keeps `Weekly Community Signal — <Mon DD>-<DD>, <YYYY>`.
+**Page split is mandatory, not conditional.** AG-UI always gets its own sub-page (even when thin); the main page is always the CopilotKit report. 🏢 Enterprise stays cross-community on the main page. 🔄 Patterns / Gaps / Methodology are split per page (CK-scoped on main, AG-UI-scoped on the sub-page).
+
+**Every page leads with its community header.** The main page opens with `## 📦 CopilotKit`; every AG-UI page opens with `## 📦 AG-UI`. The community header is the first thing on the page (under the `**Week:**` line).
+
+**TL;DR sits right under the community header.** On both pages the TL;DR is the first content section — above 🏢 Enterprise and everything else. On the main page, the AG-UI sub-page link goes between the `## 📦 CopilotKit` header and the `## TL;DR` (i.e. directly above the TL;DR). 🏢 Enterprise sits BELOW the CopilotKit sections, not above them.
+
+**Sub-page naming.** Title the AG-UI sub-page `Weekly Community Signal — AG-UI — <Mon DD>-<DD>, <YYYY>` (e.g. `Weekly Community Signal — AG-UI — May 26-Jun 08, 2026`). Main page keeps `Weekly Community Signal — <Mon DD>-<DD>, <YYYY>`.
 
 ## Page rendering rules
 
-- **Always-open sections:** Header, ## TL;DR (Story + Metrics), 🏢 Enterprise (both subsections), per-community TL;DR, ✅ Resolved this week, Gaps & follow-ups.
+- **Always-open sections:** Header, AG-UI sub-page link, 🏢 Enterprise (both subsections), per-community TL;DR, ✅ Resolved this week, Gaps & follow-ups.
 - **Toggle headings (`### Title {toggle="true"}`):** every front-door flag + every Demand/Pain cluster card. Body bullets **tab-indented** to be inside the toggle.
 - **`<details><summary>` blocks:** Early signals, Pulse body, Community ops, 🔄 Patterns, Methodology.
 - **Notion XML `<table header-row="true">…</table>`** form (not Markdown pipes) inside toggles/details.
+- **Visual polish:** AG-UI sub-page gets a distinct icon (🔷) so its link doesn't read as a duplicate of the 📦 header; an italic "↓ Companion report" label sits above the link; `---` dividers between the top-level `##` sections (TL;DR / Enterprise / Patterns / Methodology) to break up the column. (No table-of-contents — it ate too much vertical space.)
 
 ## TL;DR titles must be hyperlinks
 
@@ -123,6 +150,7 @@ Add a `🚨 **Front-door flags this week**` line at top of each community's TL;D
 ## Reporter formatting
 
 - Every Discord mention is a hyperlink — no plain handles.
+- **Every named entity in 🔄 Patterns is hyperlinked** — issue numbers → issue URLs, reporter handles → their thread/issue, named surfaces/features → their canonical artifact. No bare `#NNNN`, handles, or feature names in Patterns prose.
 - Forum thread URL: `https://discord.com/channels/<guild_id>/<thread_id>` (parent forum channel ID NOT in URL).
 - Text channel: link to channel + include date.
 - GitHub: `[#NNNN](issue-url)` + backtick handle; no profile link unless they have no filed issue.
