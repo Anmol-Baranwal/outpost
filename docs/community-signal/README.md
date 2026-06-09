@@ -1,55 +1,49 @@
-# Weekly Community Signal — workflow contribution
+# Weekly Community Signal — workflow + migration map
 
-This directory contains the **spec + working manual routine** for the cross-source (Discord + GitHub) weekly community report that produces the Notion pages under [Community Signals](https://www.notion.so/copilotkit/Community-Signals-3673aa38185280bca71fd328d765668d).
+The cross-source (Discord + GitHub) weekly community report. Today: runnable Claude Code skill suite under [`.claude/skills/`](../../.claude/skills/) at repo root. Soon: native TS implementation inside `packages/outpost/*` + `apps/web/*` tracked by [#66](https://github.com/CopilotKit/outpost/issues/66).
 
-**Tracking issue:** [#66 — Weekly Community Report](https://github.com/CopilotKit/outpost/issues/66)
+## How to run it today
 
-**Status:** Draft contribution. The TS implementation in `packages/outpost/*` + `apps/web/*` is engineering-owned and tracked by #66. These files are the reference spec for that build.
+1. Prereqs (see [`CLAUDE.md`](../../CLAUDE.md)): `mcp-discord` MCP server installed, `gh` CLI authenticated, Notion MCP authenticated, `SLACK_WEBHOOK_URL_1` set in `.claude/settings.local.json` `env` block.
+2. From this repo with Claude Code attached: say "go" or "run the weekly report."
+3. The `weekly-report` orchestrator pulls Discord + GitHub for both communities, fans out subagents, writes the Notion report under [Community Signals](https://www.notion.so/copilotkit/Community-Signals-3673aa38185280bca71fd328d765668d), and emits a Slack TL;DR JSON.
 
-## What's here
+## What's in the skill suite
 
-| File | Purpose |
-|---|---|
-| `SPEC.md` | Routine spec — cross-skill conventions, audience rule, dated-list ordering, link discipline, identity-collision handling, demotion rules. Copied verbatim from [`NathanTarbert/mcp-discord:CLAUDE.md`](https://github.com/NathanTarbert/mcp-discord/blob/main/CLAUDE.md). |
-| `skills/weekly-report/SKILL.md` | Fri→Fri orchestrator — window calc · subagent fan-out (Discord pull · GitHub pull · deep-read · reporter enrichment) · clustering · threshold + trend · Notion page composition · Slack JSON. |
-| `skills/front-door-triage/SKILL.md` | Five P0 categories (quickstart broken · agent framework broken · example broken · auth/security blocker · CLI+license flow broken). Threshold-skip override. Surface-beats-wording. Specific-not-generic titles. Rich-repro 📹 + internal-Slack-reference bullets. |
-| `skills/deep-read-issue/SKILL.md` | Subagent prompt template for `gh issue view --comments` + `gh pr view --comments` + `gh pr diff` per issue. Procedurally-closed PR rule. Hidden-second-bug detection. |
-| `skills/enrich-reporter/SKILL.md` | `gh api users/<login>` enrichment with `companySource` taxonomy. Identity collisions + same-author duplicate-filing rules. |
-| `skills/enterprise/SKILL.md` | Enterprise Surfaces table (Enterprise Intelligence · CopilotKit Cloud · License onboarding · Security disclosure channel · Self-host runtime) + Reporters with prior-week trend. |
-| `skills/topic-search/SKILL.md` | Generic "find all X in last N days" cross-repo lookup. |
-| `skills/slack-tldr/SKILL.md` | Locked Slack JSON payload + post format. |
+See [`CLAUDE.md`](../../CLAUDE.md) for the routine spec + trigger phrases. Skills:
 
-## How the manual routine maps to Outpost components
+- [`weekly-report`](../../.claude/skills/weekly-report/SKILL.md) — Fri→Fri orchestrator
+- [`front-door-triage`](../../.claude/skills/front-door-triage/SKILL.md) — five P0 categories
+- [`deep-read-issue`](../../.claude/skills/deep-read-issue/SKILL.md) — subagent for issue + fix-PR depth
+- [`enrich-reporter`](../../.claude/skills/enrich-reporter/SKILL.md) — `gh api users/<login>` enterprise enrichment
+- [`enterprise`](../../.claude/skills/enterprise/SKILL.md) — Enterprise Surfaces + Reporters with prior-week trend
+- [`topic-search`](../../.claude/skills/topic-search/SKILL.md) — generic cross-repo lookup
+- [`slack-tldr`](../../.claude/skills/slack-tldr/SKILL.md) — locked Slack JSON payload format
 
-| Manual | Outpost | Notes |
+## Migration map (skill → Outpost native)
+
+| Skill / artifact | Outpost target | Notes |
 |---|---|---|
-| `mcp-discord` MCP tool calls | `apps/discord-bot` | Already ingests Discord. Add per-`Community` scoping by `discordGuildId`. AG-UI bot already added (guild `1379082175625953370`). |
-| `gh issue list --repo <repo>` | `apps/github-app` | Already ingests. Scope by `Community.githubOrg` + `githubRepos`. |
-| `gh api users/<login>` enrichment | `packages/outpost/ai` (or `shared`) | 30-day cache. Folds into existing `User` model — extend with `company` / `companySource` / `companyEnrichedAt` / `bio` / `blog` / `twitterUsername` fields. |
-| Threshold rule + trend math (skill spec) | `packages/outpost/ai` (deterministic) | Lives in code, not prompt. Testable + stable across model upgrades. |
-| Cluster signals across Discord + GitHub | `packages/outpost/ai` cluster step | v1: deterministic (title similarity + source-ref overlap). v2: AI for borderline matches. |
-| Locked Slack TL;DR | `apps/slack-bot` | Posts to `Community.slackChannelId`. Format in `skills/slack-tldr/SKILL.md`. |
-| Manual Notion write | Optional `apps/worker` mirror | If `Community.notionParentPageId` set. Defer to v1.5. |
+| `weekly-report` orchestrator | `packages/outpost/queue/src/handlers/community-report-weekly.ts` | New job type `COMMUNITY_REPORT_WEEKLY`. Cron Fri 23:00 UTC fan-out per `Community` row. |
+| Subagent flow (Discord pull, GitHub pull) | Already in `apps/discord-bot` + `apps/github-app` | Both ingest into existing tables. Native job queries DB instead of re-pulling. |
+| `front-door-triage` classification | `packages/outpost/ai/src/front-door.ts` | Five categories as TS enum + classifier. Threshold-skip override stays as a deterministic post-step. |
+| `deep-read-issue` subagent | `packages/outpost/ai/src/deep-read.ts` | Calls `gh issue view --comments` + `gh pr diff` via existing GitHub client. |
+| `enrich-reporter` (`gh api users/<login>`) | `packages/outpost/ai/src/enrich-reporter.ts` (or `shared`) | 30-day cache via `User.enrichedAt`. Extend `User` with `company` / `companySource` / `bio` / `blog` / `twitterUsername`. |
+| `enterprise` surfaces + reporters | `packages/outpost/ai/src/enterprise.ts` + dashboard route | Surfaces table is static config; reporter trend is a query over prior `CommunityReport`. |
+| `topic-search` | `apps/web/src/app/reports/community/search` route | Optional v1.5. |
+| `slack-tldr` JSON format | `apps/slack-bot/src/lib/post-community-report.ts` | Locked format in the skill file. Posts to `Community.slackChannelId`. |
+| Notion page composition (orchestrator step 10) | Dashboard renders natively in Next.js | Optional Notion mirror as side-effect if `Community.notionParentPageId` is set. |
+| Notion-specific markdown gotchas | n/a after cutover | Toggle headings, XML tables, forum-thread URL format — all Notion-specific. Dashboard uses React components. |
 
 ## Schema notes (relevant existing models)
 
-`Reporter` from #66 schema can fold into existing `User`:
-- `User.externalId` already holds Discord ID **or** GitHub login.
-- `User.accountId` → `Account` is the company aggregation.
-- Extend `User` with `company`, `companySource`, `companyEnrichedAt`, `bio`, `blog`, `twitterUsername`.
+Existing tables that the spec piggybacks on rather than replacing:
 
-`Account` already exists for company aggregation (name, domain, sentiment, engagement, acv).
+- `User` — `externalId` already holds Discord ID **or** GitHub login. Extend with `company`, `companySource`, `companyEnrichedAt`, `bio`, `blog`, `twitterUsername`.
+- `Account` — already the company aggregation entity (`name`, `domain`, `sentiment`, `engagement`, `acv`).
+- `Ticket` — already ingests Discord threads + GitHub issues by source (`TicketSource` enum). `CommunitySignalSource` joins to `Ticket.id`.
 
-`Ticket` already ingests Discord threads + GitHub issues by source (`TicketSource` enum: `DISCORD` / `GITHUB_ISSUE` / `GITHUB_DISCUSSION` / ...). `CommunitySignalSource` can join to `Ticket.id` rather than re-ingest.
-
-Net-new tables: `Community`, `CommunityReport`, `CommunitySignal`, `CommunitySignalSource`.
-
-## Notion enhanced-Markdown gotchas (from production runs)
-
-- `### Title {toggle="true"}` requires **tab-indented children** to be inside the toggle.
-- `<details><summary>` blocks need the **XML `<table>` form** (Markdown pipes break inside `<details>`).
-- HTML comments don't render — strip, don't comment.
-- Discord forum thread URL: `discord.com/channels/<guild_id>/<thread_id>` — the parent forum channel ID is **not** in the URL.
+Net-new tables per [#66](https://github.com/CopilotKit/outpost/issues/66): `Community`, `CommunityReport`, `CommunitySignal`, `CommunitySignalSource`.
 
 ## Reference reports (fidelity target for dashboard detail view)
 
@@ -58,17 +52,18 @@ Net-new tables: `Community`, `CommunityReport`, `CommunitySignal`, `CommunitySig
 
 ## Open decisions for engineering
 
-These are tracked in the [Notion handoff page](https://www.notion.so/37a3aa3818528152a275d6c817d5a28c) and on #66:
+Tracked on [#66](https://github.com/CopilotKit/outpost/issues/66) + the [Notion handoff page](https://www.notion.so/37a3aa3818528152a275d6c817d5a28c).
 
-1. Deterministic vs AI clustering for v1? (Recommend deterministic.)
-2. Notion mirror in v1 or v1.5? (Recommend v1.5.)
-3. Fuzzy identity match in v1 or v2? (Recommend v2.)
-4. Window-of-record for `carryover open`? (Recommend "while GitHub issue is OPEN.")
-5. Bird's-eye view: cross-community pattern aggregation, or siloed? (Recommend siloed for v1.)
-6. Cron vs interval scheduler? (Recommend `cronExpression` on `ScheduledJobDefinition`; current scheduler is `setInterval`-only.)
+1. **Deterministic vs AI clustering for v1?** Recommend deterministic (title similarity + source-ref overlap). The manual routine clusters fine without a model.
+2. **Notion mirror in v1 or v1.5?** Recommend v1.5.
+3. **Fuzzy identity match in v1 or v2?** Recommend v2; ship exact-handle + email match in v1.
+4. **Window-of-record for `carryover open`?** Recommend "while the GitHub issue is OPEN."
+5. **Bird's-eye view: aggregate cross-community patterns, or siloed?** Recommend siloed for v1.
+6. **Cron vs interval scheduler?** Current scheduler is `setInterval`-only. Recommend adding `cronExpression` to `ScheduledJobDefinition` via `node-cron` so Fri 23:00 UTC works cleanly.
 
 ## Coordination
 
-- Workflow artifacts of record live in [`NathanTarbert/mcp-discord`](https://github.com/NathanTarbert/mcp-discord). Changes to the spec land there; these files mirror that source.
-- The manual weekly routine continues running from `mcp-discord` until the Outpost dashboard ships.
+- Workflow source-of-truth lives in [`NathanTarbert/mcp-discord`](https://github.com/NathanTarbert/mcp-discord). Spec changes land there first; the skill files here mirror that source.
+- Manual routine continues running until the Outpost dashboard ships the Weekly Community Signal report.
+- After cutover, the skill suite becomes a reference / fallback path. Spec changes still land in the skill files first.
 - Open to walking through any skill or format detail with whoever picks up the build.
