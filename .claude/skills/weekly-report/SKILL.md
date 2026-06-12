@@ -139,6 +139,7 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 
 - **Always-open sections:** Header, AG-UI sub-page link, 🏢 Enterprise (both subsections), per-community TL;DR, ✅ Resolved this week, Gaps & follow-ups.
 - **Toggle headings (`### Title {toggle="true"}`):** every front-door flag + every Demand/Pain cluster card. Body bullets **tab-indented** to be inside the toggle.
+- **No 🚨 on individual flag toggles.** The siren appears only on the `### 🚨 Front-door flags` section heading and the TL;DR front-door line — repeating it per flag looks bad.
 - **`<details><summary>` blocks:** Early signals, Pulse body, Community ops, 🔄 Patterns, Methodology.
 - **Notion XML `<table header-row="true">…</table>`** form (not Markdown pipes) inside toggles/details.
 - **Visual polish:** AG-UI sub-page gets a distinct icon (🔷) so its link doesn't read as a duplicate of the 📦 header; an italic "↓ Companion report" label sits above the link; `---` dividers between the top-level `##` sections (TL;DR / Enterprise / Patterns / Methodology) to break up the column. (No table-of-contents — it ate too much vertical space.)
