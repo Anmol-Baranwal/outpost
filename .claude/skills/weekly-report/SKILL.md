@@ -72,6 +72,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 11. **Draft Slack TL;DR** via `slack-tldr` skill. Save to `/tmp/slack-msg.json`. Show Nathan to review before he curls.
 
+12. **Remind Nathan to record a Loom walkthrough — every report, no exceptions.** When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
+
 ## Page structure
 
 **MAIN PAGE — CopilotKit + cross-community Enterprise**
