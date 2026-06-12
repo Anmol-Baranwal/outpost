@@ -35,6 +35,12 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ```
    Return: issue list tagged by community, with author + state + 1-line summary.
 
+   **Catch escalations on old issues — the `created:` window misses them.** Also run an `updated:`-window search over OPEN issues (front-door categories especially: quickstart/CLI/install, upgrade path, docs landing, prod builds, auth/security) and **always read the comments** on anything that surfaces — escalations, maintainer commitments, and "fix in progress" status live in comments, not issue bodies:
+   ```
+   gh issue list --repo <repo> --state open --limit 60 --search "updated:<start>..<end>" --json number,title,url,author,createdAt
+   ```
+   An old front-door issue with in-window comment activity belongs in this week's report — in BOTH community reports if the broken artifact spans them (precedent: [ag-ui#1518](https://github.com/ag-ui-protocol/ag-ui/issues/1518), quickstart CLI broken since April, escalated via comment two months later; the failing `npx copilotkit` package made it a CopilotKit front door too).
+
 4. **Spawn Subagent C — Deep-read** (see `deep-read-issue` skill). For each in-window actionable issue + every detected fix PR. Returns: file paths, reviewer concerns, hidden bugs, test coverage, fix-PR scope.
 
 5. **Spawn Subagent D — Enrich reporters** (see `enrich-reporter` skill). For every GitHub author across both repos + the prior-week roster. Returns: company affiliation table + enterprise list.
@@ -79,17 +85,18 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <page url="…">AG-UI sub-page title</page>      ← AG-UI sub-page link (give the sub-page a DISTINCT icon, e.g. 🔷, so it doesn't mirror the 📦 header)
 ---                                             ← divider before the TL;DR
 
-## TL;DR                                        ← CopilotKit metrics, 4 hyperlinked bullets, front-door line first
+## TL;DR                                        ← CopilotKit metrics, hyperlinked bullets, front-door line first, 📚 Docs watch line second
    ### 🚨 Front-door flags                      ← toggle headings per flag
    ### 🔥 Demand
    ### 💢 Pain
+   ### 📚 Docs                                  ← standing weekly section: drift / gaps / links-&-bot (see "Docs section" below)
    ### ✅ Resolved this week                    ← XML table
    ### 📊 Pulse                                 ← Volume + open fix PRs
    ### Community ops
 
 ## 🏢 Enterprise                                ← cross-community, BELOW the CopilotKit sections
    ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
-   ### Reporters this week                      ← prior-week comparison line + per-company bullets
+   ### Enterprise reporters this week           ← prior-week comparison line + per-company bullets (spell out "Enterprise" — not just "Reporters this week")
 
 ## 🔄 Patterns — CopilotKit                     ← CK-scoped, <details><summary> wrapped
 ## Gaps & follow-ups — CopilotKit               ← CK-scoped checklist
@@ -108,6 +115,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 🚨 Front-door flags
    ### 🔥 Demand
    ### 💢 Pain
+   ### 📚 Docs
    ### ✅ Resolved this week
    ### 📊 Pulse
    ### Community ops
@@ -146,6 +154,19 @@ Within each per-community `### TL;DR`:
 ## Front-door flags lead the TL;DR
 
 Add a `🚨 **Front-door flags this week**` line at top of each community's TL;DR bullets — count + linked categories. Even if zero, render "No front-door flags this week. ✅".
+
+## Docs section (standing, weekly)
+
+Every report carries a `### 📚 Docs` section per community, between 💢 Pain and ✅ Resolved. It is the weekly docs-debt window — three labeled item types, plain bullets (no toggles):
+
+- **Drift** — code moved, docs didn't (wrong wrapper in a quickstart, page documenting a broken flow).
+- **Gap** — a needed guide that doesn't exist (persistence per adapter, self-host AgentRunner, history retrieval).
+- **Links/bot** — dead doc URLs, support-bot citing 404s or stale answers.
+
+Rules:
+- A docs item that **blocks** a new/upgrading user is ALSO a front-door flag — list it in both, labeled "(blocking — also flagged front-door)" in the Docs section. Non-blocking docs items live only here, never in front-door.
+- Add a `📚 **Docs watch** — N items (M blocking): <short list>` line to the TL;DR, directly under the front-door line.
+- Always render the section; if empty, "No docs items this week."
 
 ## Reporter formatting
 
