@@ -72,7 +72,13 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 11. **Draft Slack TL;DR** via `slack-tldr` skill. Save to `/tmp/slack-msg.json`. Show Nathan to review before he curls.
 
-12. **Remind Nathan to record a Loom walkthrough — every report, no exceptions.** When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
+12. **Verify every link before publishing.** Wrong links destroy trust in the report. Checks:
+   - Every Discord thread URL: confirm the thread ID came from this run's `list_forum_threads`/pull output (never from memory or a prior report) and that the anchor text matches the thread's actual title/topic.
+   - Every issue/PR number: the linked number must match the title quoted next to it.
+   - External links (YouTube/Loom repro videos, docs): only use URLs that appear verbatim in the source thread/issue — never reconstruct from memory. Link repro videos explicitly; don't write "video on YouTube" without the URL.
+   - Anchor text must name what the reader will land on ("Dojo jumpy scroll" → the jumpy-scroll thread, not an adjacent thread).
+
+13. **Remind Nathan to record a Loom walkthrough — every report, no exceptions.** When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
 
 ## Page structure
 
