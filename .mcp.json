@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "discord": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./apps/discord-mcp/dist/index.js"]
+    }
+  }
+}

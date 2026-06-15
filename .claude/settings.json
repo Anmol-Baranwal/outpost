@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__discord__list_servers",
+      "mcp__discord__get_channels",
+      "mcp__discord__list_forum_threads",
+      "mcp__discord__read_messages",
+      "mcp__discord__read_thread_messages",
+      "mcp__plugin_Notion_notion__notion-search",
+      "mcp__plugin_Notion_notion__notion-fetch",
+      "mcp__plugin_Notion_notion__notion-create-pages",
+      "mcp__plugin_Notion_notion__notion-update-page",
+      "mcp__plugin_Notion_notion__notion-move-pages",
+      "Bash(gh issue list *)",
+      "Bash(gh issue view *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr diff *)",
+      "Bash(gh api users/*)",
+      "Bash(gh api repos/*)",
+      "Bash(gh repo view *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(grep *)",
+      "Bash(find . -*)"
+    ]
+  }
+}
