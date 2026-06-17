@@ -7,7 +7,7 @@ description: P0 classification rules for community reports. Five categories that
 
 **Front-door** = anything that blocks a new user from getting CopilotKit running, blocks an existing user from a core integration surface, or breaks the auth/login flow.
 
-**1 report = P0 = headline.** Single report enough. Skip the demand/pain threshold rule. Surface in the dedicated `### 🚨 Front-door flags` section under the affected community, never demoted to Early signals.
+**1 report = P0 = headline.** Single report enough. Skip the demand/pain threshold rule. Front-door P0s + current-release outages feed the cross-community **🔝 Top issues of the week** (the report's lead) — never demoted to Early signals. The five categories below decide what's *eligible*; the **ranking rubric** decides the *order*.
 
 ## Five categories
 
@@ -71,6 +71,35 @@ CSRF / Authorization / license-verifier / token-flow bugs that block production 
 **Rich-repro badge.** When a report includes YouTube / Loom / screen recording, a public repro repo, or a working sandbox link, append `📹 **Rich repro**` to the entry and quote the media URL inline. Triage cost is low when repro is one click away.
 
 **Internal Slack reference.** If the team flagged the same issue in Slack, add `**Reported in Slack:** [<channel> thread](slack-url)` bullet. Signals engineering already has internal visibility.
+
+## Ranking the Top issues of the week
+
+The lead section is **ranked**, cross-community. Ranking is a **score, not a vote** — community (CK vs AG-UI) is NOT an axis. An AG-UI issue outranks a CopilotKit one only when it scores higher. Score each candidate on five axes, sum, sort descending. **Tie-break order:** Blast radius → still-open-before-resolved → Surface tier. (A still-broken issue edges a same-day-fixed one at a tie — it's the open wound.)
+
+| Axis | Measures | Scale |
+|---|---|---|
+| **Surface tier** | where in the funnel it sits | install/quickstart CLI **or** current-release outage = **5** · auth/security blocker = **4** · core feature broken = **3** · docs-landing = **3** · edge/config = **1** |
+| **Blast radius** | who actually hits it | default path / all users = **5** · large segment = **3** · narrow = **1** |
+| **Severity** | is there a workaround | fully broken, none = **3** · workaround exists = **2** · cosmetic = **1** |
+| **Exposure** | duration / how it shipped | still broken >1 month = **+2** · still broken on the current release = **+2** · shipped-broken but fixed same day = **+1** |
+| **Signal** | who's reporting | enterprise current-company **or** ≥2 distinct reporters = **+1–2** |
+
+**Fix status is a tag, not a demotion.** A fixed-same-day outage still headlines as news — it just carries the ✅; it doesn't drop in rank.
+
+### Measurable inputs (compute the score, don't guess)
+
+Each axis is backed by data the scoring step pulls — the rank must be defensible:
+
+- `gh issue view <n> --json reactionGroups,comments` → 👍 count + comment count → **Blast radius** proxy.
+- `gh issue view <n> --json labels` → maintainer-set severity/priority → **Severity**.
+- Fix-PR detection (orchestrator step 9) → fix status + whether it shipped → **Exposure** + the ✅ tag.
+- Discord distinct-reporter count + reactions → **Blast radius** / **Signal**.
+- `enrich-reporter` → enterprise current-company → **Signal**.
+- Issue `createdAt` vs now (and "broken since" from comments) → **Exposure**.
+
+### Output
+
+The scoring step returns a table — `candidate | surface | blast | severity | exposure | signal | TOTAL` — sorted. The top 3–5 become the Top issues. **Publish the rubric + this run's scores** in the report's bottom "📊 Top-issue ranking" child page so the order is auditable, not asserted.
 
 ## Rendering
 
