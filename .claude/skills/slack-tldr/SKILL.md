@@ -16,14 +16,14 @@ The Slack app posting this is named `CopilotKit Community Signal` — its name r
 
 📊 *Week of <Mon DD>-<DD>*
 
-• 🚨 Front-door flags: *<N>* (<category 1> · <category 2> · <category 3>)
+• 🔝 Top issues: *<N>* (<#1 short name> · <#2 short name> · …)
 • Community issues raised: *<N>* (<gh-count> GitHub · <discord-count> Discord)
 • Resolved: *<N>* ✅ (<short list of what got fixed>)
 • Top pain: *<short name>* — <N> reporters
 • Top demand: *<short name>* — <N> askers
 • Open fix PRs: *<N>* awaiting review
 • 🏢 Enterprise reporters: *<N>* this week (prior week: <M> — trend ↑/↓/→)
-• 🟠 Reddit Pulse: *<N threads>* — <one-phrase vibe> (<top-thread link>)
+• 🟠 Reddit Pulse (90-day): CopilotKit *<NN>/100* · AG-UI *<NN>/100* — <one-phrase vibe>
 
 Full report → <<notion-url>|<Mon DD>-<DD>>
 ```
@@ -31,16 +31,16 @@ Full report → <<notion-url>|<Mon DD>-<DD>>
 ## Rules
 
 - **Plain-English TL;DR line** leads — written for a non-engineer reader (marketing, leadership). Names the volume, the resolutions, and the headline themes. Don't pack metrics — bullets handle that.
-- **Front-door flags** appear first if any are active. Skip if zero.
+- **Top issues** lead the bullets — count + the ranked #1/#2 short names (these replaced the old "front-door flags" line; front-door breaks ARE the Top issues).
 - **Issues raised** = total combining GitHub + Discord. Don't separate Discord by channel.
 - **Resolved** = items in `### ✅ Resolved this week`, with a parenthetical short list.
 - **Top pain** = largest pain cluster's short name + distinct-reporter count.
 - **Top demand** = largest demand cluster's short name + distinct-asker count.
 - **Open fix PRs** = aggregate count from Fix PR detection.
 - **Enterprise reporters** = count this week + prior week + trend.
-- **Reddit Pulse** = thread count + one-phrase vibe + the top thread's permalink, from the report's 🟠 Reddit Pulse section. **Skip the line** if the reddit MCP was unconfigured ("source not configured") or it was a quiet week.
+- **Reddit Pulse** = the two per-community 0–100 Pulse Scores (CopilotKit + AG-UI, rolling 90-day) + a one-phrase combined vibe, from the report's 🟠 Reddit Pulse sections. **Skip the line** if the `composio` Reddit source was unconfigured ("source not configured"). Show only one side's score if the other had no posts.
 - **Full report link** uses Slack's `<url|label>` syntax with the label `<Mon DD>-<DD>` matching the Notion title.
-- **Emoji limited:** 📊 leads the week line, ✅ marks Resolved, 🚨 marks front-door, 🏢 marks enterprise, 🟠 marks Reddit Pulse. No other emoji.
+- **Emoji limited:** 📊 leads the week line, ✅ marks Resolved, 🔝 marks Top issues, 🏢 marks enterprise, 🟠 marks Reddit Pulse. No other emoji.
 
 ## Payload file
 
@@ -82,5 +82,5 @@ Don't post automatically. Always show the JSON to Nathan first, let him review a
 
 ## Cross-references
 
-- `weekly-report` — the orchestrator invokes this skill at step 11
+- `weekly-report` — the orchestrator invokes this skill at step 13
 - The Notion page URL comes from the create-pages return value
