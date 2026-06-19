@@ -4,6 +4,11 @@
       "type": "stdio",
       "command": "node",
       "args": ["./apps/discord-mcp/dist/index.js"]
+    },
+    "reddit": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "reddit-mcp-buddy"]
     }
   }
 }

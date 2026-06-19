@@ -23,6 +23,7 @@ The Slack app posting this is named `CopilotKit Community Signal` — its name r
 • Top demand: *<short name>* — <N> askers
 • Open fix PRs: *<N>* awaiting review
 • 🏢 Enterprise reporters: *<N>* this week (prior week: <M> — trend ↑/↓/→)
+• 🟠 Reddit Pulse: *<N threads>* — <one-phrase vibe> (<top-thread link>)
 
 Full report → <<notion-url>|<Mon DD>-<DD>>
 ```
@@ -37,8 +38,9 @@ Full report → <<notion-url>|<Mon DD>-<DD>>
 - **Top demand** = largest demand cluster's short name + distinct-asker count.
 - **Open fix PRs** = aggregate count from Fix PR detection.
 - **Enterprise reporters** = count this week + prior week + trend.
+- **Reddit Pulse** = thread count + one-phrase vibe + the top thread's permalink, from the report's 🟠 Reddit Pulse section. **Skip the line** if the reddit MCP was unconfigured ("source not configured") or it was a quiet week.
 - **Full report link** uses Slack's `<url|label>` syntax with the label `<Mon DD>-<DD>` matching the Notion title.
-- **Emoji limited:** 📊 leads the week line, ✅ marks Resolved, 🚨 marks front-door, 🏢 marks enterprise. No other emoji.
+- **Emoji limited:** 📊 leads the week line, ✅ marks Resolved, 🚨 marks front-door, 🏢 marks enterprise, 🟠 marks Reddit Pulse. No other emoji.
 
 ## Payload file
 

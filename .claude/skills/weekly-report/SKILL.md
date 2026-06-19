@@ -45,26 +45,33 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 5. **Spawn Subagent D — Enrich reporters** (see `enrich-reporter` skill). For every GitHub author across both repos + the prior-week roster. Returns: company affiliation table + enterprise list.
 
-6. **Cluster into Demand + Pain.** Per community. Apply threshold rule:
+6. **Spawn Subagent E — Reddit Pulse pull** (cross-community; uses the `reddit` MCP = **`reddit-mcp-buddy`**, anonymous mode — no key, see Prerequisites). Window = past 7 days. Tools: `search_reddit`, `browse_subreddit`, `get_post_details`, `user_analysis`.
+   - For each term in `REDDIT_BRAND_TERMS` (default `CopilotKit`, `AG-UI`, `ag-ui`): `search_reddit(query, time="week", sort="new")` across all of Reddit. Dedupe across terms.
+   - For each subreddit in `REDDIT_WATCHLIST`: `search_reddit(query, subreddit=<sub>)` + a `browse_subreddit(<sub>, sort="new")` scan for relevant titles.
+   - For high-signal threads (notable score/comments, or clearly opinionated): `get_post_details(<id>)` and **read the top comments** — that's the sentiment.
+   - Classify 😀 positive / 😐 neutral / 😖 critical, flag competitor comparisons (LangGraph, Vercel AI SDK, assistant-ui, Vapi…). **Relevance filter:** `ag-ui` is ambiguous — keep only the CopilotKit/AG-UI project; drop unrelated matches (read to confirm).
+   Returns: `r/<sub> | [title](permalink) | score · comments | 😀/😐/😖 | one-line` + an overall-vibe sentence + a competitor-comparison note. If the `reddit` MCP is unavailable/unconfigured, return that so the section renders "source not configured this week."
+
+7. **Cluster into Demand + Pain.** Per community. Apply threshold rule:
    - 2+ distinct people this week, OR
    - 1+ this week AND verifiable prior reference (issue #, thread ID, prior-report URL).
    Singletons → Early signals.
    **Override:** front-door categories skip threshold (see `front-door-triage` skill). Front-door / P0 items don't just headline their community — they feed the cross-community **🔝 Top issues of the week** ranking (see below), led by the biggest front-door break.
 
-7. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
+8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
-8. **Detect resolutions.** Classify each in-window CLOSED issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`.
+9. **Detect resolutions.** Classify each in-window CLOSED issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`.
 
-9. **Fix-PR detection** for every issue mentioned (this week + carryover):
+10. **Fix-PR detection** for every issue mentioned (this week + carryover):
    ```
    gh pr list --repo <repo> --state all --search "fixes #<num> OR closes #<num>" --json number,title,state,url,isDraft,mergedAt
    ```
    Markers: `🛠️ Fix PR [#NNNN](url) OPEN` · `🛠️ Fix PR [#NNNN](url) MERGED <date>` · `🛠️ No fix PR yet.`
    Procedurally-closed PRs (branch-name violation etc.) don't count as competing fixes — read closing comment.
 
-10. **Score & rank the Top issues** (see the ranking rubric in `front-door-triage`). First **record the naive order** — what you'd get ranking the candidates by loudness alone (engagement: 👍 + comments, recency, reporter count) — so the comparison page can show the delta. Then **score each candidate on the five axes** (surface tier · blast radius · severity · exposure · signal), using measurable inputs — `gh issue view --json reactionGroups,comments,labels`, fix-PR status from step 9, Discord distinct-reporter counts, and the enrichment. Sum, sort descending; the top 3–5 are the Top issues, ranked. Keep BOTH the scored table and the naive order — they get published in the ranking + comparison child pages (step 11). Community (CK vs AG-UI) is never an axis.
+11. **Score & rank the Top issues** (see the ranking rubric in `front-door-triage`). First **record the naive order** — what you'd get ranking the candidates by loudness alone (engagement: 👍 + comments, recency, reporter count) — so the comparison page can show the delta. Then **score each candidate on the five axes** (surface tier · blast radius · severity · exposure · signal), using measurable inputs — `gh issue view --json reactionGroups,comments,labels`, fix-PR status from step 10, Discord distinct-reporter counts, and the enrichment. Sum, sort descending; the top 3–5 are the Top issues, ranked. Keep BOTH the scored table and the naive order — they get published in the ranking + comparison child pages (step 12). Community (CK vs AG-UI) is never an axis.
 
-11. **Build the Notion pages** via `mcp__plugin_Notion_notion__notion-create-pages`. Create the AG-UI sub-page FIRST (as a child of the main page), then the main CopilotKit page references it at top with a `<page url="…">` block. **Last, create two child pages** at the bottom of the main report (both children of the main page): **`📊 Top-issue ranking`** (the rubric + this week's scored table) and **`🔬 Ranking comparison — before vs after the algo`** (the naive-by-loudness order vs the scored order, with the delta + a "why it moved" note). Link both from a bottom line on the main page and the AG-UI sub-page. See "Page structure" + "Top-issue ranking child page" below.
+12. **Build the Notion pages** via `mcp__plugin_Notion_notion__notion-create-pages`. Create the AG-UI sub-page FIRST (as a child of the main page), then the main CopilotKit page references it at top with a `<page url="…">` block. **Last, create two child pages** at the bottom of the main report (both children of the main page): **`📊 Top-issue ranking`** (the rubric + this week's scored table) and **`🔬 Ranking comparison — before vs after the algo`** (the naive-by-loudness order vs the scored order, with the delta + a "why it moved" note). Link both from a bottom line on the main page and the AG-UI sub-page. See "Page structure" + "Top-issue ranking child page" below.
 
    **Notion tooling gotchas (learned the hard way):**
    - `notion-create-pages` interprets `\n` / `\t` escapes correctly — author content with them.
@@ -72,15 +79,15 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - `notion-update-page` `update_content` (search/replace via `content_updates`) **does** interpret `\n` — handy for surgical inline edits and small block inserts without rewriting the whole page.
    - `replace_content` deletes any child page not referenced in `new_str`. To preserve the AG-UI sub-page, include its `<page url="…">` block in the new content (don't rely on `allow_deleting_content`).
 
-12. **Draft Slack TL;DR** via `slack-tldr` skill. Save to `/tmp/slack-msg.json`. Show Nathan to review before he curls.
+13. **Draft Slack TL;DR** via `slack-tldr` skill. Save to `/tmp/slack-msg.json`. Show Nathan to review before he curls.
 
-13. **Verify every link before publishing.** Wrong links destroy trust in the report. Checks:
+14. **Verify every link before publishing.** Wrong links destroy trust in the report. Checks:
    - Every Discord thread URL: confirm the thread ID came from this run's `list_forum_threads`/pull output (never from memory or a prior report) and that the anchor text matches the thread's actual title/topic.
    - Every issue/PR number: the linked number must match the title quoted next to it.
    - External links (YouTube/Loom repro videos, docs): only use URLs that appear verbatim in the source thread/issue — never reconstruct from memory. Link repro videos explicitly; don't write "video on YouTube" without the URL.
    - Anchor text must name what the reader will land on ("Dojo jumpy scroll" → the jumpy-scroll thread, not an adjacent thread).
 
-14. **Remind Nathan to record a Loom walkthrough — every report, no exceptions.** When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
+15. **Remind Nathan to record a Loom walkthrough — every report, no exceptions.** When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
 
 ## Page structure
 
@@ -110,6 +117,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
    ### Companies building on us this week       ← CURRENT-employer only (ex-employers / notable individuals don't count); per-company bullets
    ### Enterprise-offering reactions            ← reaction to Slack / Teams / threads-persistence; state the silence explicitly when there's none
+
+## 🟠 Reddit Pulse                              ← cross-community, MAIN page only (never the AG-UI sub-page). Vibe line + notable threads (<details>) + competitor comparisons. Source-gated: "source not configured" if the reddit MCP is absent. (see "Reddit Pulse section" below)
 
 ## 🔄 Patterns — the takeaways                  ← ELEVATED + always-open, cross-community. The compressed read — what to act on. (Patterns are the most important part — leadership reads this first.)
 ## Gaps & follow-ups                            ← cross-community checklist
@@ -210,6 +219,21 @@ Rules:
 - A docs item that **blocks** a new/upgrading user is ALSO a Top issue — list it in both, labeled "(blocking — also a Top issue)" in the Docs section. Non-blocking docs items live only here.
 - Add a `📚 **Docs watch** — N items (M blocking): <short list>` line at the top of the CopilotKit TL;DR bullets. A blocking docs item is also a Top issue — list it in both.
 - Always render the section; if empty, "No docs items this week."
+
+## Reddit Pulse section (cross-community)
+
+A `## 🟠 Reddit Pulse` section on the **main page only** (never the AG-UI sub-page — it reads all of Reddit, not one community), below 🏢 Enterprise, above 🔄 Patterns. The outside-the-walls read: what people say about CopilotKit / AG-UI on Reddit, good and bad.
+
+- **Vibe line (always open):** one sentence — overall sentiment + volume.
+- **Notable threads (`<details>`-wrapped):** oldest → newest, `**YYYY-MM-DD** · r/<sub> · [title](permalink) · score N · C comments · 😀/😐/😖 · one-line takeaway.`
+- **Competitor comparisons:** flag any thread comparing us to alternatives (LangGraph, Vercel AI SDK, assistant-ui, Vapi…) — highest signal for product/marketing.
+- **TL;DR line:** add `🟠 **Reddit Pulse** — <N threads · sentiment> · <top-thread link>` to the main TL;DR, below the 📚 Docs watch line.
+
+Rules:
+- **Every thread is a hyperlink** to its Reddit permalink. **Sentiment comes from reading the post + top comments** (`get_post_details`), not the title.
+- **Relevance over volume:** drop ambiguous `ag-ui` matches that aren't the project. A quiet week is fine — render "Quiet on Reddit this week."
+- **Source-gated:** if the `reddit` MCP isn't configured, render "🟠 Reddit Pulse — source not configured this week." and move on — never block the report on it.
+- **Data source:** `reddit-mcp-buddy` (anonymous mode, no key). Tools: `search_reddit`, `browse_subreddit`, `get_post_details`, `user_analysis`.
 
 ## Enterprise section (current-employer rule)
 
