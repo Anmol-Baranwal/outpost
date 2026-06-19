@@ -60,6 +60,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
      - `REDDIT_RETRIEVE_POST_COMMENTS` — for high-signal / debatable threads; pass the **bare base36 article id** (no `t3_`). Top comments are the sentiment.
    - **Relevance filter:** keep only genuine CopilotKit/AG-UI posts. Drop false positives (e.g. the `jscpd` tool listing CopilotKit in a scanned-repo list) and ambiguous `ag-ui` matches — but still record their ids in the ledger.
    - **Classify per post** 👍 good / 🙂 mixed-positive / 😐 neutral / 🫤 mixed-negative / 👎 pain, from post + top comments. Flag competitor comparisons (LangGraph, Vercel AI SDK, assistant-ui, Vapi…) and recurring comment themes (e.g. "how is AG-UI different from Google A2UI?").
+   - **For scoring (v2), fetch each distinct subreddit's recent `new` feed** (`REDDIT_RETRIEVE_REDDIT_POST` sort=new, ~30) → median of `(upvotes + 2·comments)` = the room baseline `M`. Needed for the reach weight + reception ratio (see "Reddit Pulse scoring algorithm").
    - **Split by community subject** (see "Reddit Pulse section") and **score each page 0–100** (see "Reddit Pulse scoring algorithm").
    Returns, per community: scored post list (`👍/🙂/😐/🫤/👎 · [title](permalink) · r/<sub> · ⬆score 💬comments · one-line`), the computed Pulse Score + band, an overall-vibe sentence, competitor + recurring-theme notes, and the list of ids to add to the ledger.
 
@@ -271,12 +272,17 @@ Rules:
 
 Each section's 0–100 score is **calculated, not asserted**, and published on a standing public child page (`🟠 Reddit Pulse — scoring algorithm`) linked from each section. Community is never an input — each community is scored on its own posts.
 
-- **Sentiment per post** `s` (from post + top comments): `+1` good · `+0.5` mixed-positive · `0` neutral · `−0.5` mixed-negative · `−1` pain.
-- **Engagement weight** `w = 1 + ln(1 + upvotes + comments)` (louder threads count more; `ln` keeps a viral thread from drowning the rest).
-- **Score** `= clamp( 50 + 50 · Σ(sᵢ·wᵢ) / Σ(wᵢ) , 0 .. 100 )` (50 = neutral baseline).
-- **Bands:** 🟢 75–100 strongly positive · 🟡 50–74 net positive/mixed · 🔴 0–49 net negative.
+**v2 (2026-06-19) — reach × reception.** v1 weighted by the post's own engagement only, so a win in a tiny sub outweighed a flop in a big one. v2 weights by the *room* and judges each post against that room's own norm:
 
-When the algorithm itself changes, update the child page (don't recreate it) AND this section — per the meta-rule.
+- **Sentiment per post** `s` (from post + top comments): `+1` good · `+0.5` mixed-positive · `0` neutral · `−0.5` mixed-negative · `−1` pain.
+- **Room baseline** `M` = median of `(upvotes + 2·comments)` over the subreddit's recent **`new`** posts (NOT `hot` — hot oversamples winners). Fetch ~30 per distinct sub. `M` is the room's activity proxy (quiet "<10 posts/day" sub → low `M`).
+- **Reception** `ρ = (upvotes + 2·comments) / M`. `ρ ≥ 1` landed; `ρ < 0.3` flopped for that room.
+- **Effective sentiment** `s'`: positive `s` → `s' = s · clamp(ρ, 0.3, 1.2)`; **big-room flop** (`M ≥ 10` and `ρ < 0.3` and `s > 0`) → `s' = −0.25` (saw it, shrugged); `s = 0` → `0`; negative `s` → unchanged.
+- **Reach weight** `W = log10(1 + M)` (quiet rooms barely move the score).
+- **Score** `= clamp( 50 + 50 · Σ(s'ᵢ·Wᵢ) / Σ(Wᵢ) , 0 .. 100 )` (50 = neutral baseline).
+- **Bands:** 🟢 75–100 · 🟡 50–74 · 🔴 0–49. Tunable knobs: `M ≥ 10` active-room threshold, `ρ < 0.3` flop line, `0.3–1.2` clamp.
+
+When the algorithm changes, update the child page (don't recreate it) AND this section — per the meta-rule.
 
 ## Enterprise section (current-employer rule)
 
