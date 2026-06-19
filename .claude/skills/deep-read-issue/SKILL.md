@@ -49,6 +49,7 @@ Capture per issue:
 - **Ignore the support bot for status.** `copilotkit-support-bot` / getorca "Recommended Solutions" are auto-generated guesses, NOT maintainer status or confirmation. Note bot advice only if a human endorsed it.
 - Whether the *reporter* confirmed the fix (vs a maintainer closing speculatively).
 - Cross-references (Discord threads, related issues, sibling-repo dup).
+- **TRUE COMMUNITY (by subject, not repo).** Decide whether the issue is really a CopilotKit or an AG-UI problem from *what is actually broken*, not which repo it was filed in. **Trigger:** an `ag-ui` issue whose subject/repro is a **CopilotKit** bug (it says CopilotKit chat/runtime/component breaks, or the fix shipped in a CopilotKit release) is **MIS-FILED → attribute to CopilotKit** (and the reverse). Output `COMMUNITY: CK | AG-UI` + `MIS-FILED: yes/no (filed in <repo>, true owner <product>, because <broken artifact>)`. **Caveat:** ownership of the broken *tool* wins over mere mentions — `create-ag-ui-app` failing is AG-UI's even though it scaffolds CopilotKit. Flag every mis-filed issue so the orchestrator lists it on the right page only. (Precedent the agent previously MISSED: `ag-ui#1891` "Illegal invocation" — an `HttpAgent` bug that breaks CopilotKit chat, fixed in CopilotKit 1.60.1 → it's CopilotKit's, not AG-UI's.)
 
 Numbers: <list>
 
@@ -74,6 +75,7 @@ For each pair flagged "possibly same root cause" AND proactively for any runtime
 - Search the sibling repo: gh search issues "<error string or symptom>" --repo <other-repo> --state all
 - Quote the strongest evidence (stack trace, function name, error string).
 - Verdict: same bug / different bug / one symptom of the other. If same bug across repos, note BOTH issue numbers and their states (one may be fixed while the other dangles).
+- **Attribution verdict (always):** name the single TRUE community for the bug (by what's broken). When the same bug is filed in both repos, it counts ONCE, on the owning product's page — don't list it as both. A mis-filed issue (ag-ui issue that's a CopilotKit bug, or vice versa) is reported on the true owner's page only.
 
 ## D. Hidden second bugs
 
@@ -82,7 +84,7 @@ Any issue body/comment burying a SECOND, larger bug — flag it, note whether an
 ## Output
 
 Structured markdown:
-- ## A. Issue deep reads — one per issue, LEAD each with the `STATUS AS OF <today>:` line, then maintainer-status quote, repro, refs.
+- ## A. Issue deep reads — one per issue, LEAD each with the `STATUS AS OF <today>:` line + the `COMMUNITY: CK|AG-UI (MIS-FILED?)` line, then maintainer-status quote, repro, refs.
 - ## B. PR deep reads — one per PR; state + reviewDecision + who approved (association); comparison table when 2+ target one issue.
 - ## C. Cross-reference + cross-repo verdicts — evidence + both states.
 - ## D. New facts the orchestrator didn't have — status changes, linked PRs, maintainer confirmations the body-only / Discord-only view would have missed.
@@ -115,3 +117,4 @@ When a fix PR was closed for a non-technical reason (branch-name violation, lint
 - [ ] Maintainer status quoted with author + date; support-bot text not mistaken for status.
 - [ ] PR approvals checked for authorAssociation (drive-by NONE ≠ maintainer sign-off); latest reviewDecision used.
 - [ ] Runtime/browser/protocol bugs checked for a sibling-repo duplicate.
+- [ ] Every issue has a `COMMUNITY` verdict by subject; every mis-filed issue (ag-ui issue that's a CopilotKit bug, or vice versa — e.g. it names the other product's chat/runtime/component as what broke, or the fix shipped in the other product's release) flagged `MIS-FILED` so it lands on the true owner's page only. (The miss that created this rule: `ag-ui#1891` not flagged as CopilotKit's.)
