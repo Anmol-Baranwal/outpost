@@ -54,6 +54,7 @@ The skills assume these MCP servers + CLI tools are available:
 
 - [`mcp-discord`](https://github.com/NathanTarbert/mcp-discord) — Discord MCP server with the forum-reader tools (`list_forum_threads`, `read_thread_messages`). Install per the repo README and configure `DISCORD_TOKEN` in your environment.
 - `gh` CLI authenticated with read access to `CopilotKit/CopilotKit` + `ag-ui-protocol/ag-ui`.
+- [`reddit-mcp-buddy`](https://github.com/karanb192/reddit-mcp-buddy) — Reddit MCP for the 🟠 Reddit Pulse section, registered in `.mcp.json` as `reddit` (`npx -y reddit-mcp-buddy`). Runs in **anonymous mode** (official Reddit public API, no key, no app approval, ~10 req/min) — enough for a weekly sweep; add a Reddit script-app `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` later for 60 req/min, no config change. Optional — if absent, Reddit Pulse renders "source not configured". Scope: `REDDIT_BRAND_TERMS` (default `CopilotKit,AG-UI,ag-ui`) + `REDDIT_WATCHLIST` (default `LocalLLaMA,LangChain,AI_Agents,nextjs,SaaS,LLMDevs`) in the repo-root `.env`.
 - Notion MCP server (`plugin_Notion_notion`) authenticated against the CopilotKit workspace.
 - Slack webhook URL (`SLACK_WEBHOOK_URL_1` or similar) set in `.claude/settings.local.json` `env` block for posting the TL;DR.
 
