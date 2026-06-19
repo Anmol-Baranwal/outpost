@@ -5,10 +5,9 @@
       "command": "node",
       "args": ["./apps/discord-mcp/dist/index.js"]
     },
-    "reddit": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "reddit-mcp-buddy"]
+    "composio": {
+      "type": "http",
+      "url": "https://connect.composio.dev/mcp"
     }
   }
 }

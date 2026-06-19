@@ -1,0 +1,25 @@
+{
+  "_comment": "Reddit Pulse dedup ledger. Each weekly run looks back 90 days but skips any post id already listed here, so a thread is reported once. Add the run's surfaced + noise ids under a dated entry. Prune ids whose created date is older than 90 days from today (they can never reappear in the window anyway).",
+  "runs": [
+    {
+      "run_date": "2026-06-19",
+      "window": "2026-03-21..2026-06-19",
+      "seen_ids": [
+        "1u9lba5",
+        "1u8xx5e",
+        "1u2vu1g",
+        "1u1w2en",
+        "1u1ei2m",
+        "1u1bvk9",
+        "1u0guyz",
+        "1u02dhl",
+        "1txmvbl",
+        "1tx3nzn",
+        "1tc5bqm",
+        "1tc5dwb",
+        "1t5gus6",
+        "1t5fvvo"
+      ]
+    }
+  ]
+}
