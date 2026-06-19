@@ -223,6 +223,8 @@ What goes in it (per leadership):
 - **A CopilotKit-only issue NEVER appears on the AG-UI page.** (e.g. `#5533` agent-naming, `#5535` auth-header stay on the main page only.)
 - Don't double-list an AG-UI Top issue in that page's Demand/Pain — elevate it to Top issues, leave the detail there (same as the main page).
 
+**Community = the issue's subject, not the repo it's filed in.** A CopilotKit bug filed in the `ag-ui` repo (it targets/breaks CopilotKit) is a **CopilotKit** issue — count it on the CopilotKit side, never AG-UI, even though it was submitted in the wrong community. (And the reverse.) Precedent: `ag-ui#1891` "Illegal invocation" was filed in ag-ui but is a CopilotKit `HttpAgent` bug fixed in CopilotKit 1.60.1 → counted as CK, removed from AG-UI. **But ownership of the broken *tool* still decides it:** `create-ag-ui-app` failing is AG-UI's even though it scaffolds CopilotKit — the broken artifact is AG-UI's. Judge by *what is actually broken*, not which names are mentioned. This attribution applies everywhere (Top issues, clustering, enterprise counts, resolutions), not just Top issues.
+
 ## Top-issue ranking child page (public algo)
 
 Every report ends with a child page — `📊 Top-issue ranking` — created as a child of the main page and linked from the bottom of both pages. It makes the ranking **auditable**.
