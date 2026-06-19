@@ -19,7 +19,7 @@ A new Notion page under **Community Signals** parent (`3673aa38-1852-80bc-a71f-d
 Weekly Community Signal — <Mon DD>-<DD>, <YYYY>
 ```
 
-The main page is the **CopilotKit** report. It opens with the `## 📦 CopilotKit` header + a link to the AG-UI companion sub-page, then **leads the body with the cross-community `## 🔝 Top issues of the week`** (ranked), then the CopilotKit community sections, then the cross-community 🏢 Enterprise, 🟠 Reddit Pulse — CopilotKit, and 🔄 Patterns sections. **AG-UI always lives on its own sub-page**, created as a child of the main page and linked at the top (via a `<page url="…">` block). The AG-UI sub-page holds AG-UI's per-community detail, including its own 🟠 Reddit Pulse — AG-UI section; the headline ranking and the cross-community takeaways are unified on the main page.
+The main page is the **CopilotKit** report. It opens with the `## 📦 CopilotKit` header + a link to the AG-UI companion sub-page, then **leads the body with the cross-community `## 🔝 Top issues of the week`** (ranked), then the CopilotKit community sections, then the cross-community 🏢 Enterprise, 🟠 Reddit Pulse — CopilotKit, and 🔄 Patterns sections. **AG-UI always lives on its own sub-page**, created as a child of the main page and linked at the top (via a `<page url="…">` block). The AG-UI sub-page holds AG-UI's per-community detail — including its **own** `## 🔝 Top issues of the week — AG-UI` (AG-UI-scoped) and its own 🟠 Reddit Pulse — AG-UI section. The main page's Top issues are cross-community (and may include AG-UI front-door breaks); the cross-community Patterns takeaways stay on the main page.
 
 Covering the **most recent complete Friday→Friday week** (Friday end-date inclusive) for Discord + GitHub. (Reddit Pulse uses a rolling 90-day window — see step 6.) State the window before pulling data.
 
@@ -156,7 +156,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔷 AG-UI                                     ← community header (distinct 🔷 icon) at the very top of every AG-UI page
 *↑ Companion report — the CopilotKit half of this week is the main page:*   ← italic nav label (mirrors the main page's companion link)
 <page url="…main report…">CopilotKit main report title</page>             ← companion link BACK to the main page (every AG-UI page has one)
-   <callout>                                    ← note: this week's ranked Top issues are unified on the main page; list which of them are AG-UI's + link back
+## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
 ---
 
    ### 💢 Pain                                 ← AG-UI community body (NO `## TL;DR` wrapper)
@@ -180,7 +180,7 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 
 **Page split is mandatory, not conditional.** AG-UI always gets its own sub-page (even when thin); the main page is always the CopilotKit report. 🏢 Enterprise, 🔝 Top issues, and 🔄 Patterns — the takeaways are cross-community on the main page. 🟠 Reddit Pulse is split per community (each page scores its own posts). Gaps / Methodology are split per page; AG-UI keeps a short AG-UI-scoped Patterns that points back to the main takeaways.
 
-**Order on the main page:** `## 📦 CopilotKit` header + companion link **first**, then `## 🔝 Top issues of the week`, then the CopilotKit community body. (There is no `## TL;DR` heading — that wrapper was removed; Demand/Pain/Docs/Resolved/Pulse/ops sit directly under Top issues. Front-door breaks are the Top issues, not a separate TL;DR line.) The AG-UI sub-page opens with its `## 🔷 AG-UI` header + callout (no Top-issues section of its own — unified on the main page).
+**Order on the main page:** `## 📦 CopilotKit` header + companion link **first**, then `## 🔝 Top issues of the week`, then the CopilotKit community body. (There is no `## TL;DR` heading — that wrapper was removed; Demand/Pain/Docs/Resolved/Pulse/ops sit directly under Top issues. Front-door breaks are the Top issues, not a separate TL;DR line.) The AG-UI sub-page opens with its `## 🔷 AG-UI` header + companion link, then its **own** `## 🔝 Top issues of the week — AG-UI`.
 
 **Sub-page naming.** Title the AG-UI sub-page `Weekly Community Signal — AG-UI — <Mon DD>-<DD>, <YYYY>`. Main page keeps `Weekly Community Signal — <Mon DD>-<DD>, <YYYY>`.
 
@@ -215,6 +215,13 @@ What goes in it (per leadership):
 - **Tag each `[CK]` / `[AG-UI]` / `[CK + AG-UI]`** and link the canonical issue.
 - **Front-page items get the CI-gap takeaway.** If something big shipped broken, ask "how did this ship?" — usually a missing smoke test.
 - The front-door P0 categories (`front-door-triage` skill) define what's *eligible*; the ranking decides what's *shown*.
+
+**Per-page scope (both pages carry a Top issues list):**
+- **Main (CopilotKit) page** — `## 🔝 Top issues of the week`, **cross-community**: ranks CK + AG-UI items together. An AG-UI front-door break can lead here.
+- **AG-UI sub-page** — `## 🔝 Top issues of the week — AG-UI`, **AG-UI-only**: its own ranked list of AG-UI issues.
+- **An AG-UI front-door issue appears on BOTH pages** (it's cross-community on the main list AND headline on the AG-UI list) — tag the shared ones "(also Top issue #N on the CopilotKit report)".
+- **A CopilotKit-only issue NEVER appears on the AG-UI page.** (e.g. `#5533` agent-naming, `#5535` auth-header stay on the main page only.)
+- Don't double-list an AG-UI Top issue in that page's Demand/Pain — elevate it to Top issues, leave the detail there (same as the main page).
 
 ## Top-issue ranking child page (public algo)
 
