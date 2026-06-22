@@ -9,38 +9,49 @@ Build a Slack-ready JSON payload from a completed weekly report.
 
 ## Locked format
 
-The Slack app posting this is named `CopilotKit Community Signal` — its name renders as the header. The message body does NOT include a title.
+The Slack app posting this is named `CopilotKit Community Signal` — its name renders as the header. The message body STILL opens with a bold `*Weekly Community Signal* 📣` title line (it reads cleaner and survives if the app name changes).
+
+**Top issues are nested per community** — a parent bullet per community, each top issue an indented sub-bullet. Sub-bullets use `◦` with 4 leading spaces (incoming webhooks can't do true Block-Kit nested lists, but this matches the look). Keep each top-issue label to ~2–4 words.
 
 ```
-*TL;DR — <one-line summary in plain English>*
+*Weekly Community Signal* 📣
+
+*TL;DR —* <one-line summary in plain English>
 
 📊 *Week of <Mon DD>-<DD>*
-
-• 🔝 Top issues: *<N>* (<#1 short name> · <#2 short name> · …)
+• 🔝 *Top issues — CopilotKit:*
+    ◦ <issue 1 short label>
+    ◦ <issue 2 short label>
+    ◦ …
+• 🔝 *Top issues — AG-UI:*
+    ◦ <issue 1 short label>
+    ◦ …
 • Community issues raised: *<N>* (<gh-count> GitHub · <discord-count> Discord)
 • Resolved: *<N>* ✅ (<short list of what got fixed>)
 • Top pain: *<short name>* — <N> reporters
-• Top demand: *<short name>* — <N> askers
 • Open fix PRs: *<N>* awaiting review
-• 🏢 Enterprise reporters: *<N>* this week (prior week: <M> — trend ↑/↓/→)
 • 🟠 Reddit Pulse (90-day): CopilotKit *<NN>/100* · AG-UI *<NN>/100* — <one-phrase vibe>
 
+🎥 Loom → <<loom-url>|Walkthrough>
 Full report → <<notion-url>|<Mon DD>-<DD>>
 ```
 
+This nested layout replaced the older flat single-line Top-issues bullet + the **Top demand** and **🏢 Enterprise reporters** lines (dropped — they cluttered the scan; the full report carries them). Re-add a dropped line only if a week genuinely needs it.
+
 ## Rules
 
-- **Plain-English TL;DR line** leads — written for a non-engineer reader (marketing, leadership). Names the volume, the resolutions, and the headline themes. Don't pack metrics — bullets handle that.
-- **Top issues** lead the bullets — count + the ranked #1/#2 short names (these replaced the old "front-door flags" line; front-door breaks ARE the Top issues).
+- **Title line** `*Weekly Community Signal* 📣` is the first line, then a blank line, then the TL;DR.
+- **Plain-English TL;DR line** leads — written for a non-engineer reader (marketing, leadership). One sentence: the headline takeaway. Don't pack metrics — bullets handle that. (The dash style is `*TL;DR —* <text>`, not `*TL;DR — <text>*`.)
+- **Top issues are nested per community** — `• 🔝 *Top issues — CopilotKit:*` then each top issue as a `    ◦` sub-bullet, then the same for AG-UI. Short labels (~2–4 words), mirroring that page's Top-issue cards. This replaced the flat one-line version.
 - **Issues raised** = total combining GitHub + Discord. Don't separate Discord by channel.
 - **Resolved** = items in `### ✅ Resolved this week`, with a parenthetical short list.
 - **Top pain** = largest pain cluster's short name + distinct-reporter count.
-- **Top demand** = largest demand cluster's short name + distinct-asker count.
 - **Open fix PRs** = aggregate count from Fix PR detection.
-- **Enterprise reporters** = count this week + prior week + trend.
 - **Reddit Pulse** = the two per-community 0–100 Pulse Scores (CopilotKit + AG-UI, rolling 90-day) + a one-phrase combined vibe, from the report's 🟠 Reddit Pulse sections. **Skip the line** if the `composio` Reddit source was unconfigured ("source not configured"). Show only one side's score if the other had no posts.
+- **Dropped lines:** **Top demand** and **🏢 Enterprise reporters** are no longer in the Slack TL;DR (they live in the full report). Don't add them back unless a week's signal really calls for it.
+- **Loom + Full report** are the last two lines (Loom above), both Slack `<url|label>` links. The Loom line is added once Nathan shares the recording (see `weekly-report` step 15); until then leave the `<LOOM_URL|Walkthrough>` placeholder.
 - **Full report link** uses Slack's `<url|label>` syntax with the label `<Mon DD>-<DD>` matching the Notion title.
-- **Emoji limited:** 📊 leads the week line, ✅ marks Resolved, 🔝 marks Top issues, 🏢 marks enterprise, 🟠 marks Reddit Pulse. No other emoji.
+- **Emoji limited:** 📣 on the title, 📊 leads the week line, 🔝 marks each Top-issues parent bullet, ✅ marks Resolved, 🟠 marks Reddit Pulse, 🎥 marks Loom. No other emoji.
 
 ## Payload file
 
@@ -64,15 +75,9 @@ curl -X POST -H "Content-Type: application/json" --data @/tmp/slack-msg.json "$S
 
 Webhook URL lives in Nathan's env. Don't include the URL inline; tell him to `export SLACK_WEBHOOK_URL=...` from the Slack app config first.
 
-## Dual-community variant
+## Dual-community handling
 
-When the weekly report covers both CopilotKit + AG-UI, the metrics view in Slack can either:
-
-**Option A (combined):** Single bullets with combined counts. Front-door flags show all communities' categories. Top pain / top demand pick the loudest across both.
-
-**Option B (split):** Two parallel bullet groups under separate `*CopilotKit:*` / `*AG-UI:*` sub-headers.
-
-Default to Option A unless one community's signal dwarfs the other (e.g. CK has 14 reports, AG-UI has 2 — combined makes AG-UI invisible, split surfaces both).
+Top issues are **always split per community** (the two `🔝 Top issues — …` parent bullets). The remaining metric bullets (Issues raised, Resolved, Top pain, Open fix PRs) are **combined** across both communities — pick the loudest for single-value lines like Top pain. Reddit Pulse shows both scores side by side. This keeps the message scannable while still surfacing each community's headline issues.
 
 ## Post-publish workflow
 
