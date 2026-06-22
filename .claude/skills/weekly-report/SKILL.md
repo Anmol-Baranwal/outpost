@@ -126,7 +126,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 💢 Pain
    ### 📚 Docs {toggle="true"}                  ← standing weekly section, COLLAPSIBLE (see "Docs section")
    ### ✅ Resolved this week                    ← XML table
-   ### 📊 Pulse                                 ← Volume + open fix PRs
+   ### 📊 Pulse                                 ← Volume + the month-over-month issues table + open fix PRs (see "Pulse section")
    ### Community ops
 ---
 
@@ -248,6 +248,16 @@ Rules:
 - **Every docs bullet carries a source link** (the issue/PR/Discord thread that raised it) — per the mandatory-source-link rule. A docs observation with no sourceable link doesn't get published; it's flagged for the review agent to source.
 - A docs item that **blocks** a new/upgrading user is ALSO a Top issue — list it in both, labeled "(blocking — also a Top issue)" in the Docs section. Non-blocking docs items live only here.
 - Always render the section; if empty, "No docs items this week."
+
+## Pulse section (volume + month-over-month)
+
+The `### 📊 Pulse` `<details>` block on **each** page carries, in order:
+1. This window's issue-filed count + a comment/👍 high note.
+2. **Month-over-month issues table — the SAME combined table on BOTH pages.** Counts of issues *filed* per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. The combined total appears on both the CopilotKit page and the AG-UI page (don't split it per community — both pages show the full cross-community table).
+   - Columns: `Community | Prev month (<Mon YYYY>) | This month (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold).
+   - **Label the current month month-to-date (MTD)** — the month isn't over, so the drop vs last month is partly calendar, not a real decline. Note the cutoff date.
+   - Counts come from `gh issue list --repo <repo> --state all --search "created:<month-start>..<month-end>" --json number --jq 'length'` for each repo × each month.
+3. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
 
 ## Reddit Pulse section (per community, 90-day, scored)
 
