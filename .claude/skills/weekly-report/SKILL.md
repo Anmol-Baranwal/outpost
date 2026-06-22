@@ -19,7 +19,7 @@ A new Notion page under **Community Signals** parent (`3673aa38-1852-80bc-a71f-d
 Weekly Community Signal — <Mon DD>-<DD>, <YYYY>
 ```
 
-The main page is the **CopilotKit** report. It opens with the `## 📦 CopilotKit` header + a link to the AG-UI companion sub-page, then **leads the body with the cross-community `## 🔝 Top issues of the week`** (ranked), then the CopilotKit community sections, then the cross-community 🏢 Enterprise, 🟠 Reddit Pulse — CopilotKit, and 🔄 Patterns sections. **AG-UI always lives on its own sub-page**, created as a child of the main page and linked at the top (via a `<page url="…">` block). The AG-UI sub-page holds AG-UI's per-community detail, including its own 🟠 Reddit Pulse — AG-UI section; the headline ranking and the cross-community takeaways are unified on the main page.
+The main page is the **CopilotKit** report. It opens with the `## 📦 CopilotKit` header + a link to the AG-UI companion sub-page, then **leads the body with the cross-community `## 🔝 Top issues of the week`** (ranked), then the CopilotKit community sections, then the cross-community 🏢 Enterprise, 🟠 Reddit Pulse — CopilotKit, and 🔄 Patterns sections. **AG-UI always lives on its own sub-page**, created as a child of the main page and linked at the top (via a `<page url="…">` block). The AG-UI sub-page holds AG-UI's per-community detail — including its **own** `## 🔝 Top issues of the week — AG-UI` (AG-UI-scoped) and its own 🟠 Reddit Pulse — AG-UI section. The main page's Top issues are cross-community (and may include AG-UI front-door breaks); the cross-community Patterns takeaways stay on the main page.
 
 Covering the **most recent complete Friday→Friday week** (Friday end-date inclusive) for Discord + GitHub. (Reddit Pulse uses a rolling 90-day window — see step 6.) State the window before pulling data.
 
@@ -60,6 +60,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
      - `REDDIT_RETRIEVE_POST_COMMENTS` — for high-signal / debatable threads; pass the **bare base36 article id** (no `t3_`). Top comments are the sentiment.
    - **Relevance filter:** keep only genuine CopilotKit/AG-UI posts. Drop false positives (e.g. the `jscpd` tool listing CopilotKit in a scanned-repo list) and ambiguous `ag-ui` matches — but still record their ids in the ledger.
    - **Classify per post** 👍 good / 🙂 mixed-positive / 😐 neutral / 🫤 mixed-negative / 👎 pain, from post + top comments. Flag competitor comparisons (LangGraph, Vercel AI SDK, assistant-ui, Vapi…) and recurring comment themes (e.g. "how is AG-UI different from Google A2UI?").
+   - **For scoring (v2), fetch each distinct subreddit's recent `new` feed** (`REDDIT_RETRIEVE_REDDIT_POST` sort=new, ~30) → median of `(upvotes + 2·comments)` = the room baseline `M`. Needed for the reach weight + reception ratio (see "Reddit Pulse scoring algorithm").
    - **Split by community subject** (see "Reddit Pulse section") and **score each page 0–100** (see "Reddit Pulse scoring algorithm").
    Returns, per community: scored post list (`👍/🙂/😐/🫤/👎 · [title](permalink) · r/<sub> · ⬆score 💬comments · one-line`), the computed Pulse Score + band, an overall-vibe sentence, competitor + recurring-theme notes, and the list of ids to add to the ledger.
 
@@ -101,7 +102,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - **Correctness.** For links that exist: every Discord thread URL's thread ID came from this run's pull (never memory/prior report) and the anchor matches the thread's title; every issue/PR number matches the title quoted next to it; every Reddit permalink is the one returned by Composio this run; external links (YouTube/Loom repro, docs) appear verbatim in the source — never reconstructed; anchor text names what the reader lands on.
    Returns: the flagged-item list + what was retrieved/removed. Re-run until zero linkless items remain.
 
-15. **Remind Nathan to record a Loom walkthrough — every report, no exceptions.** When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
+15. **Generate the Loom walkthrough script + remind Nathan to record it — every report, no exceptions.** As the LAST step, invoke the `loom-walkthrough` skill to produce the 5–7 min radio-show script from the finished report (plain English, sounds ad-libbed, includes the CEO-level Pain read) so recording is painless. Then remind him to record. When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
 
 16. **Update the ledger + the rules.** Write the run's surfaced + noise post ids into `docs/community-signal/reddit-pulse-seen.json`. And per the meta-rule at the top: if anything about the format changed this run, update these skill files in the same pass.
 
@@ -125,7 +126,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 💢 Pain
    ### 📚 Docs {toggle="true"}                  ← standing weekly section, COLLAPSIBLE (see "Docs section")
    ### ✅ Resolved this week                    ← XML table
-   ### 📊 Pulse                                 ← Volume + open fix PRs
+   ### 📊 Pulse                                 ← Volume + the month-over-month issues table + open fix PRs (see "Pulse section")
    ### Community ops
 ---
 
@@ -155,7 +156,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔷 AG-UI                                     ← community header (distinct 🔷 icon) at the very top of every AG-UI page
 *↑ Companion report — the CopilotKit half of this week is the main page:*   ← italic nav label (mirrors the main page's companion link)
 <page url="…main report…">CopilotKit main report title</page>             ← companion link BACK to the main page (every AG-UI page has one)
-   <callout>                                    ← note: this week's ranked Top issues are unified on the main page; list which of them are AG-UI's + link back
+## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
 ---
 
    ### 💢 Pain                                 ← AG-UI community body (NO `## TL;DR` wrapper)
@@ -179,7 +180,7 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 
 **Page split is mandatory, not conditional.** AG-UI always gets its own sub-page (even when thin); the main page is always the CopilotKit report. 🏢 Enterprise, 🔝 Top issues, and 🔄 Patterns — the takeaways are cross-community on the main page. 🟠 Reddit Pulse is split per community (each page scores its own posts). Gaps / Methodology are split per page; AG-UI keeps a short AG-UI-scoped Patterns that points back to the main takeaways.
 
-**Order on the main page:** `## 📦 CopilotKit` header + companion link **first**, then `## 🔝 Top issues of the week`, then the CopilotKit community body. (There is no `## TL;DR` heading — that wrapper was removed; Demand/Pain/Docs/Resolved/Pulse/ops sit directly under Top issues. Front-door breaks are the Top issues, not a separate TL;DR line.) The AG-UI sub-page opens with its `## 🔷 AG-UI` header + callout (no Top-issues section of its own — unified on the main page).
+**Order on the main page:** `## 📦 CopilotKit` header + companion link **first**, then `## 🔝 Top issues of the week`, then the CopilotKit community body. (There is no `## TL;DR` heading — that wrapper was removed; Demand/Pain/Docs/Resolved/Pulse/ops sit directly under Top issues. Front-door breaks are the Top issues, not a separate TL;DR line.) The AG-UI sub-page opens with its `## 🔷 AG-UI` header + companion link, then its **own** `## 🔝 Top issues of the week — AG-UI`.
 
 **Sub-page naming.** Title the AG-UI sub-page `Weekly Community Signal — AG-UI — <Mon DD>-<DD>, <YYYY>`. Main page keeps `Weekly Community Signal — <Mon DD>-<DD>, <YYYY>`.
 
@@ -215,6 +216,15 @@ What goes in it (per leadership):
 - **Front-page items get the CI-gap takeaway.** If something big shipped broken, ask "how did this ship?" — usually a missing smoke test.
 - The front-door P0 categories (`front-door-triage` skill) define what's *eligible*; the ranking decides what's *shown*.
 
+**Per-page scope (both pages carry a Top issues list):**
+- **Main (CopilotKit) page** — `## 🔝 Top issues of the week`, **cross-community**: ranks CK + AG-UI items together. An AG-UI front-door break can lead here.
+- **AG-UI sub-page** — `## 🔝 Top issues of the week — AG-UI`, **AG-UI-only**: its own ranked list of AG-UI issues.
+- **An AG-UI front-door issue appears on BOTH pages** (it's cross-community on the main list AND headline on the AG-UI list) — tag the shared ones "(also Top issue #N on the CopilotKit report)".
+- **A CopilotKit-only issue NEVER appears on the AG-UI page.** (e.g. `#5533` agent-naming, `#5535` auth-header stay on the main page only.)
+- Don't double-list an AG-UI Top issue in that page's Demand/Pain — elevate it to Top issues, leave the detail there (same as the main page).
+
+**Community = the issue's subject, not the repo it's filed in.** A CopilotKit bug filed in the `ag-ui` repo (it targets/breaks CopilotKit) is a **CopilotKit** issue — count it on the CopilotKit side, never AG-UI, even though it was submitted in the wrong community. (And the reverse.) Precedent: `ag-ui#1891` "Illegal invocation" was filed in ag-ui but is a CopilotKit `HttpAgent` bug fixed in CopilotKit 1.60.1 → counted as CK, removed from AG-UI. **But ownership of the broken *tool* still decides it:** `create-ag-ui-app` failing is AG-UI's even though it scaffolds CopilotKit — the broken artifact is AG-UI's. Judge by *what is actually broken*, not which names are mentioned. This attribution applies everywhere (Top issues, clustering, enterprise counts, resolutions), not just Top issues.
+
 ## Top-issue ranking child page (public algo)
 
 Every report ends with a child page — `📊 Top-issue ranking` — created as a child of the main page and linked from the bottom of both pages. It makes the ranking **auditable**.
@@ -238,6 +248,16 @@ Rules:
 - **Every docs bullet carries a source link** (the issue/PR/Discord thread that raised it) — per the mandatory-source-link rule. A docs observation with no sourceable link doesn't get published; it's flagged for the review agent to source.
 - A docs item that **blocks** a new/upgrading user is ALSO a Top issue — list it in both, labeled "(blocking — also a Top issue)" in the Docs section. Non-blocking docs items live only here.
 - Always render the section; if empty, "No docs items this week."
+
+## Pulse section (volume + month-over-month)
+
+The `### 📊 Pulse` `<details>` block on **each** page carries, in order:
+1. This window's issue-filed count + a comment/👍 high note.
+2. **Month-over-month issues table — the SAME combined table on BOTH pages.** Counts of issues *filed* per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. The combined total appears on both the CopilotKit page and the AG-UI page (don't split it per community — both pages show the full cross-community table).
+   - Columns: `Community | Prev month (<Mon YYYY>) | This month (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold).
+   - **Label the current month month-to-date (MTD)** — the month isn't over, so the drop vs last month is partly calendar, not a real decline. Note the cutoff date.
+   - Counts come from `gh issue list --repo <repo> --state all --search "created:<month-start>..<month-end>" --json number --jq 'length'` for each repo × each month.
+3. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
 
 ## Reddit Pulse section (per community, 90-day, scored)
 
@@ -271,12 +291,17 @@ Rules:
 
 Each section's 0–100 score is **calculated, not asserted**, and published on a standing public child page (`🟠 Reddit Pulse — scoring algorithm`) linked from each section. Community is never an input — each community is scored on its own posts.
 
-- **Sentiment per post** `s` (from post + top comments): `+1` good · `+0.5` mixed-positive · `0` neutral · `−0.5` mixed-negative · `−1` pain.
-- **Engagement weight** `w = 1 + ln(1 + upvotes + comments)` (louder threads count more; `ln` keeps a viral thread from drowning the rest).
-- **Score** `= clamp( 50 + 50 · Σ(sᵢ·wᵢ) / Σ(wᵢ) , 0 .. 100 )` (50 = neutral baseline).
-- **Bands:** 🟢 75–100 strongly positive · 🟡 50–74 net positive/mixed · 🔴 0–49 net negative.
+**v2 (2026-06-19) — reach × reception.** v1 weighted by the post's own engagement only, so a win in a tiny sub outweighed a flop in a big one. v2 weights by the *room* and judges each post against that room's own norm:
 
-When the algorithm itself changes, update the child page (don't recreate it) AND this section — per the meta-rule.
+- **Sentiment per post** `s` (from post + top comments): `+1` good · `+0.5` mixed-positive · `0` neutral · `−0.5` mixed-negative · `−1` pain.
+- **Room baseline** `M` = median of `(upvotes + 2·comments)` over the subreddit's recent **`new`** posts (NOT `hot` — hot oversamples winners). Fetch ~30 per distinct sub. `M` is the room's activity proxy (quiet "<10 posts/day" sub → low `M`).
+- **Reception** `ρ = (upvotes + 2·comments) / M`. `ρ ≥ 1` landed; `ρ < 0.3` flopped for that room.
+- **Effective sentiment** `s'`: positive `s` → `s' = s · clamp(ρ, 0.3, 1.2)`; **big-room flop** (`M ≥ 10` and `ρ < 0.3` and `s > 0`) → `s' = −0.25` (saw it, shrugged); `s = 0` → `0`; negative `s` → unchanged.
+- **Reach weight** `W = log10(1 + M)` (quiet rooms barely move the score).
+- **Score** `= clamp( 50 + 50 · Σ(s'ᵢ·Wᵢ) / Σ(Wᵢ) , 0 .. 100 )` (50 = neutral baseline).
+- **Bands:** 🟢 75–100 · 🟡 50–74 · 🔴 0–49. Tunable knobs: `M ≥ 10` active-room threshold, `ρ < 0.3` flop line, `0.3–1.2` clamp.
+
+When the algorithm changes, update the child page (don't recreate it) AND this section — per the meta-rule.
 
 ## Enterprise section (current-employer rule)
 
@@ -335,5 +360,6 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 - `deep-read-issue` — subagent flow for issue + fix PR deep read
 - `enrich-reporter` — subagent for GitHub author enterprise enrichment
 - `slack-tldr` — Slack JSON format + curl command
+- `loom-walkthrough` — the 5–7 min radio-show walkthrough script, generated after every report (last step)
 - `enterprise` — standalone enterprise view (run separately or invoked here)
 - `topic-search` — ad-hoc cross-repo topic lookup

@@ -1,15 +1,15 @@
 ---
 name: front-door-triage
-description: P0 classification rules for community reports. Five categories that auto-headline regardless of reporter count. Reference doc — invoked by weekly-report when classifying.
+description: P0 classification rules for community reports. Six categories that auto-headline regardless of reporter count. Reference doc — invoked by weekly-report when classifying.
 ---
 
 # Front-door triage
 
 **Front-door** = anything that blocks a new user from getting CopilotKit running, blocks an existing user from a core integration surface, or breaks the auth/login flow.
 
-**1 report = P0 = headline.** Single report enough. Skip the demand/pain threshold rule. Front-door P0s + current-release outages feed the cross-community **🔝 Top issues of the week** (the report's lead) — never demoted to Early signals. The five categories below decide what's *eligible*; the **ranking rubric** decides the *order*.
+**1 report = P0 = headline.** Single report enough. Skip the demand/pain threshold rule. Front-door P0s + current-release outages feed the cross-community **🔝 Top issues of the week** (the report's lead) — never demoted to Early signals. The six categories below decide what's *eligible*; the **ranking rubric** decides the *order*.
 
-## Five categories
+## Six categories
 
 ### 1. 🚨 Quickstart broken
 
@@ -60,6 +60,17 @@ CSRF / Authorization / license-verifier / token-flow bugs that block production 
 - Env-var handling for `COPILOT_CLOUD_PUBLIC_API_KEY` etc broken
 - CLI templates referenced in docs / examples that don't exist anymore
 
+### 6. 🚨 Severe crash / data-loss / error-handling break
+
+A bug that **crashes** the agent/runtime, **loses or corrupts data**, or **breaks the error-handling path itself** — Top-issue eligible even when it isn't a "front door." Don't park these in Pain. Strongest when the reporter supplies a solid repro. Includes:
+
+- Unhandled crash on a common runtime path — `TypeError` / null-deref in `runAgent` / `connectAgent` / event processing / subscribers.
+- **A crash *inside* the error path** — e.g. the `onRunError` / error-subscriber callback itself throws, masking the real failure. Doubly bad: the safety net fails and hides the root cause.
+- Data loss / corruption / silent message drops.
+- Severity is the trigger here, not surface — a clean, well-reproduced crash beats a vague front-door mention.
+
+Precedent: `ag-ui#1961` — null/undefined `messages` crashes 7 call sites including the `onRunErrorEvent` subscriber, thorough repro → elevated to an AG-UI Top issue instead of being parked in Pain (the agent had missed it).
+
 ## Classification rules
 
 **Don't infer "broken" from "unclear" or "missing".** A reporter asking *"where can I find sample code for X?"* is reporting that **a link needs to be updated** or a docs path needs to be published — not that something is broken. Quote the reporter's wording. If they didn't say something errored, threw, 404'd, crashed, or returned wrong output, don't write "broken". Use neutral language: *"the link points at X and needs to be updated to Y"*.
@@ -78,7 +89,7 @@ The lead section is **ranked**, cross-community. Ranking is a **score, not a vot
 
 | Axis | Measures | Scale |
 |---|---|---|
-| **Surface tier** | where in the funnel it sits | install/quickstart CLI **or** current-release outage = **5** · auth/security blocker = **4** · core feature broken = **3** · docs-landing = **3** · edge/config = **1** |
+| **Surface tier** | where in the funnel it sits | install/quickstart CLI **or** current-release outage = **5** · auth/security blocker **or** error-path break / data-loss crash = **4** · core feature broken **or** severe crash (cat. 6) = **3** · docs-landing = **3** · edge/config = **1** |
 | **Blast radius** | who actually hits it | default path / all users = **5** · large segment = **3** · narrow = **1** |
 | **Severity** | is there a workaround | fully broken, none = **3** · workaround exists = **2** · cosmetic = **1** |
 | **Exposure** | duration / how it shipped | still broken >1 month = **+2** · still broken on the current release = **+2** · shipped-broken but fixed same day = **+1** |
