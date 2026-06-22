@@ -102,7 +102,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - **Correctness.** For links that exist: every Discord thread URL's thread ID came from this run's pull (never memory/prior report) and the anchor matches the thread's title; every issue/PR number matches the title quoted next to it; every Reddit permalink is the one returned by Composio this run; external links (YouTube/Loom repro, docs) appear verbatim in the source — never reconstructed; anchor text names what the reader lands on.
    Returns: the flagged-item list + what was retrieved/removed. Re-run until zero linkless items remain.
 
-15. **Remind Nathan to record a Loom walkthrough — every report, no exceptions.** When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
+15. **Generate the Loom walkthrough script + remind Nathan to record it — every report, no exceptions.** As the LAST step, invoke the `loom-walkthrough` skill to produce the 5–7 min radio-show script from the finished report (plain English, sounds ad-libbed, includes the CEO-level Pain read) so recording is painless. Then remind him to record. When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
 
 16. **Update the ledger + the rules.** Write the run's surfaced + noise post ids into `docs/community-signal/reddit-pulse-seen.json`. And per the meta-rule at the top: if anything about the format changed this run, update these skill files in the same pass.
 
@@ -350,5 +350,6 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 - `deep-read-issue` — subagent flow for issue + fix PR deep read
 - `enrich-reporter` — subagent for GitHub author enterprise enrichment
 - `slack-tldr` — Slack JSON format + curl command
+- `loom-walkthrough` — the 5–7 min radio-show walkthrough script, generated after every report (last step)
 - `enterprise` — standalone enterprise view (run separately or invoked here)
 - `topic-search` — ad-hoc cross-repo topic lookup

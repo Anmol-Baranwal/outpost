@@ -13,6 +13,7 @@ This repo carries a runnable Claude Code skill suite under `.claude/skills/` for
 | "enterprise report" / "who at enterprise this week" / "enterprise status" | `enterprise` |
 | (invoked by `weekly-report`) | `front-door-triage` · `deep-read-issue` · `enrich-reporter` |
 | "draft Slack TL;DR" / "build the Slack message" | `slack-tldr` |
+| "loom script" / "record the loom" / "walkthrough script" (also auto-run as the last step of every report) | `loom-walkthrough` |
 
 ### Architecture — orchestrator + subagents
 
