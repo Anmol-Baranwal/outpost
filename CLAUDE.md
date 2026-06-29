@@ -11,7 +11,7 @@ This repo carries a runnable Claude Code skill suite under `.claude/skills/` for
 | "go" / "weekly report" / "community signals" / "run routine" | `weekly-report` (orchestrator — spawns subagents for Discord, GitHub, deep-read, enrichment) |
 | "find all reports about X in last N days" / "search across both communities" | `topic-search` |
 | "enterprise report" / "who at enterprise this week" / "enterprise status" | `enterprise` |
-| (invoked by `weekly-report`) | `front-door-triage` · `deep-read-issue` · `enrich-reporter` |
+| (invoked by `weekly-report`) | `front-door-triage` · `deep-read-issue` · `release-scan` · `enrich-reporter` |
 | "draft Slack TL;DR" / "build the Slack message" | `slack-tldr` |
 | "loom script" / "record the loom" / "walkthrough script" (also auto-run as the last step of every report) | `loom-walkthrough` |
 
@@ -23,6 +23,7 @@ This repo carries a runnable Claude Code skill suite under `.claude/skills/` for
 weekly-report (main)
 ├─→ Discord pull subagent      (per-channel substantive summaries)
 ├─→ GitHub pull subagent       (issue lists, both repos, tagged by community)
+├─→ release-scan subagent      (in-cycle release fix-map via tag diff + authoritative version)
 ├─→ deep-read-issue subagent   (file paths, reviewer concerns, hidden bugs)
 ├─→ enrich-reporter subagent   (gh api users/<login>, enterprise classify)
 └─→ Synthesize → Notion page + Slack JSON via slack-tldr
