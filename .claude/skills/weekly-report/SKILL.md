@@ -332,10 +332,16 @@ Each section's 0–100 score is **calculated, not asserted**, and published on a
 - **Sentiment per post** `s` (from post + top comments): `+1` good · `+0.5` mixed-positive · `0` neutral · `−0.5` mixed-negative · `−1` pain.
 - **Room baseline** `M` = median of `(upvotes + 2·comments)` over the subreddit's recent **`new`** posts (NOT `hot` — hot oversamples winners). Fetch ~30 per distinct sub. `M` is the room's activity proxy (quiet "<10 posts/day" sub → low `M`).
 - **Reception** `ρ = (upvotes + 2·comments) / M`. `ρ ≥ 1` landed; `ρ < 0.3` flopped for that room.
-- **Effective sentiment** `s'`: positive `s` → `s' = s · clamp(ρ, 0.3, 1.2)`; **big-room flop** (`M ≥ 10` and `ρ < 0.3` and `s > 0`) → `s' = −0.25` (saw it, shrugged); `s = 0` → `0`; negative `s` → unchanged.
+- **Effective sentiment** `s'`: positive `s` → `s' = s · clamp(ρ, 0.3, 1.2)`; **positive big-room flop** (`M ≥ 10` and `ρ < 0.3` and `s > 0`) → `s' = 0`; `s = 0` → `0`; negative `s` → unchanged.
 - **Reach weight** `W = log10(1 + M)` (quiet rooms barely move the score).
 - **Score** `= clamp( 50 + 50 · Σ(s'ᵢ·Wᵢ) / Σ(Wᵢ) , 0 .. 100 )` (50 = neutral baseline).
 - **Bands:** 🟢 75–100 · 🟡 50–74 · 🔴 0–49. Tunable knobs: `M ≥ 10` active-room threshold, `ρ < 0.3` flop line, `0.3–1.2` clamp.
+
+**v3 (2026-06-29) — community-reception fix.** Three corrections after v2 mislabeled a modestly-positive AG-UI week as 🔴 (a positive post read as the biggest *negative*, and a self-published critique scored twice):
+
+- **Subreddit eligibility — `r/u_*` user-profile feeds are NOT community rooms.** A self-post to your own profile has no community audience; it's self-promo, not reception. **Exclude profile-feed posts from scoring** (still record their ids in the ledger). Micro-subs are fine — they just carry tiny `W`.
+- **Cross-post merge happens BEFORE scoring.** Identical story across subs counts **once** (max engagement), scored in the most-real sub it appeared in. A duplicate can never double a sentiment. (This was always the rendering rule; v3 makes it a scoring rule too.)
+- **Positive big-room flop floors at neutral, never negative** (changed from v2's `s' = −0.25` to **`s' = 0`**). Under-performing a busy room removes a post's positive credit; it must not manufacture negativity. Otherwise a genuinely positive post in the highest-`W` room becomes the single biggest *negative* contributor — which is exactly the v2 bug. Negative `s` is still passed through unchanged.
 
 When the algorithm changes, update the child page (don't recreate it) AND this section — per the meta-rule.
 
