@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/lib/auth';
+import { requireSession, requireAdmin } from '@/lib/require-admin';
 import { prisma } from '@copilotkit/outpost/db';
 
 /**
@@ -12,10 +11,8 @@ export async function GET(
     _request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { error } = await requireSession();
+    if (error) return error;
 
     const { id } = await params;
 
@@ -43,10 +40,8 @@ export async function PATCH(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { error } = await requireAdmin();
+    if (error) return error;
 
     const { id } = await params;
     const article = await prisma.docArticle.findUnique({ where: { id } });
