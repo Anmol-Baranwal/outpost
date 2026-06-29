@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/lib/require-admin';
 
 /**
  * POST /api/integrations/hubspot/sync
@@ -12,10 +11,8 @@ import { authOptions } from '@/lib/auth';
  * returns a mock response matching the SyncReport shape.
  */
 export async function POST(request: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { error } = await requireAdmin();
+    if (error) return error;
 
     try {
         const body = await request.json().catch(() => ({}));
