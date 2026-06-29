@@ -11,4 +11,21 @@ export { getSentimentTrend } from './sentiment-trend.js';
 export type { TimestampedMessage, TrendOptions } from './sentiment-trend.js';
 export { config } from './config.js';
 export type { AIConfig } from './config.js';
+export {
+    FrontDoorCategory,
+    FRONT_DOOR_CATEGORIES,
+    isFrontDoorEligible,
+    scoreTopIssue,
+    rankTopIssues,
+} from './front-door.js';
+export type {
+    FrontDoorCategoryMeta,
+    SurfaceTier,
+    BlastRadius,
+    Severity,
+    ExposureFlags,
+    SignalInput,
+    TopIssueInput,
+    ScoredTopIssue,
+} from './front-door.js';
 export * from './types.js';
