@@ -31,6 +31,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - CopilotKit (`1122926057641742418`): `#💬｜general` (text `1182553320540352563`) + `#🤔｜support` (forum `1313616713647919218`)
    - AG-UI (`1379082175625953370`): `#🔧-building` (text `1379082271642095738`) + `#✈️-support` (forum `1384529894972592158`)
    For forums use `mcp__discord__list_forum_threads` → filter to window → `mcp__discord__read_thread_messages` per in-window thread. **Read every thread to the bottom.** Return: compact per-channel substantive-message summary, with reporter handles + 1-line summaries. Skip hiring / self-promo / greetings (count them internally, but they only surface in Community ops if they rise to actual news — see "Community ops"; otherwise that section is omitted).
+   **Capture resolution signal per thread:** a **green-check ✅** reaction, or an explicit accepted/"marked solved" / "issue has been resolved ✅" marker in the comments, means the answer was confirmed correct → the thread counts as **resolved** (feeds ✅ Resolved this week + the Discord-resolved count, see steps 9 and Pulse). Be strict — a reply, a 👍, or a ❤️ is NOT a resolution; only a green-check / accepted-answer marker is. Return each thread's status `RESOLVED (green-check)` / `OPEN`.
 
 3. **Spawn Subagent B — GitHub pull.** Both repos, same window:
    ```
@@ -74,7 +75,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
-9. **Detect resolutions.** Classify each in-window CLOSED issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`.
+9. **Detect resolutions.** Classify each in-window CLOSED GitHub issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`. **Discord threads with a green-check ✅ / accepted-answer marker (step 2) are ALSO resolutions** — classify them `DISCORD_ANSWERED` and list them in ✅ Resolved this week alongside the GitHub closures. (A Discord thread can be resolved even when a related GitHub issue stays open — they're different tickets; resolve only what the green-check actually covers.)
 
 9b. **Cross-check open issues against the release fix-map** (Subagent G). For every issue heading into Demand / Pain / Top issues / Early signals, check the fix-map. If it appears there, it shipped a fix we'd otherwise miss — **flag it inline, in place**: annotate `NOTE: appears fixed in vX.Y.Z (PR #MMMM) — verify` rather than silently reclassifying (a `Fixes #N` in a commit isn't always a complete fix; the human verifies before it moves to Resolved). Also stamp each `✅ Resolved this week` row with its `shipped in vX.Y.Z` from the fix-map.
 
@@ -285,9 +286,9 @@ This is the one section that disappears when empty; every other section keeps it
 ## Pulse section (volume + month-over-month)
 
 The `### 📊 Pulse` `<details>` block on **each** page carries, in order:
-1. This window's issue-filed count + a comment/👍 high note.
-2. **Month-over-month table — filed AND resolved — the SAME combined table on BOTH pages.** Counts per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. The combined total appears on both pages (don't split it per community — both pages show the full cross-community table).
-   - Columns: `Community | Filed prev (<Mon YYYY>) | Resolved prev (<Mon YYYY>) | Filed this (<Mon YYYY>, MTD) | Resolved this (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold).
+1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)." This is the live "what did we actually close" read; the monthly table below is the trend.
+2. **Month-over-month table — filed AND resolved (GitHub) — the SAME combined table on BOTH pages.** GitHub issue counts per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. (The monthly table is GitHub-only — a clean filed-vs-closed backlog metric; Discord green-check resolutions are counted in point 1 and listed in ✅ Resolved this week, not mixed into this table's denominator.) The combined total appears on both pages (don't split it per community — both pages show the full cross-community table).
+   - Columns: `Community | Filed prev (<Mon YYYY>) | Resolved/closed prev (<Mon YYYY>) | Filed this (<Mon YYYY>, MTD) | Resolved/closed this (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold). "Resolved/closed" = GitHub issues closed in that month.
    - **Label the current month month-to-date (MTD)** — the month isn't over, so any drop vs last month is partly calendar, not a real decline. Note the cutoff date. (Resolved-this-month is also MTD.)
    - **Filed** counts: `gh issue list --repo <repo> --state all --search "created:<month-start>..<month-end>" --json number --jq 'length'`.
    - **Resolved** counts (issues *closed* in that month): `gh issue list --repo <repo> --state closed --search "closed:<month-start>..<month-end>" --json number --jq 'length'`. Run for each repo × each month.
