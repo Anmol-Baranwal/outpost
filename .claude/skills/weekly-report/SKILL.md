@@ -64,6 +64,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - **Split by community subject** (see "Reddit Pulse section") and **score each page 0–100** (see "Reddit Pulse scoring algorithm").
    Returns, per community: scored post list (`👍/🙂/😐/🫤/👎 · [title](permalink) · r/<sub> · ⬆score 💬comments · one-line`), the computed Pulse Score + band, an overall-vibe sentence, competitor + recurring-theme notes, and the list of ids to add to the ledger.
 
+6b. **Spawn Subagent G — Release scan** (see `release-scan` skill). Spawn it **in parallel with Subagents A/B** (no other subagent depends on it; the fix-map is only needed by clustering/resolution). It pulls every CopilotKit + AG-UI release shipped in (and just after) the window, **diffs the git tags** — not the release notes, which are often empty stubs — to extract what each release fixed, and returns: the authoritative latest version per repo, the in-cycle release list, and a **fix-map** (`#NNNN · fixed in <version> · via PR #MMMM · what`). This is the source of truth for every version claim AND the input to the open-issue cross-check below.
+
 7. **Cluster into Demand + Pain.** Per community. Apply threshold rule:
    - 2+ distinct people this week, OR
    - 1+ this week AND verifiable prior reference (issue #, thread ID, prior-report URL).
@@ -73,6 +75,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
 9. **Detect resolutions.** Classify each in-window CLOSED issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`.
+
+9b. **Cross-check open issues against the release fix-map** (Subagent G). For every issue heading into Demand / Pain / Top issues / Early signals, check the fix-map. If it appears there, it shipped a fix we'd otherwise miss — **flag it inline, in place**: annotate `NOTE: appears fixed in vX.Y.Z (PR #MMMM) — verify` rather than silently reclassifying (a `Fixes #N` in a commit isn't always a complete fix; the human verifies before it moves to Resolved). Also stamp each `✅ Resolved this week` row with its `shipped in vX.Y.Z` from the fix-map.
 
 10. **Fix-PR detection** for every issue mentioned (this week + carryover):
    ```
@@ -353,11 +357,13 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 - Don't ping users by handle in Notion; summarize impact instead.
 - Reconfirm window at start so Nathan can catch a wrong week before the page lands.
 - Convert relative dates to absolute ISO so the page stays interpretable later.
+- **Never cite a CopilotKit (or AG-UI) version from memory — the `release-scan` subagent (step 6b) is the authoritative source.** Any "current release vX.Y.Z" / "fixed in vX.Y.Z" / "shipped in vX.Y.Z" claim uses that scan's latest/attributed version, never a remembered one. (If running outside the orchestrator, verify live: `npm view @copilotkit/react-core version` + `gh release list --repo CopilotKit/CopilotKit`; AG-UI: `npm view @ag-ui/core version` / `@ag-ui/langgraph` + `gh release list --repo ag-ui-protocol/ag-ui`.) A wrong version number is a credibility hit on the most-read card.
 
 ## Cross-referenced skills
 
 - `front-door-triage` — P0 categories and classification rules
 - `deep-read-issue` — subagent flow for issue + fix PR deep read
+- `release-scan` — subagent: in-cycle release fix-map + authoritative version (open-issue cross-check)
 - `enrich-reporter` — subagent for GitHub author enterprise enrichment
 - `slack-tldr` — Slack JSON format + curl command
 - `loom-walkthrough` — the 5–7 min radio-show walkthrough script, generated after every report (last step)
