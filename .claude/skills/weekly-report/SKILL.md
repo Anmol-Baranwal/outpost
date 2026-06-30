@@ -30,7 +30,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 2. **Spawn Subagent A — Discord pull.** Tell it to pull both servers:
    - CopilotKit (`1122926057641742418`): `#💬｜general` (text `1182553320540352563`) + `#🤔｜support` (forum `1313616713647919218`)
    - AG-UI (`1379082175625953370`): `#🔧-building` (text `1379082271642095738`) + `#✈️-support` (forum `1384529894972592158`)
-   For forums use `mcp__discord__list_forum_threads` → filter to window → `mcp__discord__read_thread_messages` per in-window thread. **Read every thread to the bottom.** Return: compact per-channel substantive-message summary, with reporter handles + 1-line summaries. Skip hiring / self-promo / greetings (those roll up under Community Ops).
+   For forums use `mcp__discord__list_forum_threads` → filter to window → `mcp__discord__read_thread_messages` per in-window thread. **Read every thread to the bottom.** Return: compact per-channel substantive-message summary, with reporter handles + 1-line summaries. Skip hiring / self-promo / greetings (count them internally, but they only surface in Community ops if they rise to actual news — see "Community ops"; otherwise that section is omitted).
+   **Capture resolution signal per thread:** a **green-check ✅** reaction, or an explicit accepted/"marked solved" / "issue has been resolved ✅" marker in the comments, means the answer was confirmed correct → the thread counts as **resolved** (feeds ✅ Resolved this week + the Discord-resolved count, see steps 9 and Pulse). Be strict — a reply, a 👍, or a ❤️ is NOT a resolution; only a green-check / accepted-answer marker is. Return each thread's status `RESOLVED (green-check)` / `OPEN`.
 
 3. **Spawn Subagent B — GitHub pull.** Both repos, same window:
    ```
@@ -74,7 +75,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
-9. **Detect resolutions.** Classify each in-window CLOSED issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`.
+9. **Detect resolutions.** Classify each in-window CLOSED GitHub issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`. **Discord threads with a green-check ✅ / accepted-answer marker (step 2) are ALSO resolutions** — classify them `DISCORD_ANSWERED` and list them in ✅ Resolved this week alongside the GitHub closures. (A Discord thread can be resolved even when a related GitHub issue stays open — they're different tickets; resolve only what the green-check actually covers.)
 
 9b. **Cross-check open issues against the release fix-map** (Subagent G). For every issue heading into Demand / Pain / Top issues / Early signals, check the fix-map. If it appears there, it shipped a fix we'd otherwise miss — **flag it inline, in place**: annotate `NOTE: appears fixed in vX.Y.Z (PR #MMMM) — verify` rather than silently reclassifying (a `Fixes #N` in a commit isn't always a complete fix; the human verifies before it moves to Resolved). Also stamp each `✅ Resolved this week` row with its `shipped in vX.Y.Z` from the fix-map.
 
@@ -126,12 +127,12 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Sits directly UNDER the CopilotKit header + companion link. Each item a toggle: what · impact · fix plan, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
 ---
 
-   ### 🔥 Demand                               ← CopilotKit community body (NO `## TL;DR` wrapper — these sit directly here)
-   ### 💢 Pain
-   ### 📚 Docs {toggle="true"}                  ← standing weekly section, COLLAPSIBLE (see "Docs section")
+   ### 🔥 Demand                               ← CopilotKit community body; plain `###` header, each item a `#### {toggle}` card (see "Section item cards")
+   ### 💢 Pain                                  ← plain `###` header, each item a `#### {toggle}` card (What/Impact/Fix plan)
+   ### 📚 Docs                                  ← standing weekly section; plain `###` header, each item a `#### {toggle}` card (see "Docs section")
    ### ✅ Resolved this week                    ← XML table
-   ### 📊 Pulse                                 ← Volume + the month-over-month issues table + open fix PRs (see "Pulse section")
-   ### Community ops
+   ### 📊 Pulse                                 ← Volume + filed/resolved month-over-month table + open fix PRs (see "Pulse section")
+   ### Community ops                            ← OMIT ENTIRELY if nothing substantive (hiring/self-promo/greetings alone are NOT news — see "Community ops")
 ---
 
 ## 🏢 Enterprise                                ← cross-community (see "Enterprise section")
@@ -163,12 +164,12 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
 ---
 
-   ### 💢 Pain                                 ← AG-UI community body (NO `## TL;DR` wrapper)
-   ### 🔥 Demand
-   ### 📚 Docs
+   ### 💢 Pain                                 ← AG-UI community body; plain `###` header, each item a `#### {toggle}` card (see "Section item cards")
+   ### 🔥 Demand                                ← plain `###` header, each item a `#### {toggle}` card
+   ### 📚 Docs                                  ← plain `###` header, each item a `#### {toggle}` card
    ### ✅ Resolved this week
    ### 📊 Pulse
-   ### Community ops
+   ### Community ops                            ← OMIT ENTIRELY if nothing substantive (see "Community ops")
 ---
 
 ## 🟠 Reddit Pulse — AG-UI · <band> NN/100 {toggle="true"}   ← AG-UI-subject Reddit posts only, scored. (see "Reddit Pulse section")
@@ -180,7 +181,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <mention-page>📊 Top-issue ranking</mention-page>  ← bottom link to the main report's ranking child page
 ```
 
-If a per-community subsection is empty, render "No X this week." Don't omit the heading.
+If a per-community subsection is empty, render "No X this week." Don't omit the heading. **Exception: Community ops is omitted entirely when there's nothing substantive** (see "Community ops" — hiring/self-promo/greetings alone are not news).
 
 **Page split is mandatory, not conditional.** AG-UI always gets its own sub-page (even when thin); the main page is always the CopilotKit report. 🏢 Enterprise, 🔝 Top issues, and 🔄 Patterns — the takeaways are cross-community on the main page. 🟠 Reddit Pulse is split per community (each page scores its own posts). Gaps / Methodology are split per page; AG-UI keeps a short AG-UI-scoped Patterns that points back to the main takeaways.
 
@@ -191,11 +192,32 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 ## Page rendering rules
 
 - **Always-open sections:** Header, 📦/🔷 community header + companion link, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, 🔄 Patterns — the takeaways, Gaps & follow-ups. **Patterns is always open — never a `<details>`.** It's the most-read section.
-- **Toggle headings (`### Title {toggle="true"}` / `## … {toggle="true"}`):** every Top-issue card, every Demand/Pain cluster card, the **📚 Docs section**, and **each 🟠 Reddit Pulse section** (with its score + band in the heading so it reads while collapsed). Body bullets **tab-indented** to be inside the toggle.
+- **Toggle headings:** every Top-issue card (`### N. … {toggle="true"}`), **every item card in 🔥 Demand / 💢 Pain / 📚 Docs** (`#### … {toggle="true"}` — see "Section item cards"; the 🔥/💢/📚 section headers themselves are plain `###`, not toggles), and **each 🟠 Reddit Pulse section** (`## … {toggle="true"}`, with its score + band in the heading so it reads while collapsed). Card/body lines **tab-indented** to sit inside the toggle.
 - **No 🚨 sirens on the Top-issue cards.** Rank them `### 1.` / `### 2.` … — the numbering carries the priority.
 - **`<details><summary>` blocks:** Early signals, Pulse body, Community ops, Methodology. (Patterns is NOT one of these.)
 - **Notion XML `<table header-row="true">…</table>`** form (not Markdown pipes) inside toggles/details.
 - **Visual polish:** AG-UI sub-page gets a distinct icon (🔷) so its link doesn't read as a duplicate of the 📦 header; an italic "↓ Companion report" label sits above the link; `---` dividers between the top-level `##` sections to break up the column. (No table-of-contents — it ate too much vertical space.)
+
+## Section item cards (the universal format)
+
+Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Docs — renders as a **self-contained toggle card**, never a run-on paragraph bullet. This is the format readers like on Top issues; it now applies to every section. A wall of prose in Pain (or anywhere) is the anti-pattern this replaces — if a reader has to parse a paragraph to find the impact, the card failed.
+
+- **Section header stays a plain heading** (`### 🔥 Demand`, `### 💢 Pain`, `### 📚 Docs`). **Each item under it is its own toggle card**, one level down: `#### <short title> {toggle="true"}`. (Top issues are ranked one level up — `### N. <title> {toggle="true"}` — same card body.)
+- **Card body = exactly three tab-indented labeled lines**, bold labels, one sentence each. The triplet adapts per section:
+
+  | Section | Line 1 | Line 2 | Line 3 |
+  |---|---|---|---|
+  | 🔝 Top issues | **What** | **Impact** | **Fix plan** |
+  | 💢 Pain | **What** | **Impact** | **Fix plan** |
+  | 🔥 Demand | **What** | **Why it matters** | **Status** |
+  | 📚 Docs | **What** (`Drift`/`Gap`/`Links-bot`) | **Impact** | **Fix** |
+
+- **What** = the concrete thing, one sentence. **Impact / Why it matters** = who it hits and how bad / why we'd act. **Fix plan / Status / Fix** = shipped / in-progress / not-started + the PR or release (Pain, Top issues); requested / on-roadmap / workaround-exists (Demand); which doc to write or repair (Docs).
+- **Source link lives in the title or the What line** — mandatory, per "Source links are mandatory". Reporter handle hyperlinked.
+- **One item, one card.** Don't merge two unrelated reports into one card; don't let a card spill past the three lines — depth goes in the linked issue or in 🔄 Patterns.
+- **Short title ≈ 3–6 words that name the thing** (`A2UI needs scaffolding`, not `Issue with A2UI`).
+
+Sections that do NOT use this card format: ✅ Resolved (XML table), 🟠 Reddit Pulse (one-line post bullets), 📊 Pulse, Community ops, Early signals — these stay tables / one-liners / `<details>` as specified.
 
 ## Source links are mandatory
 
@@ -242,25 +264,35 @@ Contents:
 
 ## Docs section (standing, weekly)
 
-Every report carries a `### 📚 Docs {toggle="true"}` section per community, between 💢 Pain and ✅ Resolved — **collapsible**, body bullets tab-indented. Three labeled item types:
+Every report carries a `### 📚 Docs` section per community, between 💢 Pain and ✅ Resolved. The header is a plain `###`; **each docs item is its own `#### {toggle="true"}` card** in the universal format (What / Impact / Fix — see "Section item cards"). The **What** line is prefixed with the item type:
 
 - **Drift** — code moved, docs didn't.
 - **Gap** — a needed guide that doesn't exist.
-- **Links/bot** — dead doc URLs, support-bot citing 404s or stale answers.
+- **Links-bot** — dead doc URLs, support-bot citing 404s or stale answers.
+
+(So a card reads: **What:** `Drift` — the React API surface… · **Impact:** … · **Fix:** rewrite the X page.)
 
 Rules:
-- **Every docs bullet carries a source link** (the issue/PR/Discord thread that raised it) — per the mandatory-source-link rule. A docs observation with no sourceable link doesn't get published; it's flagged for the review agent to source.
-- A docs item that **blocks** a new/upgrading user is ALSO a Top issue — list it in both, labeled "(blocking — also a Top issue)" in the Docs section. Non-blocking docs items live only here.
+- **Every docs card carries a source link** (the issue/PR/Discord thread that raised it) — per the mandatory-source-link rule. A docs observation with no sourceable link doesn't get published; it's flagged for the review agent to source.
+- A docs item that **blocks** a new/upgrading user is ALSO a Top issue — list it in both; in the Docs **Fix** line note "(blocking — also a Top issue)". Non-blocking docs items live only here.
 - Always render the section; if empty, "No docs items this week."
+
+## Community ops (conditional — omit when there's no news)
+
+A `### Community ops` `<details>` block, but **only when there's something a company reader would actually care about** — a channel that needs moderation, a recurring spam wave, a process/access change, a genuinely notable community contribution. **Hiring posts, freelancer self-promo, and greetings are NOT news** — don't publish "6 people posted portfolios." If the only in-window non-substantive traffic is that kind of noise, **omit the Community ops section entirely** (no heading, no "nothing this week" line — just leave it out).
+
+This is the one section that disappears when empty; every other section keeps its heading. The Discord pull still *counts* the skipped noise internally, but it only surfaces here if it rises to actual news.
 
 ## Pulse section (volume + month-over-month)
 
 The `### 📊 Pulse` `<details>` block on **each** page carries, in order:
-1. This window's issue-filed count + a comment/👍 high note.
-2. **Month-over-month issues table — the SAME combined table on BOTH pages.** Counts of issues *filed* per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. The combined total appears on both the CopilotKit page and the AG-UI page (don't split it per community — both pages show the full cross-community table).
-   - Columns: `Community | Prev month (<Mon YYYY>) | This month (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold).
-   - **Label the current month month-to-date (MTD)** — the month isn't over, so the drop vs last month is partly calendar, not a real decline. Note the cutoff date.
-   - Counts come from `gh issue list --repo <repo> --state all --search "created:<month-start>..<month-end>" --json number --jq 'length'` for each repo × each month.
+1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)." This is the live "what did we actually close" read; the monthly table below is the trend.
+2. **Month-over-month table — filed AND resolved (GitHub) — the SAME combined table on BOTH pages.** GitHub issue counts per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. (The monthly table is GitHub-only — a clean filed-vs-closed backlog metric; Discord green-check resolutions are counted in point 1 and listed in ✅ Resolved this week, not mixed into this table's denominator.) The combined total appears on both pages (don't split it per community — both pages show the full cross-community table).
+   - Columns: `Community | Filed prev (<Mon YYYY>) | Resolved/closed prev (<Mon YYYY>) | Filed this (<Mon YYYY>, MTD) | Resolved/closed this (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold). "Resolved/closed" = GitHub issues closed in that month.
+   - **Label the current month month-to-date (MTD)** — the month isn't over, so any drop vs last month is partly calendar, not a real decline. Note the cutoff date. (Resolved-this-month is also MTD.)
+   - **Filed** counts: `gh issue list --repo <repo> --state all --search "created:<month-start>..<month-end>" --json number --jq 'length'`.
+   - **Resolved** counts (issues *closed* in that month): `gh issue list --repo <repo> --state closed --search "closed:<month-start>..<month-end>" --json number --jq 'length'`. Run for each repo × each month.
+   - The filed-vs-resolved gap is the readable signal — note it in one line if the backlog is clearly growing or shrinking.
 3. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
 
 ## Reddit Pulse section (per community, 90-day, scored)
@@ -300,10 +332,16 @@ Each section's 0–100 score is **calculated, not asserted**, and published on a
 - **Sentiment per post** `s` (from post + top comments): `+1` good · `+0.5` mixed-positive · `0` neutral · `−0.5` mixed-negative · `−1` pain.
 - **Room baseline** `M` = median of `(upvotes + 2·comments)` over the subreddit's recent **`new`** posts (NOT `hot` — hot oversamples winners). Fetch ~30 per distinct sub. `M` is the room's activity proxy (quiet "<10 posts/day" sub → low `M`).
 - **Reception** `ρ = (upvotes + 2·comments) / M`. `ρ ≥ 1` landed; `ρ < 0.3` flopped for that room.
-- **Effective sentiment** `s'`: positive `s` → `s' = s · clamp(ρ, 0.3, 1.2)`; **big-room flop** (`M ≥ 10` and `ρ < 0.3` and `s > 0`) → `s' = −0.25` (saw it, shrugged); `s = 0` → `0`; negative `s` → unchanged.
+- **Effective sentiment** `s'`: positive `s` → `s' = s · clamp(ρ, 0.3, 1.2)`; **positive big-room flop** (`M ≥ 10` and `ρ < 0.3` and `s > 0`) → `s' = 0`; `s = 0` → `0`; negative `s` → unchanged.
 - **Reach weight** `W = log10(1 + M)` (quiet rooms barely move the score).
 - **Score** `= clamp( 50 + 50 · Σ(s'ᵢ·Wᵢ) / Σ(Wᵢ) , 0 .. 100 )` (50 = neutral baseline).
 - **Bands:** 🟢 75–100 · 🟡 50–74 · 🔴 0–49. Tunable knobs: `M ≥ 10` active-room threshold, `ρ < 0.3` flop line, `0.3–1.2` clamp.
+
+**v3 (2026-06-29) — community-reception fix.** Three corrections after v2 mislabeled a modestly-positive AG-UI week as 🔴 (a positive post read as the biggest *negative*, and a self-published critique scored twice):
+
+- **Subreddit eligibility — `r/u_*` user-profile feeds are NOT community rooms.** A self-post to your own profile has no community audience; it's self-promo, not reception. **Exclude profile-feed posts from scoring** (still record their ids in the ledger). Micro-subs are fine — they just carry tiny `W`.
+- **Cross-post merge happens BEFORE scoring.** Identical story across subs counts **once** (max engagement), scored in the most-real sub it appeared in. A duplicate can never double a sentiment. (This was always the rendering rule; v3 makes it a scoring rule too.)
+- **Positive big-room flop floors at neutral, never negative** (changed from v2's `s' = −0.25` to **`s' = 0`**). Under-performing a busy room removes a post's positive credit; it must not manufacture negativity. Otherwise a genuinely positive post in the highest-`W` room becomes the single biggest *negative* contributor — which is exactly the v2 bug. Negative `s` is still passed through unchanged.
 
 When the algorithm changes, update the child page (don't recreate it) AND this section — per the meta-rule.
 

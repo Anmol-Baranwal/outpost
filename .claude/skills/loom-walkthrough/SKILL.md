@@ -51,6 +51,7 @@ Lead with this framing in mind: **fixes are one thing; the *pattern* of pain is 
 - Map jargon → plain: *quickstart/CLI* → "the get-started command"; *runtime/HttpAgent* → "running it in the browser"; *adapter* → "the connector for <framework>"; *generative UI / A2UI* → "agents drawing interactive buttons and forms"; *CI* → "an automated check."
 - Keep one concrete anchor per issue so it's real ("Siemens," "fourteen thousand stars"), drop the rest.
 - Fixed items still get airtime — "we said we'd fix it, it's fixed" is good news worth saying.
+- **Don't say "confirmed" (or "verified", "acknowledged") unless a maintainer actually said so in the GitHub issue/PR comments — and you read it.** A support-bot "high-confidence" flag, a clear repro, or cited file paths are NOT a maintainer confirmation. Attribute precisely to what the source shows: "the support bot flagged it as high-confidence," "the reporter cited the exact files," "a maintainer confirmed it in the thread" (only if true). When unsure, describe what was filed, not who agreed. Overstating confirmation is the fastest way to lose credibility on camera.
 
 ## Output format
 
