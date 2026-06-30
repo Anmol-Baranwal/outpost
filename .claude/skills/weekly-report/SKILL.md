@@ -130,7 +130,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <page url="…">AG-UI sub-page title</page>      ← AG-UI sub-page link (give the sub-page a DISTINCT icon, e.g. 🔷, so it doesn't mirror the 📦 header)
 ---
 
-## 📈 Trends {toggle="true"}                    ← collapsible context strip, cross-community. ~12-week ASCII bars: issues filed/week, a filed-vs-resolved chart, + a Reddit-mentions note, so this week's numbers read in context. See "Trends section".
+## 📈 Trends {toggle="true"}                    ← collapsible context strip, cross-community. ONE ~12-week filed-vs-resolved table (Week · Filed · Resolved, counts + bars) + the per-community month-over-month table + a Reddit-mentions note. See "Trends section".
 ---
 
 ## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Each item a toggle: what · impact · fix plan · owner · priority, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
@@ -148,7 +148,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 💢 Pain                                  ← plain `###` header, each item a `#### {toggle}` card (What/Impact/Fix plan)
    ### 📚 Docs                                  ← standing weekly section; plain `###` header, each item a `#### {toggle}` card (see "Docs section")
    ### ✅ Resolved this week                    ← XML table
-   ### 📊 Pulse                                 ← Volume + filed/resolved month-over-month table + open fix PRs (see "Pulse section")
+   ### 📊 Pulse                                 ← this-window snapshot (filed + closed-out counts) + open fix PRs. Month-over-month table lives in 📈 Trends now. (see "Pulse section")
    ### Community ops                            ← OMIT ENTIRELY if nothing substantive (hiring/self-promo/greetings alone are NOT news — see "Community ops")
 ---
 
@@ -172,7 +172,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔷 AG-UI                                     ← community header (distinct 🔷 icon) at the very top of every AG-UI page
 *↑ Companion report — the CopilotKit half of this week is the main page:*   ← italic nav label (mirrors the main page's companion link)
 <page url="…main report…">CopilotKit main report title</page>             ← companion link BACK to the main page (every AG-UI page has one)
-## 📈 Trends — AG-UI {toggle="true"}            ← collapsible context strip, AG-UI-scoped: AG-UI issues filed/week + filed-vs-resolved + AG-UI Reddit-mentions note, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
+## 📈 Trends — AG-UI {toggle="true"}            ← collapsible context strip, AG-UI-scoped: ONE filed-vs-resolved table + per-community month-over-month table + Reddit-mentions note, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
 ---
 
 ## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}, with owner + priority). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
@@ -283,17 +283,16 @@ Contents:
 
 `## 📈 Trends {toggle="true"}` is a **collapsible** toggle, compact, sitting directly under the companion link, above 🔝 Top issues — so every number this week reads against its recent history. The point is context, not analysis: "is this a heavy week or a quiet one, and are we keeping up?" **Its whole body is tab-indented to nest inside the toggle** (see Page rendering rules — un-indented tables fall outside the collapse).
 
-Two standing charts, **~12 weeks** (rolling, oldest → newest, newest row at the bottom, this-week row bolded), rendered as ASCII bars in a tight `<table header-row="true">`:
+Contents, in order (whole body tab-indented to nest in the toggle):
 
-1. **Issues filed / week** — a single-bar sparkline (`▓`). The headline "how busy is this week" read.
-2. **Issues filed vs resolved / week** — two values per row, `▓` filed and `▒` resolved, so the backlog trend is visible (are we closing faster than we file?). This is the chart Nathan asked for — it answers "are we keeping up," not just "how much came in."
+1. **ONE weekly filed-vs-resolved table — `Week · Filed · Resolved (closed)`, ~12 weeks** (rolling, oldest → newest, newest row at the bottom + bolded). Each Filed/Resolved cell is `<count> <bar>` — the **number and the bar together**, `▓` filed · `▒` resolved. (Don't ship a number-less bar column — a bar with no number tells the reader nothing; that's why the old standalone "filed sparkline" + "Trend" column were dropped. One table, both series, numbers on every bar.)
+2. **Month-over-month, per community** — `Community · Filed prev (<Mon YYYY>) · Resolved prev · Filed this (<Mon YYYY>, MTD) · Resolved this (MTD)` with a bold **Combined (CK + AG-UI)** row. The per-community + monthly cut the weekly table lacks; it lives **here in Trends**, not 📊 Pulse (moved 2026-06-30 to kill the duplicate filed-vs-resolved view). **Label the current month MTD** + note the cutoff (the month isn't over, so a drop vs last month is partly calendar). GitHub-only (Discord resolutions stay in ✅ Resolved). **Same combined table on BOTH pages** — don't split it per page.
+3. **A Reddit-mentions note** (not a bar chart) — brand-term post counts are usually too sparse for weekly bars; state the rolling count and point to 🟠 Reddit Pulse.
 
-- **A Reddit-mentions note** (not a third bar chart unless volume justifies it) — brand-term post counts are usually too sparse for weekly bars; state the rolling count and point to 🟠 Reddit Pulse.
-- **One-line read under each chart** — e.g. *"Issues: 30 this week vs ~24/wk trailing — running hot"* and *"resolved ≥ filed the last 3 weeks — backlog shrinking."* State up/down/flat vs the trailing average; don't over-interpret.
-- **Cap bulk-close outliers.** A one-time mass-close (e.g. a 280-issue triage sweep in a single week) wrecks the resolved-bar scale — **cap the bar and annotate it inline** (`(1-time sweep)`) + a footnote, so it doesn't read as normal throughput.
-- **Data** from orchestrator step 8b: filed = `gh issue list --search "created:<wk>"` per week; resolved = `gh issue list --state closed --search "closed:<wk>"` per week; both repos.
-- **Scope:** main page = cross-community (CK + AG-UI combined); AG-UI sub-page = AG-UI-only series.
-- **Extensible:** issues-filed + filed-vs-resolved are the standing two charts. Add a series (Discord threads/week, enterprise reporters/week) only when it earns the row — don't pad.
+- **One-line read under each table** — e.g. *"30 filed this week vs ~24/wk trailing — hot week"* and *"resolved ≥ filed the last 3 weeks — backlog shrinking."* State up/down/flat vs the trailing average; don't over-interpret. No percentage column — keep the cells to count + bar (a % vs-average column was considered and cut as clutter).
+- **Cap bulk-close outliers.** A one-time mass-close (e.g. a 280-issue triage sweep in a single week) wrecks the resolved-bar scale — **cap the bar and annotate it inline** (`(1-time sweep)`), so it doesn't read as normal throughput.
+- **Data** from orchestrator step 8b: filed = `gh issue list --search "created:<wk>"` per week; resolved = `gh issue list --state closed --search "closed:<wk>"` per week; both repos. Monthly table = same with month windows.
+- **Scope:** main page = cross-community (CK + AG-UI combined weekly table; per-community monthly table); AG-UI sub-page = AG-UI-only.
 
 ## Docs section (standing, weekly)
 
@@ -316,17 +315,13 @@ A `### Community ops` `<details>` block, but **only when there's something a com
 
 This is the one section that disappears when empty; every other section keeps its heading. The Discord pull still *counts* the skipped noise internally, but it only surfaces here if it rises to actual news.
 
-## Pulse section (volume + month-over-month)
+## Pulse section (this-window snapshot)
 
-The `### 📊 Pulse` `<details>` block on **each** page carries, in order:
-1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)." This is the live "what did we actually close" read; the monthly table below is the trend.
-2. **Month-over-month table — filed AND resolved (GitHub) — the SAME combined table on BOTH pages.** GitHub issue counts per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. (The monthly table is GitHub-only — a clean filed-vs-closed backlog metric; Discord green-check resolutions are counted in point 1 and listed in ✅ Resolved this week, not mixed into this table's denominator.) The combined total appears on both pages (don't split it per community — both pages show the full cross-community table).
-   - Columns: `Community | Filed prev (<Mon YYYY>) | Resolved/closed prev (<Mon YYYY>) | Filed this (<Mon YYYY>, MTD) | Resolved/closed this (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold). "Resolved/closed" = GitHub issues closed in that month.
-   - **Label the current month month-to-date (MTD)** — the month isn't over, so any drop vs last month is partly calendar, not a real decline. Note the cutoff date. (Resolved-this-month is also MTD.)
-   - **Filed** counts: `gh issue list --repo <repo> --state all --search "created:<month-start>..<month-end>" --json number --jq 'length'`.
-   - **Resolved** counts (issues *closed* in that month): `gh issue list --repo <repo> --state closed --search "closed:<month-start>..<month-end>" --json number --jq 'length'`. Run for each repo × each month.
-   - The filed-vs-resolved gap is the readable signal — note it in one line if the backlog is clearly growing or shrinking.
-3. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
+The `### 📊 Pulse` `<details>` block on **each** page is a **point-in-time snapshot** (the over-time trends live in 📈 Trends now). In order:
+1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)."
+2. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
+
+**The month-over-month filed/resolved table moved to 📈 Trends** (2026-06-30) — it was the same filed-vs-resolved view as the Trends weekly table, just monthly, so it was redundant sitting in two sections. Pulse no longer carries it. The monthly-table mechanics (MTD labeling, `gh created:`/`closed:` per-month counts, Combined row on both pages) are specified under "Trends section".
 
 ## Reddit Pulse section (per community, 90-day, scored)
 
