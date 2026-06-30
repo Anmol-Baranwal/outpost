@@ -75,6 +75,12 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
+8b. **Build the 📈 Trends strip** (see "Trends section"). ~12-week weekly series, cheap to compute:
+   - **Issues filed / week** — bucket the last 12 Fri→Fri weeks. Per week, per repo: `gh issue list --repo <repo> --state all --search "created:<wk-start>..<wk-end>" --json number --jq 'length'`. Main page = CK + AG-UI combined per week; AG-UI page = AG-UI only.
+   - **Issues resolved (closed) / week** — same buckets: `gh issue list --repo <repo> --state closed --search "closed:<wk-start>..<wk-end>" --json number --jq 'length'`. Pairs with filed for the filed-vs-resolved chart. **Watch for bulk-close outliers** (a single week with a 100s-of-issues sweep) — cap the bar + annotate, don't let it set the scale.
+   - **Reddit mentions / week** — from Subagent E's 90-day pull (≈13 weeks), bucket the surfaced+deduped brand-term posts by `created_utc`. Usually sparse → render as a one-line note, not a weekly bar chart, unless volume justifies bars.
+   - Hand the series to the synthesis as small integer arrays → render as ASCII bars in the collapsible Trends toggle. This week's row is the bottom; the strip is what makes "30 issues" read as up/down/flat and shows whether the backlog is growing.
+
 9. **Detect resolutions.** Classify each in-window CLOSED GitHub issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`. **Discord threads with a green-check ✅ / accepted-answer marker (step 2) are ALSO resolutions** — classify them `DISCORD_ANSWERED` and list them in ✅ Resolved this week alongside the GitHub closures. (A Discord thread can be resolved even when a related GitHub issue stays open — they're different tickets; resolve only what the green-check actually covers.)
 
 9b. **Cross-check open issues against the release fix-map** (Subagent G). For every issue heading into Demand / Pain / Top issues / Early signals, check the fix-map. If it appears there, it shipped a fix we'd otherwise miss — **flag it inline, in place**: annotate `NOTE: appears fixed in vX.Y.Z (PR #MMMM) — verify` rather than silently reclassifying (a `Fixes #N` in a commit isn't always a complete fix; the human verifies before it moves to Resolved). Also stamp each `✅ Resolved this week` row with its `shipped in vX.Y.Z` from the fix-map.
@@ -124,21 +130,26 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <page url="…">AG-UI sub-page title</page>      ← AG-UI sub-page link (give the sub-page a DISTINCT icon, e.g. 🔷, so it doesn't mirror the 📦 header)
 ---
 
-## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Sits directly UNDER the CopilotKit header + companion link. Each item a toggle: what · impact · fix plan, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
+## 📈 Trends {toggle="true"}                    ← collapsible context strip, cross-community. ONE ~12-week filed-vs-resolved table (Week · Filed · Resolved, counts + bars) + the per-community month-over-month table + a Reddit-mentions note. See "Trends section".
+---
+
+## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Each item a toggle: what · impact · fix plan · owner · priority, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
+---
+
+## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues (highlighted near the top, not buried). Cross-community. See "Enterprise section".
+   ### 🚩 Enterprise questions & complaints     ← any enterprise-related question/complaint this week (e.g. threads/persistence = the "enterprise threads" tier). Each a card with owner + priority. Highlighted at the top of this section.
+   ### 🎯 Prospective enterprise customers      ← community members who look like enterprise prospects (e.g. Jasper AI), each with a **Passed to (sales):** owner field. See "Prospective enterprise customers".
+   ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
+   ### Companies building on us this week       ← CURRENT-employer only; per-company bullets
+   ### Enterprise-offering reactions            ← reaction to Slack / Teams / threads-persistence; state the silence explicitly when there's none
 ---
 
    ### 🔥 Demand                               ← CopilotKit community body; plain `###` header, each item a `#### {toggle}` card (see "Section item cards")
    ### 💢 Pain                                  ← plain `###` header, each item a `#### {toggle}` card (What/Impact/Fix plan)
    ### 📚 Docs                                  ← standing weekly section; plain `###` header, each item a `#### {toggle}` card (see "Docs section")
    ### ✅ Resolved this week                    ← XML table
-   ### 📊 Pulse                                 ← Volume + filed/resolved month-over-month table + open fix PRs (see "Pulse section")
+   ### 📊 Pulse                                 ← this-window snapshot (filed + closed-out counts) + open fix PRs. Month-over-month table lives in 📈 Trends now. (see "Pulse section")
    ### Community ops                            ← OMIT ENTIRELY if nothing substantive (hiring/self-promo/greetings alone are NOT news — see "Community ops")
----
-
-## 🏢 Enterprise                                ← cross-community (see "Enterprise section")
-   ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
-   ### Companies building on us this week       ← CURRENT-employer only; per-company bullets
-   ### Enterprise-offering reactions            ← reaction to Slack / Teams / threads-persistence; state the silence explicitly when there's none
 ---
 
 ## 🟠 Reddit Pulse — CopilotKit · <band> NN/100 {toggle="true"}   ← CopilotKit-subject Reddit posts only, scored. Collapsible; score+band in the heading. (see "Reddit Pulse section")
@@ -161,7 +172,10 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔷 AG-UI                                     ← community header (distinct 🔷 icon) at the very top of every AG-UI page
 *↑ Companion report — the CopilotKit half of this week is the main page:*   ← italic nav label (mirrors the main page's companion link)
 <page url="…main report…">CopilotKit main report title</page>             ← companion link BACK to the main page (every AG-UI page has one)
-## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
+## 📈 Trends — AG-UI {toggle="true"}            ← collapsible context strip, AG-UI-scoped: ONE filed-vs-resolved table + per-community month-over-month table + Reddit-mentions note, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
+---
+
+## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}, with owner + priority). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
 ---
 
    ### 💢 Pain                                 ← AG-UI community body; plain `###` header, each item a `#### {toggle}` card (see "Section item cards")
@@ -192,6 +206,7 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 ## Page rendering rules
 
 - **Always-open sections:** Header, 📦/🔷 community header + companion link, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, 🔄 Patterns — the takeaways, Gaps & follow-ups. **Patterns is always open — never a `<details>`.** It's the most-read section.
+- **📈 Trends is a collapsible heading toggle** (`## 📈 Trends {toggle="true"}`) — its whole body (both tables + notes) is **tab-indented** to nest inside the toggle. (Notion heading-toggles only collapse children that are indented; un-indented tables render outside the toggle.)
 - **Toggle headings:** every Top-issue card (`### N. … {toggle="true"}`), **every item card in 🔥 Demand / 💢 Pain / 📚 Docs** (`#### … {toggle="true"}` — see "Section item cards"; the 🔥/💢/📚 section headers themselves are plain `###`, not toggles), and **each 🟠 Reddit Pulse section** (`## … {toggle="true"}`, with its score + band in the heading so it reads while collapsed). Card/body lines **tab-indented** to sit inside the toggle.
 - **No 🚨 sirens on the Top-issue cards.** Rank them `### 1.` / `### 2.` … — the numbering carries the priority.
 - **`<details><summary>` blocks:** Early signals, Pulse body, Community ops, Methodology. (Patterns is NOT one of these.)
@@ -214,7 +229,8 @@ Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Doc
 
 - **What** = the concrete thing, one sentence. **Impact / Why it matters** = who it hits and how bad / why we'd act. **Fix plan / Status / Fix** = shipped / in-progress / not-started + the PR or release (Pain, Top issues); requested / on-roadmap / workaround-exists (Demand); which doc to write or repair (Docs).
 - **Source link lives in the title or the What line** — mandatory, per "Source links are mandatory". Reporter handle hyperlinked.
-- **One item, one card.** Don't merge two unrelated reports into one card; don't let a card spill past the three lines — depth goes in the linked issue or in 🔄 Patterns.
+- **Owner + Priority — a fourth meta line, mandatory on 🔝 Top issues and 🏢 Enterprise question cards** (optional elsewhere): `**Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low`. **Owner** = who drives the issue to the other side (maintainers / eng); left **blank** for manual assignment — never auto-name a person. **Priority** = derived from the front-door ranking score → H/M/L (see `front-door-triage` "Priority from rank"); set the band, overridable by hand.
+- **One item, one card.** Don't merge two unrelated reports into one card; don't let a card spill past the three lines (+ the Owner/Priority meta line) — depth goes in the linked issue or in 🔄 Patterns.
 - **Short title ≈ 3–6 words that name the thing** (`A2UI needs scaffolding`, not `Issue with A2UI`).
 
 Sections that do NOT use this card format: ✅ Resolved (XML table), 🟠 Reddit Pulse (one-line post bullets), 📊 Pulse, Community ops, Early signals — these stay tables / one-liners / `<details>` as specified.
@@ -238,6 +254,7 @@ What goes in it (per leadership):
   - **What:** the concrete failure.
   - **Impact:** who hit it and how bad.
   - **Fix plan:** shipped / in-progress / not-started + the PR or release. Call out **"fixed same day"** when true.
+  - **Owner + Priority** (meta line): `**Owner:** _<blank>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low` — owner left blank for Nathan to assign; priority derived from the rank (see `front-door-triage` "Priority from rank").
 - **Tag each `[CK]` / `[AG-UI]` / `[CK + AG-UI]`** and link the canonical issue.
 - **Front-page items get the CI-gap takeaway.** If something big shipped broken, ask "how did this ship?" — usually a missing smoke test.
 - The front-door P0 categories (`front-door-triage` skill) define what's *eligible*; the ranking decides what's *shown*.
@@ -262,6 +279,21 @@ Contents:
 
 **Companion `🔬 Ranking comparison` child page.** Shows the algo earning its keep: the **naive order** (rank by loudness) vs the **scored order**, as a `candidate | naive rank | algo rank | Δ` table, then a short "what changed, and why". When the order is unchanged, say so — that's the algo validating the read.
 
+## Trends section (counts in context)
+
+`## 📈 Trends {toggle="true"}` is a **collapsible** toggle, compact, sitting directly under the companion link, above 🔝 Top issues — so every number this week reads against its recent history. The point is context, not analysis: "is this a heavy week or a quiet one, and are we keeping up?" **Its whole body is tab-indented to nest inside the toggle** (see Page rendering rules — un-indented tables fall outside the collapse).
+
+Contents, in order (whole body tab-indented to nest in the toggle):
+
+1. **ONE weekly filed-vs-resolved table — `Week · Filed · Resolved (closed)`, ~12 weeks** (rolling, oldest → newest, newest row at the bottom + bolded). Each Filed/Resolved cell is `<count> <bar>` — the **number and the bar together**, `▓` filed · `▒` resolved. (Don't ship a number-less bar column — a bar with no number tells the reader nothing; that's why the old standalone "filed sparkline" + "Trend" column were dropped. One table, both series, numbers on every bar.)
+2. **Month-over-month, per community** — `Community · Filed prev (<Mon YYYY>) · Resolved prev · Filed this (<Mon YYYY>, MTD) · Resolved this (MTD)` with a bold **Combined (CK + AG-UI)** row. The per-community + monthly cut the weekly table lacks; it lives **here in Trends**, not 📊 Pulse (moved 2026-06-30 to kill the duplicate filed-vs-resolved view). **Label the current month MTD** + note the cutoff (the month isn't over, so a drop vs last month is partly calendar). GitHub-only (Discord resolutions stay in ✅ Resolved). **Same combined table on BOTH pages** — don't split it per page.
+3. **A Reddit-mentions note** (not a bar chart) — brand-term post counts are usually too sparse for weekly bars; state the rolling count and point to 🟠 Reddit Pulse.
+
+- **One-line read under each table** — e.g. *"30 filed this week vs ~24/wk trailing — hot week"* and *"resolved ≥ filed the last 3 weeks — backlog shrinking."* State up/down/flat vs the trailing average; don't over-interpret. No percentage column — keep the cells to count + bar (a % vs-average column was considered and cut as clutter).
+- **Cap bulk-close outliers.** A one-time mass-close (e.g. a 280-issue triage sweep in a single week) wrecks the resolved-bar scale — **cap the bar and annotate it inline** (`(1-time sweep)`), so it doesn't read as normal throughput.
+- **Data** from orchestrator step 8b: filed = `gh issue list --search "created:<wk>"` per week; resolved = `gh issue list --state closed --search "closed:<wk>"` per week; both repos. Monthly table = same with month windows.
+- **Scope:** main page = cross-community (CK + AG-UI combined weekly table; per-community monthly table); AG-UI sub-page = AG-UI-only.
+
 ## Docs section (standing, weekly)
 
 Every report carries a `### 📚 Docs` section per community, between 💢 Pain and ✅ Resolved. The header is a plain `###`; **each docs item is its own `#### {toggle="true"}` card** in the universal format (What / Impact / Fix — see "Section item cards"). The **What** line is prefixed with the item type:
@@ -283,17 +315,13 @@ A `### Community ops` `<details>` block, but **only when there's something a com
 
 This is the one section that disappears when empty; every other section keeps its heading. The Discord pull still *counts* the skipped noise internally, but it only surfaces here if it rises to actual news.
 
-## Pulse section (volume + month-over-month)
+## Pulse section (this-window snapshot)
 
-The `### 📊 Pulse` `<details>` block on **each** page carries, in order:
-1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)." This is the live "what did we actually close" read; the monthly table below is the trend.
-2. **Month-over-month table — filed AND resolved (GitHub) — the SAME combined table on BOTH pages.** GitHub issue counts per community, previous calendar month vs current month, with a **Combined (CK + AG-UI)** total row. (The monthly table is GitHub-only — a clean filed-vs-closed backlog metric; Discord green-check resolutions are counted in point 1 and listed in ✅ Resolved this week, not mixed into this table's denominator.) The combined total appears on both pages (don't split it per community — both pages show the full cross-community table).
-   - Columns: `Community | Filed prev (<Mon YYYY>) | Resolved/closed prev (<Mon YYYY>) | Filed this (<Mon YYYY>, MTD) | Resolved/closed this (<Mon YYYY>, MTD)`. Rows: CopilotKit, AG-UI, **Combined** (bold). "Resolved/closed" = GitHub issues closed in that month.
-   - **Label the current month month-to-date (MTD)** — the month isn't over, so any drop vs last month is partly calendar, not a real decline. Note the cutoff date. (Resolved-this-month is also MTD.)
-   - **Filed** counts: `gh issue list --repo <repo> --state all --search "created:<month-start>..<month-end>" --json number --jq 'length'`.
-   - **Resolved** counts (issues *closed* in that month): `gh issue list --repo <repo> --state closed --search "closed:<month-start>..<month-end>" --json number --jq 'length'`. Run for each repo × each month.
-   - The filed-vs-resolved gap is the readable signal — note it in one line if the backlog is clearly growing or shrinking.
-3. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
+The `### 📊 Pulse` `<details>` block on **each** page is a **point-in-time snapshot** (the over-time trends live in 📈 Trends now). In order:
+1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)."
+2. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
+
+**The month-over-month filed/resolved table moved to 📈 Trends** (2026-06-30) — it was the same filed-vs-resolved view as the Trends weekly table, just monthly, so it was redundant sitting in two sections. Pulse no longer carries it. The monthly-table mechanics (MTD labeling, `gh created:`/`closed:` per-month counts, Combined row on both pages) are specified under "Trends section".
 
 ## Reddit Pulse section (per community, 90-day, scored)
 
@@ -345,9 +373,17 @@ Each section's 0–100 score is **calculated, not asserted**, and published on a
 
 When the algorithm changes, update the child page (don't recreate it) AND this section — per the meta-rule.
 
-## Enterprise section (current-employer rule)
+## Enterprise section (elevated, current-employer rule)
 
-🏢 Enterprise stays cross-community on the main page, below the CopilotKit sections. Two subsections:
+🏢 Enterprise is **cross-community and elevated to the top of the main page — directly under 🔝 Top issues, above the CopilotKit community body** (per Nathan: enterprise gets highlighted, not buried). Four subsections, in order:
+
+**🚩 Enterprise questions & complaints** (highlighted first) — **any question or complaint this week that touches an enterprise surface or the enterprise offering**, gathered from GitHub + Discord + Slack. This is the catch-all so nothing enterprise hides in the general body.
+- The **threads / persistence ("enterprise threads") tier** is enterprise by definition — a complaint about paying for threads, the persistence tier, or the self-host runtime belongs here, not just in Pain. (Precedent this cycle: the "threads off" / paid-persistence friction is an enterprise complaint.)
+- Each item is a **card** in the universal format (What / Impact / Fix plan) **plus the Owner + Priority meta line** — owner blank for Nathan, priority derived from rank.
+- Cross-reference, don't duplicate: if it's already a Top issue, list it here with a one-line pointer ("see Top issue #N") rather than repeating the full card.
+- If there were none, say so explicitly: "No enterprise-specific questions or complaints this week."
+
+**🎯 Prospective enterprise customers** (community-sourced) — see "Prospective enterprise customers" below.
 
 **Companies building on us this week** — the signal is **a company currently using/building on us**, surfaced through someone who *currently* works there.
 - **Verify the current employer** with `gh api users/<login>` AND read the bio — the `company` field is often stale. If the bio says "ex-", "previously", "prior experience: …", they do NOT count. (Precedent: a reporter showed `company: Apple` but bio said "Prior experience: Apple" — ex-Apple, dropped.)
@@ -356,6 +392,19 @@ When the algorithm changes, update the child page (don't recreate it) AND this s
 - When correcting a prior week's overcount, say so in a short `<details>` so the trend stays honest.
 
 **Enterprise-offering reactions** — explicitly report community reaction to the enterprise surfaces, especially **Slack / Teams integrations** and **threads / persistence**. **If there was no reaction, say so** — silence is itself a signal.
+
+### Prospective enterprise customers (community-sourced)
+
+A standing subsection naming **community members who look like enterprise prospects** — people the sales team would want to know are in the community, building on us. This is a *lead list from the wild*, separate from "Companies building on us" (which is about who's already a confirmed current-employer signal).
+
+- **Who qualifies:** someone active in Discord/GitHub/Reddit whose company is a recognizable enterprise/well-funded scale-up evaluating or building with CopilotKit/AG-UI — e.g. **Jasper AI** this cycle. Judge by the company, the depth of engagement, and the use case, not just a logo. When unsure, include with a "(worth a look)" note rather than dropping.
+- **One bullet per prospect:**
+  ```
+  - [`<handle>`](source-url) 🏢 **<Company>** — <what they're building / asking, one line, linked> · **Passed to (sales):** _<blank — Nathan fills>_
+  ```
+- **`Passed to (sales):` is a blank owner field** — never auto-name a person; Nathan tags whoever on sales he handed the lead to. Same manual-owner rule as the issue cards.
+- **Source link mandatory** (the thread / issue / Reddit post that surfaced them) — per the source-link rule.
+- If none this week: "No new community-sourced enterprise prospects this week."
 
 ## Patterns — the takeaways (elevated)
 

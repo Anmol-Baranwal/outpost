@@ -112,6 +112,16 @@ Each axis is backed by data the scoring step pulls — the rank must be defensib
 
 The scoring step returns a table — `candidate | surface | blast | severity | exposure | signal | TOTAL` — sorted. The top 3–5 become the Top issues. **Publish the rubric + this run's scores** in the report's bottom "📊 Top-issue ranking" child page so the order is auditable, not asserted.
 
+### Priority from rank (H/M/L on every card)
+
+Every Top-issue (and 🏢 Enterprise question) card carries a **Priority** band, **derived from the same TOTAL score** so it's defensible, not a vibe. Bucket the TOTAL:
+
+- 🔴 **High** — TOTAL ≥ 12, **or** any front-door P0 on the current release / a current-release outage, **or** category 6 (severe crash / data-loss). The "drop everything" tier.
+- 🟡 **Medium** — TOTAL 7–11. Real, scheduled, not on fire.
+- 🟢 **Low** — TOTAL ≤ 6. Track it; no urgency.
+
+The band is the **default** — Nathan can override by hand on any card (an enterprise reporter or a known-strategic surface can bump a Medium to High). When overridden, that's fine; the rank table still shows the computed score so the override is visible. **Owner is always blank** for manual assignment (never auto-named).
+
 ## Rendering
 
 - **Section header:** `**N active this week.**` and stop. No methodology recap. Methodology lives at the bottom of the page.
@@ -120,6 +130,7 @@ The scoring step returns a table — `candidate | surface | blast | severity | e
   - **Reporter:** linked + date + version
   - **Symptom:** one or two sentences with quoted technical detail
   - **Fix PR:** linked + status, or "None yet."
+  - **Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low (derived from TOTAL, see "Priority from rank")
   - **Action:** one-line next step
   - **Rich repro:** 📹 [link] (if applicable)
   - **Reported in Slack:** [channel thread] (if applicable)
