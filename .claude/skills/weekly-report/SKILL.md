@@ -75,6 +75,11 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
+8b. **Build the 📈 Trends strip** (see "Trends section"). Two ~12-week weekly series, cheap to compute:
+   - **Issues filed / week** — bucket the last 12 Fri→Fri weeks. Per week, per repo: `gh issue list --repo <repo> --state all --search "created:<wk-start>..<wk-end>" --json number --jq 'length'`. Main page = CK + AG-UI combined per week; AG-UI page = AG-UI only.
+   - **Reddit mentions / week** — from Subagent E's 90-day pull (≈13 weeks), bucket the surfaced+deduped brand-term posts by `created_utc` into the same weekly bins. Main page = both communities; AG-UI page = AG-UI-subject only.
+   - Hand both series to the synthesis as small integer arrays → render as ASCII bars. This week's bar is the rightmost; the strip is what makes "32 issues" read as up/down/flat.
+
 9. **Detect resolutions.** Classify each in-window CLOSED GitHub issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`. **Discord threads with a green-check ✅ / accepted-answer marker (step 2) are ALSO resolutions** — classify them `DISCORD_ANSWERED` and list them in ✅ Resolved this week alongside the GitHub closures. (A Discord thread can be resolved even when a related GitHub issue stays open — they're different tickets; resolve only what the green-check actually covers.)
 
 9b. **Cross-check open issues against the release fix-map** (Subagent G). For every issue heading into Demand / Pain / Top issues / Early signals, check the fix-map. If it appears there, it shipped a fix we'd otherwise miss — **flag it inline, in place**: annotate `NOTE: appears fixed in vX.Y.Z (PR #MMMM) — verify` rather than silently reclassifying (a `Fixes #N` in a commit isn't always a complete fix; the human verifies before it moves to Resolved). Also stamp each `✅ Resolved this week` row with its `shipped in vX.Y.Z` from the fix-map.
@@ -124,7 +129,18 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <page url="…">AG-UI sub-page title</page>      ← AG-UI sub-page link (give the sub-page a DISTINCT icon, e.g. 🔷, so it doesn't mirror the 📦 header)
 ---
 
-## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Sits directly UNDER the CopilotKit header + companion link. Each item a toggle: what · impact · fix plan, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
+## 📈 Trends                                    ← compact context strip, always-open, cross-community. ~12-week ASCII bars: issues filed/week + Reddit mentions/week, so this week's numbers read in context. See "Trends section".
+---
+
+## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Each item a toggle: what · impact · fix plan · owner · priority, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
+---
+
+## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues (highlighted near the top, not buried). Cross-community. See "Enterprise section".
+   ### 🚩 Enterprise questions & complaints     ← any enterprise-related question/complaint this week (e.g. threads/persistence = the "enterprise threads" tier). Each a card with owner + priority. Highlighted at the top of this section.
+   ### 🎯 Prospective enterprise customers      ← community members who look like enterprise prospects (e.g. Jasper AI), each with a **Passed to (sales):** owner field. See "Prospective enterprise customers".
+   ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
+   ### Companies building on us this week       ← CURRENT-employer only; per-company bullets
+   ### Enterprise-offering reactions            ← reaction to Slack / Teams / threads-persistence; state the silence explicitly when there's none
 ---
 
    ### 🔥 Demand                               ← CopilotKit community body; plain `###` header, each item a `#### {toggle}` card (see "Section item cards")
@@ -133,12 +149,6 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### ✅ Resolved this week                    ← XML table
    ### 📊 Pulse                                 ← Volume + filed/resolved month-over-month table + open fix PRs (see "Pulse section")
    ### Community ops                            ← OMIT ENTIRELY if nothing substantive (hiring/self-promo/greetings alone are NOT news — see "Community ops")
----
-
-## 🏢 Enterprise                                ← cross-community (see "Enterprise section")
-   ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
-   ### Companies building on us this week       ← CURRENT-employer only; per-company bullets
-   ### Enterprise-offering reactions            ← reaction to Slack / Teams / threads-persistence; state the silence explicitly when there's none
 ---
 
 ## 🟠 Reddit Pulse — CopilotKit · <band> NN/100 {toggle="true"}   ← CopilotKit-subject Reddit posts only, scored. Collapsible; score+band in the heading. (see "Reddit Pulse section")
@@ -161,7 +171,10 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔷 AG-UI                                     ← community header (distinct 🔷 icon) at the very top of every AG-UI page
 *↑ Companion report — the CopilotKit half of this week is the main page:*   ← italic nav label (mirrors the main page's companion link)
 <page url="…main report…">CopilotKit main report title</page>             ← companion link BACK to the main page (every AG-UI page has one)
-## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
+## 📈 Trends — AG-UI                            ← compact context strip, always-open, AG-UI-scoped: AG-UI issues filed/week + AG-UI Reddit mentions/week, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
+---
+
+## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}, with owner + priority). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
 ---
 
    ### 💢 Pain                                 ← AG-UI community body; plain `###` header, each item a `#### {toggle}` card (see "Section item cards")
@@ -191,7 +204,7 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 
 ## Page rendering rules
 
-- **Always-open sections:** Header, 📦/🔷 community header + companion link, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, 🔄 Patterns — the takeaways, Gaps & follow-ups. **Patterns is always open — never a `<details>`.** It's the most-read section.
+- **Always-open sections:** Header, 📦/🔷 community header + companion link, 📈 Trends, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, 🔄 Patterns — the takeaways, Gaps & follow-ups. **Patterns is always open — never a `<details>`.** It's the most-read section.
 - **Toggle headings:** every Top-issue card (`### N. … {toggle="true"}`), **every item card in 🔥 Demand / 💢 Pain / 📚 Docs** (`#### … {toggle="true"}` — see "Section item cards"; the 🔥/💢/📚 section headers themselves are plain `###`, not toggles), and **each 🟠 Reddit Pulse section** (`## … {toggle="true"}`, with its score + band in the heading so it reads while collapsed). Card/body lines **tab-indented** to sit inside the toggle.
 - **No 🚨 sirens on the Top-issue cards.** Rank them `### 1.` / `### 2.` … — the numbering carries the priority.
 - **`<details><summary>` blocks:** Early signals, Pulse body, Community ops, Methodology. (Patterns is NOT one of these.)
@@ -214,7 +227,8 @@ Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Doc
 
 - **What** = the concrete thing, one sentence. **Impact / Why it matters** = who it hits and how bad / why we'd act. **Fix plan / Status / Fix** = shipped / in-progress / not-started + the PR or release (Pain, Top issues); requested / on-roadmap / workaround-exists (Demand); which doc to write or repair (Docs).
 - **Source link lives in the title or the What line** — mandatory, per "Source links are mandatory". Reporter handle hyperlinked.
-- **One item, one card.** Don't merge two unrelated reports into one card; don't let a card spill past the three lines — depth goes in the linked issue or in 🔄 Patterns.
+- **Owner + Priority — a fourth meta line, mandatory on 🔝 Top issues and 🏢 Enterprise question cards** (optional elsewhere): `**Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low`. **Owner** = who drives the issue to the other side (maintainers / eng); left **blank** for manual assignment — never auto-name a person. **Priority** = derived from the front-door ranking score → H/M/L (see `front-door-triage` "Priority from rank"); set the band, overridable by hand.
+- **One item, one card.** Don't merge two unrelated reports into one card; don't let a card spill past the three lines (+ the Owner/Priority meta line) — depth goes in the linked issue or in 🔄 Patterns.
 - **Short title ≈ 3–6 words that name the thing** (`A2UI needs scaffolding`, not `Issue with A2UI`).
 
 Sections that do NOT use this card format: ✅ Resolved (XML table), 🟠 Reddit Pulse (one-line post bullets), 📊 Pulse, Community ops, Early signals — these stay tables / one-liners / `<details>` as specified.
@@ -238,6 +252,7 @@ What goes in it (per leadership):
   - **What:** the concrete failure.
   - **Impact:** who hit it and how bad.
   - **Fix plan:** shipped / in-progress / not-started + the PR or release. Call out **"fixed same day"** when true.
+  - **Owner + Priority** (meta line): `**Owner:** _<blank>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low` — owner left blank for Nathan to assign; priority derived from the rank (see `front-door-triage` "Priority from rank").
 - **Tag each `[CK]` / `[AG-UI]` / `[CK + AG-UI]`** and link the canonical issue.
 - **Front-page items get the CI-gap takeaway.** If something big shipped broken, ask "how did this ship?" — usually a missing smoke test.
 - The front-door P0 categories (`front-door-triage` skill) define what's *eligible*; the ranking decides what's *shown*.
@@ -261,6 +276,16 @@ Contents:
 - **Tie-breaks** — note any (Blast radius, then Surface tier) so the order is fully reproducible.
 
 **Companion `🔬 Ranking comparison` child page.** Shows the algo earning its keep: the **naive order** (rank by loudness) vs the **scored order**, as a `candidate | naive rank | algo rank | Δ` table, then a short "what changed, and why". When the order is unchanged, say so — that's the algo validating the read.
+
+## Trends section (counts in context)
+
+`## 📈 Trends` is **always-open**, compact, and sits directly under the companion link, above 🔝 Top issues — so every number this week reads against its recent history. The point is context, not analysis: "is this a heavy week or a quiet one?"
+
+- **Two weekly series, ~12 weeks** (rolling, oldest → newest): **issues filed/week** and **Reddit mentions/week** (data from orchestrator step 8b).
+- **Render as ASCII bars** (same style as the Pulse month-over-month bars), one row per week, newest at the bottom, with the count. Keep it tight — a small `<table header-row="true">` or a fenced block, not a sprawling chart. Label this week's row.
+- **One-line read under each series** — e.g. *"Issues: 32 this week vs ~24/wk trailing — running hot, the v2-migration arc."* State up/down/flat against the trailing average; don't over-interpret.
+- **Scope:** main page = cross-community (CK + AG-UI combined); AG-UI sub-page = AG-UI-only series. (Reddit mentions ≈ raw brand-term post counts/week — distinct from the scored Pulse; this is volume, the Pulse is sentiment.)
+- **Extensible:** issues + Reddit mentions are the standing two. Add a series (Discord threads/week, enterprise reporters/week) only when it earns the row — don't pad.
 
 ## Docs section (standing, weekly)
 
@@ -345,9 +370,17 @@ Each section's 0–100 score is **calculated, not asserted**, and published on a
 
 When the algorithm changes, update the child page (don't recreate it) AND this section — per the meta-rule.
 
-## Enterprise section (current-employer rule)
+## Enterprise section (elevated, current-employer rule)
 
-🏢 Enterprise stays cross-community on the main page, below the CopilotKit sections. Two subsections:
+🏢 Enterprise is **cross-community and elevated to the top of the main page — directly under 🔝 Top issues, above the CopilotKit community body** (per Nathan: enterprise gets highlighted, not buried). Four subsections, in order:
+
+**🚩 Enterprise questions & complaints** (highlighted first) — **any question or complaint this week that touches an enterprise surface or the enterprise offering**, gathered from GitHub + Discord + Slack. This is the catch-all so nothing enterprise hides in the general body.
+- The **threads / persistence ("enterprise threads") tier** is enterprise by definition — a complaint about paying for threads, the persistence tier, or the self-host runtime belongs here, not just in Pain. (Precedent this cycle: the "threads off" / paid-persistence friction is an enterprise complaint.)
+- Each item is a **card** in the universal format (What / Impact / Fix plan) **plus the Owner + Priority meta line** — owner blank for Nathan, priority derived from rank.
+- Cross-reference, don't duplicate: if it's already a Top issue, list it here with a one-line pointer ("see Top issue #N") rather than repeating the full card.
+- If there were none, say so explicitly: "No enterprise-specific questions or complaints this week."
+
+**🎯 Prospective enterprise customers** (community-sourced) — see "Prospective enterprise customers" below.
 
 **Companies building on us this week** — the signal is **a company currently using/building on us**, surfaced through someone who *currently* works there.
 - **Verify the current employer** with `gh api users/<login>` AND read the bio — the `company` field is often stale. If the bio says "ex-", "previously", "prior experience: …", they do NOT count. (Precedent: a reporter showed `company: Apple` but bio said "Prior experience: Apple" — ex-Apple, dropped.)
@@ -356,6 +389,19 @@ When the algorithm changes, update the child page (don't recreate it) AND this s
 - When correcting a prior week's overcount, say so in a short `<details>` so the trend stays honest.
 
 **Enterprise-offering reactions** — explicitly report community reaction to the enterprise surfaces, especially **Slack / Teams integrations** and **threads / persistence**. **If there was no reaction, say so** — silence is itself a signal.
+
+### Prospective enterprise customers (community-sourced)
+
+A standing subsection naming **community members who look like enterprise prospects** — people the sales team would want to know are in the community, building on us. This is a *lead list from the wild*, separate from "Companies building on us" (which is about who's already a confirmed current-employer signal).
+
+- **Who qualifies:** someone active in Discord/GitHub/Reddit whose company is a recognizable enterprise/well-funded scale-up evaluating or building with CopilotKit/AG-UI — e.g. **Jasper AI** this cycle. Judge by the company, the depth of engagement, and the use case, not just a logo. When unsure, include with a "(worth a look)" note rather than dropping.
+- **One bullet per prospect:**
+  ```
+  - [`<handle>`](source-url) 🏢 **<Company>** — <what they're building / asking, one line, linked> · **Passed to (sales):** _<blank — Nathan fills>_
+  ```
+- **`Passed to (sales):` is a blank owner field** — never auto-name a person; Nathan tags whoever on sales he handed the lead to. Same manual-owner rule as the issue cards.
+- **Source link mandatory** (the thread / issue / Reddit post that surfaced them) — per the source-link rule.
+- If none this week: "No new community-sourced enterprise prospects this week."
 
 ## Patterns — the takeaways (elevated)
 

@@ -1,6 +1,6 @@
 ---
 name: enterprise
-description: Enterprise-specific view across CopilotKit + AG-UI. Tracks enterprise product surfaces (Enterprise Intelligence, CopilotKit Cloud, License flow, SSO, Self-host runtime, Security disclosure, Billing) and enterprise reporters with prior-week trend. Can run standalone ("who's at enterprise this week") or be invoked by weekly-report. Triggers on "enterprise report", "enterprise signals", "enterprise status", "who at enterprise this week".
+description: Enterprise-specific view across CopilotKit + AG-UI. Tracks enterprise product surfaces (Enterprise Intelligence, CopilotKit Cloud, License flow, SSO, Self-host runtime, Security disclosure, Billing), enterprise questions/complaints (incl. the threads/persistence tier), community-sourced enterprise prospects (e.g. Jasper AI) with a sales owner, and enterprise reporters with prior-week trend. In the weekly report it is elevated to the top. Can run standalone ("who's at enterprise this week") or be invoked by weekly-report. Triggers on "enterprise report", "enterprise signals", "enterprise status", "who at enterprise this week".
 ---
 
 # Enterprise signals
@@ -65,11 +65,29 @@ If no enterprise reporters this week, render the section with prior-week trend l
 **0 in actionable clusters this week** · **prior week: M** (...) · **trend ↓**
 ```
 
+## Enterprise questions & complaints (highlighted, top of section)
+
+In the weekly report the 🏢 Enterprise section is **elevated to the top of the main page** (under 🔝 Top issues, above the community body) and **leads with `### 🚩 Enterprise questions & complaints`** — the catch-all for **any question or complaint touching an enterprise surface or the enterprise offering**, gathered across GitHub + Discord + Slack so nothing enterprise hides in the general body.
+
+- **The threads / persistence ("enterprise threads") tier is enterprise by definition.** A complaint about paying for threads, the persistence tier, or self-host runtime ownership belongs here — not just buried in Pain. (Precedent: the "threads off" / paid-persistence friction is an enterprise complaint, surfaced here.)
+- Each item is a **card** (What / Impact / Fix plan) **plus an Owner + Priority meta line** — `**Owner:** _<blank>_ · **Priority:** 🔴/🟡/🟢` (owner blank for manual assignment; priority derived from rank — see `front-door-triage`).
+- Already a Top issue? List here with a one-line pointer ("see Top issue #N"), don't duplicate the card.
+- None this week → say so explicitly.
+
+## Prospective enterprise customers (community-sourced)
+
+A standing subsection (`### 🎯 Prospective enterprise customers`) naming **community members who look like enterprise prospects** — a lead list from the wild, distinct from "Companies building on us" (confirmed current-employer signal).
+
+- **Qualifies:** active in Discord/GitHub/Reddit, company is a recognizable enterprise / well-funded scale-up evaluating or building on us (e.g. **Jasper AI**). Judge by company + engagement depth + use case. When unsure, include with "(worth a look)".
+- **One bullet per prospect:** `- [`<handle>`](source-url) 🏢 **<Company>** — <what they're building/asking, linked> · **Passed to (sales):** _<blank — Nathan fills>_`
+- **`Passed to (sales):` is a blank owner field** — Nathan tags whoever on sales he handed the lead to; never auto-named.
+- **Source link mandatory.** None this week → "No new community-sourced enterprise prospects this week."
+
 ## When to flag
 
 - **Enterprise reporter in top pain or top demand cluster** — call out explicitly in the Highlights section ("both are in the top pain cluster").
 - **Enterprise surface marked BROKEN** — promote to Highlights bullet.
-- **High-volume undeclared reporter** (no public affiliation but technical depth suggests undeclared enterprise engineer) — separate "worth a cold outreach" bullet.
+- **High-volume undeclared reporter** (no public affiliation but technical depth suggests undeclared enterprise engineer) — surface as a 🎯 Prospective enterprise customer ("worth a cold outreach").
 
 ## Cross-references
 
