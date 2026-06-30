@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/lib/auth';
+import { requireSession, requireAdmin } from '@/lib/require-admin';
 import { prisma } from '@copilotkit/outpost/db';
 import type { Prisma } from '@copilotkit/outpost/db';
 
@@ -25,10 +24,8 @@ const VALID_ACTION_TYPES: AgentActionType[] = [
  * List all agents, with optional search filter.
  */
 export async function GET(request: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { error } = await requireSession();
+    if (error) return error;
 
     const { searchParams } = request.nextUrl;
     const search = searchParams.get('search') || undefined;
@@ -56,10 +53,8 @@ export async function GET(request: NextRequest) {
  * Create a new agent. Required: name, config.actionType, config.triggerType.
  */
 export async function POST(request: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { error } = await requireAdmin();
+    if (error) return error;
 
     try {
         const body = await request.json();

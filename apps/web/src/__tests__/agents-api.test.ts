@@ -73,7 +73,7 @@ const MOCK_AGENT = {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function userSession(memberId = 'tm-1', role = 'MEMBER') {
+function userSession(memberId = 'tm-1', role = 'ADMIN') {
     return {
         user: {
             id: memberId,
