@@ -75,10 +75,11 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
-8b. **Build the 📈 Trends strip** (see "Trends section"). Two ~12-week weekly series, cheap to compute:
+8b. **Build the 📈 Trends strip** (see "Trends section"). ~12-week weekly series, cheap to compute:
    - **Issues filed / week** — bucket the last 12 Fri→Fri weeks. Per week, per repo: `gh issue list --repo <repo> --state all --search "created:<wk-start>..<wk-end>" --json number --jq 'length'`. Main page = CK + AG-UI combined per week; AG-UI page = AG-UI only.
-   - **Reddit mentions / week** — from Subagent E's 90-day pull (≈13 weeks), bucket the surfaced+deduped brand-term posts by `created_utc` into the same weekly bins. Main page = both communities; AG-UI page = AG-UI-subject only.
-   - Hand both series to the synthesis as small integer arrays → render as ASCII bars. This week's bar is the rightmost; the strip is what makes "32 issues" read as up/down/flat.
+   - **Issues resolved (closed) / week** — same buckets: `gh issue list --repo <repo> --state closed --search "closed:<wk-start>..<wk-end>" --json number --jq 'length'`. Pairs with filed for the filed-vs-resolved chart. **Watch for bulk-close outliers** (a single week with a 100s-of-issues sweep) — cap the bar + annotate, don't let it set the scale.
+   - **Reddit mentions / week** — from Subagent E's 90-day pull (≈13 weeks), bucket the surfaced+deduped brand-term posts by `created_utc`. Usually sparse → render as a one-line note, not a weekly bar chart, unless volume justifies bars.
+   - Hand the series to the synthesis as small integer arrays → render as ASCII bars in the collapsible Trends toggle. This week's row is the bottom; the strip is what makes "30 issues" read as up/down/flat and shows whether the backlog is growing.
 
 9. **Detect resolutions.** Classify each in-window CLOSED GitHub issue: `FIX_PR_MERGED` / `BACKFILLED` / `FALSE_POSITIVE` / `DUPLICATE` / `WONT_FIX` / `CLOSED_NO_ACTION`. **Discord threads with a green-check ✅ / accepted-answer marker (step 2) are ALSO resolutions** — classify them `DISCORD_ANSWERED` and list them in ✅ Resolved this week alongside the GitHub closures. (A Discord thread can be resolved even when a related GitHub issue stays open — they're different tickets; resolve only what the green-check actually covers.)
 
@@ -129,7 +130,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <page url="…">AG-UI sub-page title</page>      ← AG-UI sub-page link (give the sub-page a DISTINCT icon, e.g. 🔷, so it doesn't mirror the 📦 header)
 ---
 
-## 📈 Trends                                    ← compact context strip, always-open, cross-community. ~12-week ASCII bars: issues filed/week + Reddit mentions/week, so this week's numbers read in context. See "Trends section".
+## 📈 Trends {toggle="true"}                    ← collapsible context strip, cross-community. ~12-week ASCII bars: issues filed/week, a filed-vs-resolved chart, + a Reddit-mentions note, so this week's numbers read in context. See "Trends section".
 ---
 
 ## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Each item a toggle: what · impact · fix plan · owner · priority, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
@@ -171,7 +172,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔷 AG-UI                                     ← community header (distinct 🔷 icon) at the very top of every AG-UI page
 *↑ Companion report — the CopilotKit half of this week is the main page:*   ← italic nav label (mirrors the main page's companion link)
 <page url="…main report…">CopilotKit main report title</page>             ← companion link BACK to the main page (every AG-UI page has one)
-## 📈 Trends — AG-UI                            ← compact context strip, always-open, AG-UI-scoped: AG-UI issues filed/week + AG-UI Reddit mentions/week, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
+## 📈 Trends — AG-UI {toggle="true"}            ← collapsible context strip, AG-UI-scoped: AG-UI issues filed/week + filed-vs-resolved + AG-UI Reddit-mentions note, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
 ---
 
 ## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}, with owner + priority). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
@@ -204,7 +205,8 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 
 ## Page rendering rules
 
-- **Always-open sections:** Header, 📦/🔷 community header + companion link, 📈 Trends, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, 🔄 Patterns — the takeaways, Gaps & follow-ups. **Patterns is always open — never a `<details>`.** It's the most-read section.
+- **Always-open sections:** Header, 📦/🔷 community header + companion link, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, 🔄 Patterns — the takeaways, Gaps & follow-ups. **Patterns is always open — never a `<details>`.** It's the most-read section.
+- **📈 Trends is a collapsible heading toggle** (`## 📈 Trends {toggle="true"}`) — its whole body (both tables + notes) is **tab-indented** to nest inside the toggle. (Notion heading-toggles only collapse children that are indented; un-indented tables render outside the toggle.)
 - **Toggle headings:** every Top-issue card (`### N. … {toggle="true"}`), **every item card in 🔥 Demand / 💢 Pain / 📚 Docs** (`#### … {toggle="true"}` — see "Section item cards"; the 🔥/💢/📚 section headers themselves are plain `###`, not toggles), and **each 🟠 Reddit Pulse section** (`## … {toggle="true"}`, with its score + band in the heading so it reads while collapsed). Card/body lines **tab-indented** to sit inside the toggle.
 - **No 🚨 sirens on the Top-issue cards.** Rank them `### 1.` / `### 2.` … — the numbering carries the priority.
 - **`<details><summary>` blocks:** Early signals, Pulse body, Community ops, Methodology. (Patterns is NOT one of these.)
@@ -279,13 +281,19 @@ Contents:
 
 ## Trends section (counts in context)
 
-`## 📈 Trends` is **always-open**, compact, and sits directly under the companion link, above 🔝 Top issues — so every number this week reads against its recent history. The point is context, not analysis: "is this a heavy week or a quiet one?"
+`## 📈 Trends {toggle="true"}` is a **collapsible** toggle, compact, sitting directly under the companion link, above 🔝 Top issues — so every number this week reads against its recent history. The point is context, not analysis: "is this a heavy week or a quiet one, and are we keeping up?" **Its whole body is tab-indented to nest inside the toggle** (see Page rendering rules — un-indented tables fall outside the collapse).
 
-- **Two weekly series, ~12 weeks** (rolling, oldest → newest): **issues filed/week** and **Reddit mentions/week** (data from orchestrator step 8b).
-- **Render as ASCII bars** (same style as the Pulse month-over-month bars), one row per week, newest at the bottom, with the count. Keep it tight — a small `<table header-row="true">` or a fenced block, not a sprawling chart. Label this week's row.
-- **One-line read under each series** — e.g. *"Issues: 32 this week vs ~24/wk trailing — running hot, the v2-migration arc."* State up/down/flat against the trailing average; don't over-interpret.
-- **Scope:** main page = cross-community (CK + AG-UI combined); AG-UI sub-page = AG-UI-only series. (Reddit mentions ≈ raw brand-term post counts/week — distinct from the scored Pulse; this is volume, the Pulse is sentiment.)
-- **Extensible:** issues + Reddit mentions are the standing two. Add a series (Discord threads/week, enterprise reporters/week) only when it earns the row — don't pad.
+Two standing charts, **~12 weeks** (rolling, oldest → newest, newest row at the bottom, this-week row bolded), rendered as ASCII bars in a tight `<table header-row="true">`:
+
+1. **Issues filed / week** — a single-bar sparkline (`▓`). The headline "how busy is this week" read.
+2. **Issues filed vs resolved / week** — two values per row, `▓` filed and `▒` resolved, so the backlog trend is visible (are we closing faster than we file?). This is the chart Nathan asked for — it answers "are we keeping up," not just "how much came in."
+
+- **A Reddit-mentions note** (not a third bar chart unless volume justifies it) — brand-term post counts are usually too sparse for weekly bars; state the rolling count and point to 🟠 Reddit Pulse.
+- **One-line read under each chart** — e.g. *"Issues: 30 this week vs ~24/wk trailing — running hot"* and *"resolved ≥ filed the last 3 weeks — backlog shrinking."* State up/down/flat vs the trailing average; don't over-interpret.
+- **Cap bulk-close outliers.** A one-time mass-close (e.g. a 280-issue triage sweep in a single week) wrecks the resolved-bar scale — **cap the bar and annotate it inline** (`(1-time sweep)`) + a footnote, so it doesn't read as normal throughput.
+- **Data** from orchestrator step 8b: filed = `gh issue list --search "created:<wk>"` per week; resolved = `gh issue list --state closed --search "closed:<wk>"` per week; both repos.
+- **Scope:** main page = cross-community (CK + AG-UI combined); AG-UI sub-page = AG-UI-only series.
+- **Extensible:** issues-filed + filed-vs-resolved are the standing two charts. Add a series (Discord threads/week, enterprise reporters/week) only when it earns the row — don't pad.
 
 ## Docs section (standing, weekly)
 
