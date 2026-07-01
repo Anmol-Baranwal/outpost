@@ -130,7 +130,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <page url="…">AG-UI sub-page title</page>      ← AG-UI sub-page link (give the sub-page a DISTINCT icon, e.g. 🔷, so it doesn't mirror the 📦 header)
 ---
 
-## 📈 Trends {toggle="true"}                    ← collapsible context strip, cross-community. ONE ~12-week filed-vs-resolved table (Week · Filed · Resolved, counts + bars) + the per-community month-over-month table + a Reddit-mentions note. See "Trends section".
+## 📈 Trends {toggle="true"}                    ← collapsible context strip, cross-community. ONE ~12-week filed-vs-resolved table (Week · Filed · Resolved, counts + bars) + a one-line per-community read + a Reddit-mentions note. See "Trends section".
 ---
 
 ## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Each item a toggle: what · impact · fix plan · owner · priority, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
@@ -172,7 +172,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔷 AG-UI                                     ← community header (distinct 🔷 icon) at the very top of every AG-UI page
 *↑ Companion report — the CopilotKit half of this week is the main page:*   ← italic nav label (mirrors the main page's companion link)
 <page url="…main report…">CopilotKit main report title</page>             ← companion link BACK to the main page (every AG-UI page has one)
-## 📈 Trends — AG-UI {toggle="true"}            ← collapsible context strip, AG-UI-scoped: ONE filed-vs-resolved table + per-community month-over-month table + Reddit-mentions note, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
+## 📈 Trends — AG-UI {toggle="true"}            ← collapsible context strip, AG-UI-scoped: ONE filed-vs-resolved table + a one-line read + Reddit-mentions note, ~12 weeks. (Enterprise + prospects stay cross-community on the main page — not duplicated here.)
 ---
 
 ## 🔝 Top issues of the week — AG-UI            ← AG-UI's OWN ranked list. AG-UI front-door breaks appear here AND on the main page; CopilotKit-only issues NEVER appear here. Same card format (### 1. … {toggle}, with owner + priority). Note "(also Top issue #N on the CopilotKit report)" on the shared ones.
@@ -286,12 +286,12 @@ Contents:
 Contents, in order (whole body tab-indented to nest in the toggle):
 
 1. **ONE weekly filed-vs-resolved table — `Week · Filed · Resolved (closed)`, ~12 weeks** (rolling, oldest → newest, newest row at the bottom + bolded). Each Filed/Resolved cell is `<count> <bar>` — the **number and the bar together**, `▓` filed · `▒` resolved. (Don't ship a number-less bar column — a bar with no number tells the reader nothing; that's why the old standalone "filed sparkline" + "Trend" column were dropped. One table, both series, numbers on every bar.)
-2. **Month-over-month, per community** — `Community · Filed prev (<Mon YYYY>) · Resolved prev · Filed this (<Mon YYYY>, MTD) · Resolved this (MTD)` with a bold **Combined (CK + AG-UI)** row. The per-community + monthly cut the weekly table lacks; it lives **here in Trends**, not 📊 Pulse (moved 2026-06-30 to kill the duplicate filed-vs-resolved view). **Label the current month MTD** + note the cutoff (the month isn't over, so a drop vs last month is partly calendar). GitHub-only (Discord resolutions stay in ✅ Resolved). **Same combined table on BOTH pages** — don't split it per page.
+2. **A one-line per-community read** (a *sentence*, not a second table). The weekly table is combined-only; add one line splitting CK vs AG-UI for the month, e.g. *"Per community this month (MTD): AG-UI closes faster than it files (45 · 54), CopilotKit slightly slower (35 · 27)."* Compute with `gh created:`/`closed:` over the month windows. **A full month-over-month table was tried and cut (2026-07-01)** — it was the same filed-vs-resolved metric as the weekly table (which already spans ~3 months), so a whole second table was redundant; one sentence carries the only non-duplicate part (the per-community split).
 3. **A Reddit-mentions note** (not a bar chart) — brand-term post counts are usually too sparse for weekly bars; state the rolling count and point to 🟠 Reddit Pulse.
 
-- **One-line read under each table** — e.g. *"30 filed this week vs ~24/wk trailing — hot week"* and *"resolved ≥ filed the last 3 weeks — backlog shrinking."* State up/down/flat vs the trailing average; don't over-interpret. No percentage column — keep the cells to count + bar (a % vs-average column was considered and cut as clutter).
+- **One-line read under the weekly table** — e.g. *"30 filed this week vs ~24/wk trailing — hot week"* and *"resolved ≥ filed the last 3 weeks — backlog shrinking."* State up/down/flat vs the trailing average; don't over-interpret. No percentage column — keep the cells to count + bar (a % vs-average column was considered and cut as clutter).
 - **Cap bulk-close outliers.** A one-time mass-close (e.g. a 280-issue triage sweep in a single week) wrecks the resolved-bar scale — **cap the bar and annotate it inline** (`(1-time sweep)`), so it doesn't read as normal throughput.
-- **Data** from orchestrator step 8b: filed = `gh issue list --search "created:<wk>"` per week; resolved = `gh issue list --state closed --search "closed:<wk>"` per week; both repos. Monthly table = same with month windows.
+- **Data** from orchestrator step 8b: filed = `gh issue list --search "created:<wk>"` per week; resolved = `gh issue list --state closed --search "closed:<wk>"` per week; both repos. Per-community read = same counts over month windows, per repo.
 - **Scope:** main page = cross-community (CK + AG-UI combined weekly table; per-community monthly table); AG-UI sub-page = AG-UI-only.
 
 ## Docs section (standing, weekly)
@@ -321,7 +321,7 @@ The `### 📊 Pulse` `<details>` block on **each** page is a **point-in-time sna
 1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)."
 2. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
 
-**The month-over-month filed/resolved table moved to 📈 Trends** (2026-06-30) — it was the same filed-vs-resolved view as the Trends weekly table, just monthly, so it was redundant sitting in two sections. Pulse no longer carries it. The monthly-table mechanics (MTD labeling, `gh created:`/`closed:` per-month counts, Combined row on both pages) are specified under "Trends section".
+**No month-over-month table anywhere** (dropped 2026-07-01). It was the same filed-vs-resolved metric as the Trends weekly table (which already spans ~3 months), so it was redundant — first moved out of Pulse, then cut entirely. The only non-duplicate part (the CK-vs-AG-UI split) survives as a one-line sentence under the Trends weekly table (see "Trends section" point 2).
 
 ## Reddit Pulse section (per community, 90-day, scored)
 
