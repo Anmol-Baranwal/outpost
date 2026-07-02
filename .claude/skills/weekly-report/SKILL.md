@@ -76,6 +76,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - 1+ this week AND verifiable prior reference (issue #, thread ID, prior-report URL).
    Singletons → Early signals.
    **Override:** front-door categories skip threshold (see `front-door-triage` skill). Front-door / P0 items don't just headline their community — they feed the cross-community **🔝 Top issues of the week** ranking (see below), led by the biggest front-door break.
+   **Bug vs feature-request first (use the `deep-read-issue` `TYPE:` verdict).** A **feature request goes to 🔥 Demand — never 💢 Pain or 🔝 Top issues** (Top issues + Pain are breakage; a feature gap isn't a break). The tell: a `feat(...)`/"proposal" PR, an `enhancement`/`feature` label, or a `Feature Request` / `[Feature]` / `RFC` title ⇒ feature ⇒ Demand. A `fix(...)` PR / `[Bug]` / error-crash-broken language ⇒ bug ⇒ Pain/Top-issue eligible. **Run these checks before classifying anything as a bug**; if it's genuinely ambiguous, flag it `UNSURE` and treat it as a candidate issue (as now) only after checking — don't default to bug. (Precedent: `ag-ui#2075` "Feature Request: ADK STEP events" with a `feat(adk)` PR was moved out of AG-UI Top issues into Demand.)
 
 8. **Compute trend vs prior 7 days.** ↑ grew · ↓ shrank · → flat · ↑ new cluster.
 
