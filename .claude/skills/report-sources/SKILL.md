@@ -48,6 +48,15 @@ Child page **"Report Sources"** under the report (one per page — main report g
 - Group entries by report section (Top issues, Pain, Demand, Docs, Resolved, Enterprise) so it mirrors the report.
 - **Every link is real** (same mandatory-source-link rule as the report). A defense with an unverifiable "fact" is struck — remove it or downgrade to a stated judgment.
 
+## Findings feed back into the report — ALWAYS fix, never just flag
+
+**If the defense uncovers a discrepancy, the REPORT is corrected first — then the defense reflects the corrected report.** The Report Sources page defends the *final, accurate* report; it must never sit next to a report it just proved wrong. This is the whole point: the lawyer is a last verification pass, not a place to park known errors.
+
+- When an entry's evidence doesn't support the placement as written — wrong resolved class or date, wrong community attribution, a stale version, a rank whose axis inputs don't add up, a "fixed" with no merged PR, an enterprise claim that doesn't hold — **fix the report item first** (correct the cell/card/section/rank on the Notion page), **then** write the defense against the corrected state.
+- **The defense entry states the corrected fact, not the old one.** Don't write "the report says X but it's really Y" as the final record — fix X→Y in the report, then defend Y. (It's fine to note "corrected during the sources pass" when the correction is material, so the change is traceable.)
+- **Loop until zero unresolved discrepancies.** Re-check after fixing; the pass isn't done while any Report Sources entry contradicts the report.
+- If a discrepancy can't be resolved (the fact is genuinely unknowable), the *report* is softened to match the evidence (e.g. drop a false "merged PR" claim to "closed, no linked PR") — the report never keeps a claim the defense can't stand behind.
+
 ## When it runs
 
 - **Invoked by `weekly-report`** as one of the final steps (after the link-review pass, alongside the Loom script) — build a "Report Sources" child page for the main report (and the AG-UI sub-page).
