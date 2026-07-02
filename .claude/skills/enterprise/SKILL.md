@@ -80,13 +80,14 @@ A standing subsection (`### 🎯 Prospective enterprise customers`) naming **com
 
 - **Qualifies:** active in Discord/GitHub/Reddit, company is a recognizable enterprise / well-funded scale-up evaluating or building on us (e.g. **Jasper AI**). Judge by company + engagement depth + use case. When unsure, include with "(worth a look)".
 - **Deep-enrich each prospect via the `enrich-prospect` subagent** — finds the LinkedIn profile (employer verified against the GitHub company; keeps searching on a mismatch, never guesses), company website, and company size (ARR / latest funding round / employee count). Deep pass on the shortlist only.
-- **One structured block per prospect** (from `enrich-prospect`):
+- **COLLAPSIBLE toggle heading, company-first** (from `enrich-prospect`): `### 🎯 Prospective enterprise customers {toggle="true"}` with every block tab-indented to nest inside (whole list collapses to one line). Author with REAL newlines + REAL tabs (not `\n`/`\t`).
   ```
-  - **Issue:** [<GitHub issue title>](<issue url>)          ← **Source:** [<thread/post>](<url>) for a Discord/Reddit-sourced prospect
-    **Name:** [<Full Name>](<LinkedIn url>)                 ← or "<Full Name> — LinkedIn not confirmed"
-    **Company:** [<Company>](<company website url>)
-    **Company Details:** <ARR / latest funding round only / employee count — most-recent only, or "size unknown">
-    **Passed to (sales):** _<blank — Nathan fills>_
+  ### 🎯 Prospective enterprise customers {toggle="true"}
+  	- **Company:** [<Company>](<company website url>)
+  		**Name:** [<Full Name>](<LinkedIn url>)          ← or "<Full Name> — LinkedIn not confirmed"
+  		**Issue:** [<GitHub issue title>](<issue url>)   ← **Source:** [<thread/post>](<url>) for Discord/Reddit
+  		**Company Details:** <ARR / latest funding round only / employee count — most-recent only, or "size unknown">
+  		**Passed to (sales):** _<blank — Nathan fills>_
   ```
 - **`Passed to (sales):` is a blank owner field** — Nathan tags whoever on sales he handed the lead to; never auto-named.
 - **Identity accuracy over completeness:** unconfirmed LinkedIn → `LinkedIn not confirmed`, never a guess; never fabricate a size figure.

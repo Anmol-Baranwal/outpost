@@ -140,7 +140,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 ## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues (highlighted near the top, not buried). Cross-community. See "Enterprise section".
    ### 🚩 Enterprise questions & complaints     ← any enterprise-related question/complaint this week (e.g. threads/persistence = the "enterprise threads" tier). Each a card with owner + priority. Highlighted at the top of this section.
-   ### 🎯 Prospective enterprise customers      ← community members who look like enterprise prospects (e.g. Jasper AI), each with a **Passed to (sales):** owner field. See "Prospective enterprise customers".
+   ### 🎯 Prospective enterprise customers {toggle="true"}   ← COLLAPSIBLE, company-first. Community members who look like enterprise prospects (e.g. Jasper AI), deep-enriched (LinkedIn + company site + size) via `enrich-prospect`, each with a **Passed to (sales):** owner field. See "Prospective enterprise customers".
    ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
    ### Companies building on us this week       ← CURRENT-employer only; per-company bullets
    ### Enterprise-offering reactions            ← reaction to Slack / Teams / threads-persistence; state the silence explicitly when there's none
@@ -403,13 +403,14 @@ A standing subsection naming **community members who look like enterprise prospe
 
 - **Who qualifies:** someone active in Discord/GitHub/Reddit whose company is a recognizable enterprise/well-funded scale-up evaluating or building with CopilotKit/AG-UI — e.g. **Jasper AI** this cycle. Judge by the company, the depth of engagement, and the use case, not just a logo. When unsure, include with a "(worth a look)" note rather than dropping.
 - **Deep-enrich every prospect via the `enrich-prospect` subagent** (spawn it once with the prospect shortlist — see that skill). It finds the LinkedIn profile, **verifies the LinkedIn employer matches the GitHub company** (keeps searching if it doesn't; never links a guess), and pulls the company website + company size. This is a *deep* pass — run it only on the prospect shortlist, not on every reporter (that's `enrich-reporter`).
-- **One structured block per prospect** (from `enrich-prospect`):
+- **The subsection is a COLLAPSIBLE toggle heading, company-named-first** (from `enrich-prospect`). Section heading `### 🎯 Prospective enterprise customers {toggle="true"}`; every block tab-indented to nest inside so the whole list collapses to one line. Author with REAL newlines + REAL tabs (not `\n`/`\t` — they mangle into literal `n`/`t`).
   ```
-  - **Issue:** [<GitHub issue title>](<issue url>)          ← use **Source:** [<thread/post>](<url>) for a Discord/Reddit-sourced prospect
-    **Name:** [<Full Name>](<LinkedIn url>)                 ← or "<Full Name> — LinkedIn not confirmed" if it can't be verified
-    **Company:** [<Company>](<company website url>)
-    **Company Details:** <ARR / latest funding round only / employee count — most-recent only, or "size unknown">
-    **Passed to (sales):** _<blank — Nathan fills>_
+  ### 🎯 Prospective enterprise customers {toggle="true"}
+  	- **Company:** [<Company>](<company website url>)
+  		**Name:** [<Full Name>](<LinkedIn url>)          ← or "<Full Name> — LinkedIn not confirmed"
+  		**Issue:** [<GitHub issue title>](<issue url>)   ← use **Source:** [<thread/post>](<url>) for Discord/Reddit
+  		**Company Details:** <ARR / latest funding round only / employee count — most-recent only, or "size unknown">
+  		**Passed to (sales):** _<blank — Nathan fills>_
   ```
 - **`Passed to (sales):` is a blank owner field** — never auto-name a person; Nathan tags whoever on sales he handed the lead to. Same manual-owner rule as the issue cards.
 - **Identity accuracy over completeness:** a wrong LinkedIn link in a sales handoff is a real cost — when the LinkedIn↔company match can't be confirmed, write `LinkedIn not confirmed`, don't guess. Never fabricate a funding/ARR/employee number; use "size unknown (private, no public figures)".

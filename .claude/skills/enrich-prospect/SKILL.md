@@ -61,28 +61,28 @@ Report the single best available signal, most-recent only:
 
 ## Output block (the required format)
 
-Render each prospect as this block. **For a GitHub-sourced prospect:**
+**The whole `### 🎯 Prospective enterprise customers` subsection is a COLLAPSIBLE toggle heading** (`{toggle="true"}`) — collapsed, it shows just the section title; expanded, it reveals every prospect block. All prospect blocks are **tab-indented one level so they nest inside the toggle** (Notion heading-toggles only collapse indented children). **Company is named FIRST** in every block.
+
+Render each prospect as this block (**for a GitHub-sourced prospect**), nested under the toggle heading:
 
 ```
-- **Issue:** [<GitHub issue title>](<issue url>)
-  **Name:** [<Full Name>](<LinkedIn url>)   ← or "<Full Name> — LinkedIn not confirmed"
-  **Company:** [<Company>](<company website url>)
-  **Company Details:** <ARR / latest funding round / employee count, most-recent only>
-  **Passed to (sales):** _<blank — Nathan fills>_
+### 🎯 Prospective enterprise customers {toggle="true"}
+	- **Company:** [<Company>](<company website url>)
+		**Name:** [<Full Name>](<LinkedIn url>)   ← or "<Full Name> — LinkedIn not confirmed"
+		**Issue:** [<GitHub issue title>](<issue url>)
+		**Company Details:** <ARR / latest funding round / employee count, most-recent only>
+		**Passed to (sales):** _<blank — Nathan fills>_
+	- **Company:** [<next Company>](…)
+		…
 ```
 
-**For a Discord- / Reddit-sourced prospect** (no GitHub issue), swap the first line to the source thread:
-
-```
-- **Source:** [<thread / post title>](<thread url>)
-  **Name:** [<Full Name>](<LinkedIn url>)
-  **Company:** [<Company>](<company website url>)
-  **Company Details:** <size>
-  **Passed to (sales):** _<blank — Nathan fills>_
-```
+**For a Discord- / Reddit-sourced prospect** (no GitHub issue), swap the `Issue:` line to `**Source:** [<thread / post title>](<thread url>)`.
 
 Rules for the block:
-- **Every line carries a real link** (issue, LinkedIn, company site) per the mandatory-source-link rule. The `Issue:`/`Source:` link is what surfaced them and is non-negotiable — no link, the prospect isn't published.
+- **Company first** — the reader scans the section by company name.
+- **Collapsible section** — the section heading carries `{toggle="true"}` and every block is indented to nest inside it, so the whole prospect list collapses to one line.
+- **Author with REAL newlines and REAL tab characters** — NOT the literal escape sequences `\n` / `\t`. `notion-update-page` `replace_content` / `insert_content` pass `\n` / `\t` through as literal `n` / `t` and mangle the block (they run onto one line). Use actual line breaks + tabs. (`update_content` does interpret `\n`, but for the nested-tab structure prefer real tabs to be safe.)
+- **Every line carries a real link** (company site, LinkedIn, issue) per the mandatory-source-link rule. The `Issue:`/`Source:` link is what surfaced them and is non-negotiable — no link, the prospect isn't published.
 - **`Passed to (sales):` is always a blank owner field** — never auto-name a person; Nathan tags whoever he handed the lead to (same manual-owner rule as the issue cards).
 - One block per prospect. If two handles are the same person, merge into one block.
 
