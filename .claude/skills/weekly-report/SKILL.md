@@ -118,6 +118,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - **Correctness.** For links that exist: every Discord thread URL's thread ID came from this run's pull (never memory/prior report) and the anchor matches the thread's title; every issue/PR number matches the title quoted next to it; every Reddit permalink is the one returned by Composio this run; external links (YouTube/Loom repro, docs) appear verbatim in the source — never reconstructed; anchor text names what the reader lands on.
    Returns: the flagged-item list + what was retrieved/removed. Re-run until zero linkless items remain.
 
+14b. **Spawn the Report Sources subagent** (see `report-sources` skill). After the link-review pass, build a **"Report Sources"** child page for the report — an evidence-backed defense of WHY every item landed in its column/section/rank (front-door yes/no, the five-axis rank, bug-vs-feature, community attribution, resolved class, enterprise/prospect, maturity flag). Lawyer-rigorous (claim → evidence → rule → rebuttal → confidence) but **under oath — every claim cites a verifiable source, no invention/spin, weaknesses conceded.** One per report page (main + AG-UI). Create the returned page as a child at the bottom of the report.
+
 15. **Generate the Loom walkthrough script + remind Nathan to record it — every report, no exceptions.** As the LAST step, invoke the `loom-walkthrough` skill to produce the 5–7 min radio-show script from the finished report (plain English, sounds ad-libbed, includes the CEO-level Pain read) so recording is painless. Then remind him to record. When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
 
 16. **Update the ledger + the rules.** Write the run's surfaced + noise post ids into `docs/community-signal/reddit-pulse-seen.json`. And per the meta-rule at the top: if anything about the format changed this run, update these skill files in the same pass.
@@ -166,6 +168,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 <page url="…">📊 Top-issue ranking</page>      ← child pages at the very bottom
 <page url="…">🔬 Ranking comparison</page>
 <page url="…">🟠 Reddit Pulse — scoring algorithm</page>
+<page url="…">Report Sources</page>            ← evidence-backed defense of every placement (see `report-sources`)
 ```
 
 **AG-UI SUB-PAGE — same shape, AG-UI only**
@@ -198,6 +201,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## Gaps & follow-ups — AG-UI                     ← AG-UI-scoped checklist
 ## Methodology
 <mention-page>📊 Top-issue ranking</mention-page>  ← bottom link to the main report's ranking child page
+<page url="…">Report Sources</page>            ← AG-UI page's own evidence-backed defense (see `report-sources`)
 ```
 
 If a per-community subsection is empty, render "No X this week." Don't omit the heading. **Exception: Community ops is omitted entirely when there's nothing substantive** (see "Community ops" — hiring/self-promo/greetings alone are not news).
@@ -475,5 +479,6 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 - `enrich-prospect` — subagent for DEEP enterprise-prospect enrichment (LinkedIn + company website + size; prospect shortlist only)
 - `slack-tldr` — Slack JSON format + curl command
 - `loom-walkthrough` — the 5–7 min radio-show walkthrough script, generated after every report (last step)
+- `report-sources` — subagent: the "Report Sources" child page defending every placement with evidence (front-door, rank, section, attribution, resolved, enterprise, maturity)
 - `enterprise` — standalone enterprise view (run separately or invoked here)
 - `topic-search` — ad-hoc cross-repo topic lookup
