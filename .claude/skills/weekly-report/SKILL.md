@@ -292,7 +292,7 @@ Contents, in order (whole body tab-indented to nest in the toggle):
 - **One-line read under each table** — e.g. *"30 filed this week vs ~24/wk trailing — hot week"* and *"resolved ≥ filed the last 3 weeks — backlog shrinking."* State up/down/flat vs the trailing average; don't over-interpret. No percentage column — keep the cells to count + bar (a % vs-average column was considered and cut as clutter).
 - **Cap bulk-close outliers.** A one-time mass-close (e.g. a 280-issue triage sweep in a single week) wrecks the resolved-bar scale — **cap the bar and annotate it inline** (`(1-time sweep)`), so it doesn't read as normal throughput.
 - **Data** from orchestrator step 8b: filed = `gh issue list --search "created:<wk>"` per week; resolved = `gh issue list --state closed --search "closed:<wk>"` per week; both repos. Monthly table = same with month windows.
-- **Scope:** main page = cross-community (CK + AG-UI combined weekly table; per-community monthly table); AG-UI sub-page = AG-UI-only.
+- **Scope:** the **weekly filed-vs-resolved table** is per-page — main page = CK + AG-UI combined, AG-UI sub-page = AG-UI-only. The **month-over-month table is the SAME combined table (CK · AG-UI · Combined rows) on BOTH pages** (per the "Same combined table on BOTH pages" rule above) — it is *not* scoped or split per page.
 
 ## Docs section (standing, weekly)
 

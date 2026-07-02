@@ -20,6 +20,40 @@
         "1t5gus6",
         "1t5fvvo"
       ]
+    },
+    {
+      "run_date": "2026-06-26",
+      "window": "2026-03-28..2026-06-26",
+      "seen_ids": [
+        "1s72we1",
+        "1stdjiz",
+        "1t3kzl4",
+        "1t5q9i2",
+        "1t5qamn",
+        "1tba7cy",
+        "1tk1mxm",
+        "1tkqliz",
+        "1tuhvgt",
+        "1tuhvoo",
+        "1si3r4h",
+        "1sxx4bf",
+        "1tvyvhd"
+      ]
+    },
+    {
+      "run_date": "2026-07-02",
+      "window": "2026-04-03..2026-07-02",
+      "seen_ids": [
+        "1ul2oz2",
+        "1sbid5f",
+        "1sx3nko",
+        "1uhzbt8",
+        "1sdqdwk",
+        "1si3nya",
+        "1si4936",
+        "1t5w3pf",
+        "1ukd0er"
+      ]
     }
   ]
 }
