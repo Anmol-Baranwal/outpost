@@ -218,16 +218,17 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Docs — renders as a **self-contained toggle card**, never a run-on paragraph bullet. This is the format readers like on Top issues; it now applies to every section. A wall of prose in Pain (or anywhere) is the anti-pattern this replaces — if a reader has to parse a paragraph to find the impact, the card failed.
 
 - **Section header stays a plain heading** (`### 🔥 Demand`, `### 💢 Pain`, `### 📚 Docs`). **Each item under it is its own toggle card**, one level down: `#### <short title> {toggle="true"}`. (Top issues are ranked one level up — `### N. <title> {toggle="true"}` — same card body.)
-- **Card body = exactly three tab-indented labeled lines**, bold labels, one sentence each. The triplet adapts per section:
+- **Card body = four tab-indented labeled lines**, bold labels, one sentence each — the **What** line, then a **CopilotKit version** line, then two more that adapt per section:
 
-  | Section | Line 1 | Line 2 | Line 3 |
-  |---|---|---|---|
-  | 🔝 Top issues | **What** | **Impact** | **Fix plan** |
-  | 💢 Pain | **What** | **Impact** | **Fix plan** |
-  | 🔥 Demand | **What** | **Why it matters** | **Status** |
-  | 📚 Docs | **What** (`Drift`/`Gap`/`Links-bot`) | **Impact** | **Fix** |
+  | Section | Line 1 | Line 2 | Line 3 | Line 4 |
+  |---|---|---|---|---|
+  | 🔝 Top issues | **What** | **CopilotKit version** | **Impact** | **Fix plan** |
+  | 💢 Pain | **What** | **CopilotKit version** | **Impact** | **Fix plan** |
+  | 🔥 Demand | **What** | **CopilotKit version** | **Why it matters** | **Status** |
+  | 📚 Docs | **What** (`Drift`/`Gap`/`Links-bot`) | **CopilotKit version** | **Impact** | **Fix** |
 
 - **What** = the concrete thing, one sentence. **Impact / Why it matters** = who it hits and how bad / why we'd act. **Fix plan / Status / Fix** = shipped / in-progress / not-started + the PR or release (Pain, Top issues); requested / on-roadmap / workaround-exists (Demand); which doc to write or repair (Docs).
+- **CopilotKit version — mandatory, sits directly below What, above Impact.** The version the reporter is on: pulled from the repro / issue body, or asked-for/answered in the comments (the `deep-read-issue` subagent captures it). Write it exactly, e.g. `**CopilotKit version:** v1.61.0`. **If no version is stated anywhere in the thread, write `**CopilotKit version:** unknown`** — never guess. This flags at a glance whether a reporter is on an old release and may just need to upgrade. For an AG-UI-native issue with no CopilotKit involved, use the AG-UI package version (e.g. `@ag-ui/langgraph 0.0.42`) or `n/a — AG-UI issue`.
 - **Source link lives in the title or the What line** — mandatory, per "Source links are mandatory". Reporter handle hyperlinked.
 - **Owner + Priority — a fourth meta line, mandatory on 🔝 Top issues and 🏢 Enterprise question cards** (optional elsewhere): `**Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low`. **Owner** = who drives the issue to the other side (maintainers / eng); left **blank** for manual assignment — never auto-name a person. **Priority** = derived from the front-door ranking score → H/M/L (see `front-door-triage` "Priority from rank"); set the band, overridable by hand.
 - **One item, one card.** Don't merge two unrelated reports into one card; don't let a card spill past the three lines (+ the Owner/Priority meta line) — depth goes in the linked issue or in 🔄 Patterns.
@@ -250,8 +251,9 @@ The body **leads** with `## 🔝 Top issues of the week` — cross-community, di
 What goes in it (per leadership):
 - **Not exhaustive — only what leadership should actually know.** 3–5 items, max. A quiet week can have fewer.
 - **Ranked by importance.** Number them `### 1.` `### 2.` … Lead with the biggest front-door break — the surface the most users hit. A broken install/quickstart CLI (e.g. `npx create-ag-ui-app`) is a bigger front door than any single feature bug; an outage on the current release is front-page.
-- **Each card is self-contained** — three lines:
+- **Each card is self-contained** — four lines:
   - **What:** the concrete failure.
+  - **CopilotKit version:** the version the reporter is on (from repro / body / comments), or `unknown` — see "Section item cards".
   - **Impact:** who hit it and how bad.
   - **Fix plan:** shipped / in-progress / not-started + the PR or release. Call out **"fixed same day"** when true.
   - **Owner + Priority** (meta line): `**Owner:** _<blank>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low` — owner left blank for Nathan to assign; priority derived from the rank (see `front-door-triage` "Priority from rank").

@@ -45,6 +45,7 @@ For EACH issue number, run ALL of these — do not stop at the body:
 Capture per issue:
 - **STATUS AS OF <today>:** one line — open / closed(reason) / fixed-in-vX / merged-PR#N — derived from state + maintainer comment + linked PR, NOT from the body.
 - Reporter's specific repro (commands, version, error string).
+- **CopilotKit version (MANDATORY) — output it as its own line, `CopilotKit version: vX.Y.Z`.** Look for it in the repro / issue body, the environment/version section, or a version someone asked for and the reporter gave in the comments (scan the whole thread). Report the exact version string (e.g. `@copilotkit/runtime@1.61.0`, `@copilotkitnext 1.54.1`). **If no version appears anywhere in the thread, output `CopilotKit version: unknown` — never guess.** The orchestrator renders this on every report card (below What, above Impact) so leadership sees at a glance whether the reporter is on an old release and may just need to upgrade. For an AG-UI-native issue with no CopilotKit involved, give the AG-UI package version instead (e.g. `@ag-ui/langgraph 0.0.42`) or `n/a — AG-UI issue`.
 - **Maintainer status, quoted.** Any comment from a MEMBER / OWNER / COLLABORATOR (check authorAssociation) that states status — "fixed in 1.60.1", "closing, reopen if not", "this is a real bug", a Linear/ENT-#### ref, "PR up". Quote it with author + date.
 - **Ignore the support bot for status.** `copilotkit-support-bot` / getorca "Recommended Solutions" are auto-generated guesses, NOT maintainer status or confirmation. Note bot advice only if a human endorsed it.
 - Whether the *reporter* confirmed the fix (vs a maintainer closing speculatively).
@@ -104,6 +105,7 @@ When a fix PR was closed for a non-technical reason (branch-name violation, lint
 
 - **Status line:** the `STATUS AS OF <today>` verdict — this is what determines whether an item is a Top issue, a Pain, or Resolved. A maintainer "fixed in vX" + closed issue = Resolved (with the version), never "unverified/dangling."
 - **Symptom:** quoted technical detail (file paths, function names, error strings).
+- **CopilotKit version:** the reporter's version, or `unknown` — rendered on the report card (below What). Flags an easy "just upgrade" case fast.
 - **Fix PR:** marker (`OPEN` / `DRAFT` / `MERGED <date>`) + reviewDecision + whether the approver is a real maintainer. "No fix PR yet" only after the timeline scan in A came up empty.
 - **Cross-repo:** if the same bug spans both repos, say so and give both states — don't report one half as open when the other is fixed.
 - **Hidden second bug:** callout under the entry.
@@ -112,6 +114,7 @@ When a fix PR was closed for a non-technical reason (branch-name violation, lint
 ## Accuracy checklist (run before returning)
 
 - [ ] Every issue has a `STATUS AS OF <today>` line derived from state + maintainer comment + linked PR — not the body.
+- [ ] Every issue has a `CopilotKit version:` line — the reporter's version from repro/body/comments, or `unknown` if none stated (never guessed).
 - [ ] Timeline/linked-PR scan run for every issue (not just the ones with obvious fix PRs).
 - [ ] Every "still open / no PR / unfixed" claim re-checked against current state + timeline (this is where the wrong calls happen).
 - [ ] Maintainer status quoted with author + date; support-bot text not mistaken for status.
