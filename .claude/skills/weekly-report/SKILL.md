@@ -228,7 +228,8 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Docs — renders as a **self-contained toggle card**, never a run-on paragraph bullet. This is the format readers like on Top issues; it now applies to every section. A wall of prose in Pain (or anywhere) is the anti-pattern this replaces — if a reader has to parse a paragraph to find the impact, the card failed.
 
 - **Section header stays a plain heading** (`### 🔥 Demand`, `### 💢 Pain`, `### 📚 Docs`). **Each item under it is its own toggle card**, one level down: `#### <short title> {toggle="true"}`. (Top issues are ranked one level up — `### N. <title> {toggle="true"}` — same card body.)
-- **Card body = four tab-indented labeled lines**, bold labels, one sentence each — the **What** line, then a **CopilotKit version** line, then two more that adapt per section:
+- **First card line = a one-line plain-English caption** (italic, no label), the very first tab-indented line, above **What**. It says *what the thing actually is* in a human sentence a non-engineer would say out loud — the "in one breath" gist. **Human-voiced, NOT agent/meta:** never "Landed Top issue #1, five-axis score 13, mirrored into Enterprise" — the placement/score/section is already obvious from where the card sits. Describe the real-world thing: *"Self-hosted apps get the wrong login credentials forwarded, breaking secure server-to-server auth."* / *"React can't find a non-default agent at setup — already fixed for Vue, in testing for React."* Keep it ~8–18 words, plain, no jargon dump, no scores, no "this issue" throat-clearing.
+- **Then the labeled lines: four tab-indented labeled lines**, bold labels, one sentence each — the **What** line, then a **CopilotKit version** line, then two more that adapt per section:
 
   | Section | Line 1 | Line 2 | Line 3 | Line 4 |
   |---|---|---|---|---|
