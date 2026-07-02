@@ -79,9 +79,18 @@ In the weekly report the 🏢 Enterprise section is **elevated to the top of the
 A standing subsection (`### 🎯 Prospective enterprise customers`) naming **community members who look like enterprise prospects** — a lead list from the wild, distinct from "Companies building on us" (confirmed current-employer signal).
 
 - **Qualifies:** active in Discord/GitHub/Reddit, company is a recognizable enterprise / well-funded scale-up evaluating or building on us (e.g. **Jasper AI**). Judge by company + engagement depth + use case. When unsure, include with "(worth a look)".
-- **One bullet per prospect:** `- [`<handle>`](source-url) 🏢 **<Company>** — <what they're building/asking, linked> · **Passed to (sales):** _<blank — Nathan fills>_`
+- **Deep-enrich each prospect via the `enrich-prospect` subagent** — finds the LinkedIn profile (employer verified against the GitHub company; keeps searching on a mismatch, never guesses), company website, and company size (ARR / latest funding round / employee count). Deep pass on the shortlist only.
+- **One structured block per prospect** (from `enrich-prospect`):
+  ```
+  - **Issue:** [<GitHub issue title>](<issue url>)          ← **Source:** [<thread/post>](<url>) for a Discord/Reddit-sourced prospect
+    **Name:** [<Full Name>](<LinkedIn url>)                 ← or "<Full Name> — LinkedIn not confirmed"
+    **Company:** [<Company>](<company website url>)
+    **Company Details:** <ARR / latest funding round only / employee count — most-recent only, or "size unknown">
+    **Passed to (sales):** _<blank — Nathan fills>_
+  ```
 - **`Passed to (sales):` is a blank owner field** — Nathan tags whoever on sales he handed the lead to; never auto-named.
-- **Source link mandatory.** None this week → "No new community-sourced enterprise prospects this week."
+- **Identity accuracy over completeness:** unconfirmed LinkedIn → `LinkedIn not confirmed`, never a guess; never fabricate a size figure.
+- **Source link mandatory** (the `Issue:` / `Source:` link). None this week → "No new community-sourced enterprise prospects this week."
 
 ## When to flag
 
@@ -91,7 +100,8 @@ A standing subsection (`### 🎯 Prospective enterprise customers`) naming **com
 
 ## Cross-references
 
-- `enrich-reporter` — actually does the `gh api users/<login>` lookups
+- `enrich-reporter` — actually does the `gh api users/<login>` lookups (shallow, all reporters)
+- `enrich-prospect` — deep prospect enrichment (LinkedIn + company website + size) for the 🎯 Prospective enterprise customers list
 - `front-door-triage` — many enterprise surface issues will also match a front-door category
 - `weekly-report` — invokes this skill for the 🏢 Enterprise section
 

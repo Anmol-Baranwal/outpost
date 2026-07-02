@@ -50,6 +50,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 5. **Spawn Subagent D — Enrich reporters** (see `enrich-reporter` skill). For every GitHub author across both repos + the prior-week roster. Returns: company affiliation table + enterprise list.
 
+5b. **Spawn Subagent D2 — Deep-enrich prospects** (see `enrich-prospect` skill). AFTER D classifies the enterprise list, take the **prospect shortlist** (recognizable enterprise / well-funded scale-ups, e.g. Jasper AI / commercetools tier) and deep-enrich each: LinkedIn profile (employer verified against the GitHub company — keep searching if mismatched), company website, company size (ARR / latest funding round / employee count). Returns one structured block per prospect for the 🎯 Prospective enterprise customers subsection. Run on the shortlist ONLY, not every reporter.
+
 6. **Subagent E — Reddit Pulse pull** (per-community, rolling 90-day window). Data source = the **`composio`** MCP server (Composio tool router, OAuth). See "Reddit Pulse section" for the full spec; the mechanics:
    - **Connection check.** Reddit needs an ACTIVE Composio connection. If `COMPOSIO_SEARCH_TOOLS` reports `has_active_connection: false` for `reddit`, call `COMPOSIO_MANAGE_CONNECTIONS` (toolkit `reddit`, action `add`), surface the returned auth link to Nathan, then `COMPOSIO_WAIT_FOR_CONNECTIONS`. If `composio` isn't connected at all → render "source not configured" and move on.
    - **Discover tools once:** `COMPOSIO_SEARCH_TOOLS` (keep the returned `session_id`, reuse it on every later Composio call).
@@ -400,12 +402,18 @@ When the algorithm changes, update the child page (don't recreate it) AND this s
 A standing subsection naming **community members who look like enterprise prospects** — people the sales team would want to know are in the community, building on us. This is a *lead list from the wild*, separate from "Companies building on us" (which is about who's already a confirmed current-employer signal).
 
 - **Who qualifies:** someone active in Discord/GitHub/Reddit whose company is a recognizable enterprise/well-funded scale-up evaluating or building with CopilotKit/AG-UI — e.g. **Jasper AI** this cycle. Judge by the company, the depth of engagement, and the use case, not just a logo. When unsure, include with a "(worth a look)" note rather than dropping.
-- **One bullet per prospect:**
+- **Deep-enrich every prospect via the `enrich-prospect` subagent** (spawn it once with the prospect shortlist — see that skill). It finds the LinkedIn profile, **verifies the LinkedIn employer matches the GitHub company** (keeps searching if it doesn't; never links a guess), and pulls the company website + company size. This is a *deep* pass — run it only on the prospect shortlist, not on every reporter (that's `enrich-reporter`).
+- **One structured block per prospect** (from `enrich-prospect`):
   ```
-  - [`<handle>`](source-url) 🏢 **<Company>** — <what they're building / asking, one line, linked> · **Passed to (sales):** _<blank — Nathan fills>_
+  - **Issue:** [<GitHub issue title>](<issue url>)          ← use **Source:** [<thread/post>](<url>) for a Discord/Reddit-sourced prospect
+    **Name:** [<Full Name>](<LinkedIn url>)                 ← or "<Full Name> — LinkedIn not confirmed" if it can't be verified
+    **Company:** [<Company>](<company website url>)
+    **Company Details:** <ARR / latest funding round only / employee count — most-recent only, or "size unknown">
+    **Passed to (sales):** _<blank — Nathan fills>_
   ```
 - **`Passed to (sales):` is a blank owner field** — never auto-name a person; Nathan tags whoever on sales he handed the lead to. Same manual-owner rule as the issue cards.
-- **Source link mandatory** (the thread / issue / Reddit post that surfaced them) — per the source-link rule.
+- **Identity accuracy over completeness:** a wrong LinkedIn link in a sales handoff is a real cost — when the LinkedIn↔company match can't be confirmed, write `LinkedIn not confirmed`, don't guess. Never fabricate a funding/ARR/employee number; use "size unknown (private, no public figures)".
+- **Source link mandatory** (the `Issue:` / `Source:` link that surfaced them) — per the source-link rule. No source link → not published.
 - If none this week: "No new community-sourced enterprise prospects this week."
 
 ## Patterns — the takeaways (elevated)
@@ -453,7 +461,8 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 - `front-door-triage` — P0 categories and classification rules
 - `deep-read-issue` — subagent flow for issue + fix PR deep read
 - `release-scan` — subagent: in-cycle release fix-map + authoritative version (open-issue cross-check)
-- `enrich-reporter` — subagent for GitHub author enterprise enrichment
+- `enrich-reporter` — subagent for GitHub author enterprise enrichment (shallow: company field → 🏢 badge, all reporters)
+- `enrich-prospect` — subagent for DEEP enterprise-prospect enrichment (LinkedIn + company website + size; prospect shortlist only)
 - `slack-tldr` — Slack JSON format + curl command
 - `loom-walkthrough` — the 5–7 min radio-show walkthrough script, generated after every report (last step)
 - `enterprise` — standalone enterprise view (run separately or invoked here)
