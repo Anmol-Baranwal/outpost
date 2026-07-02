@@ -9,6 +9,10 @@ Turn a finished Weekly Community Signal report into a spoken walkthrough the hos
 
 This runs **after every report** — the `weekly-report` orchestrator invokes it once both pages are published, and it's independently triggerable ("loom script", "record the loom").
 
+## Mandatory: the script MUST cover the AG-UI page
+
+The report is **two pages** — the main page (CopilotKit) and the AG-UI sub-page. **The script must walk BOTH.** A script that only covers the CopilotKit page is incomplete and must not be delivered. Segments 7–9 are the AG-UI page (top issues, pain, momentum); open them with a `[SWITCH to the AG-UI sub-page]` cue and a spoken transition so the viewer knows the page changed. Even a thin AG-UI week gets covered (compress, don't skip). This is non-negotiable.
+
 ## The #1 rule: it must not sound scripted
 
 The host reads this on camera. If it sounds read, the whole thing falls flat. So:

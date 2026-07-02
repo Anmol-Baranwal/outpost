@@ -11,6 +11,8 @@ You are the orchestrator. Your job is to **delegate the heavy work to subagents*
 
 **Whenever the workflow gains or loses something — a section, a data source, a scoring change, a window change, a tool swap — update these skill rules in the SAME change, and clean them up.** Don't leave the old text sitting next to the new (that's how this file rots into contradictions). Remove the superseded rule, fix every place that referenced it (page-structure block, rendering rules, the relevant section spec, memory), and keep the file internally consistent. These skills are the source of truth for the manual routine until the native TS port lands ([#66](https://github.com/CopilotKit/outpost/issues/66)) — a rule that isn't written here doesn't exist.
 
+**Also update the human-readable reference page in the SAME change.** Everything that goes into Community Signal is written down on the **Community Signal — Playbook & Reference** Notion page (child of the Outpost page): `https://app.notion.com/p/3913aa3818528149930feaf69de83b2b`. Whenever you change the workflow, mirror it there and **add a dated row to that page's Changelog table** — so there's one referable record humans can read without opening the skills. A change that isn't reflected on that page isn't done.
+
 ## Output
 
 A new Notion page under **Community Signals** parent (`3673aa38-1852-80bc-a71f-d328d765668d`) titled:

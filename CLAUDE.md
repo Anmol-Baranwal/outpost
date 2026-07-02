@@ -6,6 +6,8 @@ Outpost — AI-powered customer support operations platform. See [README](./READ
 
 This repo carries a runnable Claude Code skill suite under `.claude/skills/` for the weekly cross-source (Discord + GitHub) community report. The report is produced by Outpost's community manager today via the manual routine; engineering is porting it into Outpost as native TS per [#66](https://github.com/CopilotKit/outpost/issues/66). Until that lands, the skill suite IS the workflow.
 
+**Human-readable reference:** everything that goes into Community Signal is written down on the **Community Signal — Playbook & Reference** Notion page (child of the Outpost page): https://app.notion.com/p/3913aa3818528149930feaf69de83b2b — kept in sync with the skills (add a dated Changelog row there whenever the workflow changes).
+
 | Trigger | Skill |
 |---|---|
 | "go" / "weekly report" / "community signals" / "run routine" | `weekly-report` (orchestrator — spawns subagents for Discord, GitHub, deep-read, enrichment) |
