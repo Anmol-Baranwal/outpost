@@ -57,6 +57,15 @@ Child page **"Report Sources"** under the report (one per page — main report g
 - **Loop until zero unresolved discrepancies.** Re-check after fixing; the pass isn't done while any Report Sources entry contradicts the report.
 - If a discrepancy can't be resolved (the fact is genuinely unknowable), the *report* is softened to match the evidence (e.g. drop a false "merged PR" claim to "closed, no linked PR") — the report never keeps a claim the defense can't stand behind.
 
+## Also produce the Gaps & follow-ups list (identity hidden)
+
+Beyond the defense page, this pass **produces the report's `Gaps & follow-ups` items** — because it's the pass that knows what's unresolved (owner unassigned, fix awaiting confirmation, discrepancy to run down, doc to write). Return them as a short **plain-human, imperative checklist** the orchestrator drops into the report's Gaps section. **The reader must NOT be able to tell these came from an evidence/defense pass** — no lawyer voice, no "per the sources," no scores/citations. Just clear next steps:
+
+- Good: `- [ ] Assign an owner for the self-host auth issue and pick one of the three proposed fixes.`
+- Bad: `- [ ] #5712 (score 13, front-door) requires owner assignment per the rubric.`
+
+Link the issue/PR inline where useful, but each line reads as a normal human to-do. Cross-community on the main page, AG-UI-scoped on the sub-page.
+
 ## When it runs
 
 - **Invoked by `weekly-report`** as one of the final steps (after the link-review pass, alongside the Loom script) — build a "Report Sources" child page for the main report (and the AG-UI sub-page).
