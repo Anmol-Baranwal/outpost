@@ -44,7 +44,15 @@ For EACH issue number, run ALL of these — do not stop at the body:
 
 Capture per issue:
 - **STATUS AS OF <today>:** one line — open / closed(reason) / fixed-in-vX / merged-PR#N — derived from state + maintainer comment + linked PR, NOT from the body.
+- **TYPE — bug vs feature-request (MANDATORY, run the checks BEFORE calling anything a bug).** Don't assume an issue is a bug. Classify it first, from signals in this order:
+  - **Feature request** if ANY of: the issue title says `Feature Request` / `[Feature]` / `Proposal` / `RFC` / `Enhancement`; the issue has a `feature` / `enhancement` / `proposal` label; **its fix PR is `feat(...)` (conventional-commit) or its title/body says "proposal"** (a `feat` or "proposal" PR is the strongest signal — treat as feature). Feature requests belong in **🔥 Demand**, never in 💢 Pain or 🔝 Top issues (unless a front-door break).
+  - **Bug** if: `[Bug]` title / `bug` label / a `fix(...)` PR / the reporter says something errors, crashes, throws, 404s, regressed, or returns wrong output.
+  - **Ambiguous / could-go-either-way → FLAG it, don't silently call it a bug.** Output `TYPE: UNSURE (bug|feature?) — <why>` and list what you checked (labels, PR prefix, title/body language). When in doubt continue treating it as a candidate issue as we do now, but only after running these checks — never default to "bug" without them.
+  - Output one line: `TYPE: bug` / `TYPE: feature-request` / `TYPE: UNSURE — <why>`.
 - Reporter's specific repro (commands, version, error string).
+- **CopilotKit version (MANDATORY) — output it as its own line, `CopilotKit version: vX.Y.Z`.** Look for it in the repro / issue body, the environment/version section, or a version someone asked for and the reporter gave in the comments (scan the whole thread). Report the exact version string (e.g. `@copilotkit/runtime@1.61.0`, `@copilotkitnext/core 1.54.0`). **If no version appears anywhere in the thread, output `CopilotKit version: unknown` — never guess.** The orchestrator renders this on every report card (below What, above Impact) so leadership sees at a glance whether the reporter is on an old release and may just need to upgrade. For an AG-UI-native issue with no CopilotKit involved, give the AG-UI package version instead (e.g. `@ag-ui/langgraph 0.0.42`) or `n/a — AG-UI issue`.
+  - **Surface package MATURITY explicitly** (`stable` / `deprecated` / `experimental` / `pre-release 0.x` / `beta`). If the reporter is on anything that isn't a stable current release, say so loudly — the orchestrator must put this in the card's FIRST SENTENCE (What line), not bury it, so Nathan can tell at a glance it may be a "just migrate/upgrade" case and NOT tag engineering. Output e.g. `MATURITY: deprecated (@copilotkitnext)` or `MATURITY: pre-release 0.x (@ag-ui/*)`.
+  - **`@copilotkitnext/*` = DEPRECATED (the useAgent-era experimental v2 line).** As of 2026-06-18 the `@copilotkitnext/*` packages are deprecated on npm and merged into `@copilotkit` v2 — `@copilotkitnext/core` → `@copilotkit/core`, `@copilotkitnext/react` → `@copilotkit/react-core/v2`, `@copilotkitnext/runtime` → `@copilotkit/runtime/v2` (last publish 1.54.1; current `@copilotkit` is on the 1.6x line). **Two things follow:** (1) a reporter on `@copilotkitnext/*` is on a dead package → the version line should note `(deprecated — migrate to @copilotkit/*/v2)` and the fix plan should first check whether the bug is already gone in current `@copilotkit` v2 (often it's a "just migrate" case, not a code fix); (2) **cite the exact subpackage the reporter used, never the bare scope `@copilotkitnext`** (which isn't a valid package). Also note: coding agents frequently *invent* `@copilotkitnext` from training data because it was real during useAgent development — so only report it when the REPORTER'S OWN text uses it; don't let an agent's guess put it on the card.
 - **Maintainer status, quoted.** Any comment from a MEMBER / OWNER / COLLABORATOR (check authorAssociation) that states status — "fixed in 1.60.1", "closing, reopen if not", "this is a real bug", a Linear/ENT-#### ref, "PR up". Quote it with author + date.
 - **Ignore the support bot for status.** `copilotkit-support-bot` / getorca "Recommended Solutions" are auto-generated guesses, NOT maintainer status or confirmation. Note bot advice only if a human endorsed it.
 - Whether the *reporter* confirmed the fix (vs a maintainer closing speculatively).
@@ -104,6 +112,7 @@ When a fix PR was closed for a non-technical reason (branch-name violation, lint
 
 - **Status line:** the `STATUS AS OF <today>` verdict — this is what determines whether an item is a Top issue, a Pain, or Resolved. A maintainer "fixed in vX" + closed issue = Resolved (with the version), never "unverified/dangling."
 - **Symptom:** quoted technical detail (file paths, function names, error strings).
+- **CopilotKit version:** the reporter's version, or `unknown` — rendered on the report card (below What). Flags an easy "just upgrade" case fast.
 - **Fix PR:** marker (`OPEN` / `DRAFT` / `MERGED <date>`) + reviewDecision + whether the approver is a real maintainer. "No fix PR yet" only after the timeline scan in A came up empty.
 - **Cross-repo:** if the same bug spans both repos, say so and give both states — don't report one half as open when the other is fixed.
 - **Hidden second bug:** callout under the entry.
@@ -112,6 +121,8 @@ When a fix PR was closed for a non-technical reason (branch-name violation, lint
 ## Accuracy checklist (run before returning)
 
 - [ ] Every issue has a `STATUS AS OF <today>` line derived from state + maintainer comment + linked PR — not the body.
+- [ ] Every issue has a `CopilotKit version:` line — the reporter's version from repro/body/comments, or `unknown` if none stated (never guessed).
+- [ ] Every issue has a `TYPE:` line (bug / feature-request / UNSURE) derived from title + labels + PR prefix (`feat`/`proposal` ⇒ feature; `fix` ⇒ bug) — checks run BEFORE calling anything a bug; ambiguous ones flagged UNSURE, not defaulted to bug.
 - [ ] Timeline/linked-PR scan run for every issue (not just the ones with obvious fix PRs).
 - [ ] Every "still open / no PR / unfixed" claim re-checked against current state + timeline (this is where the wrong calls happen).
 - [ ] Maintainer status quoted with author + date; support-bot text not mistaken for status.

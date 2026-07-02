@@ -9,6 +9,10 @@ Turn a finished Weekly Community Signal report into a spoken walkthrough the hos
 
 This runs **after every report** — the `weekly-report` orchestrator invokes it once both pages are published, and it's independently triggerable ("loom script", "record the loom").
 
+## Mandatory: the script MUST cover the AG-UI page
+
+The report is **two pages** — the main page (CopilotKit) and the AG-UI sub-page. **The script must walk BOTH.** A script that only covers the CopilotKit page is incomplete and must not be delivered. Segments 7–9 are the AG-UI page (top issues, pain, momentum); open them with a `[SWITCH to the AG-UI sub-page]` cue and a spoken transition so the viewer knows the page changed. Even a thin AG-UI week gets covered (compress, don't skip). This is non-negotiable.
+
 ## The #1 rule: it must not sound scripted
 
 The host reads this on camera. If it sounds read, the whole thing falls flat. So:
@@ -32,10 +36,12 @@ The host reads this on camera. If it sounds read, the whole thing falls flat. So
 4. **Pain — the high-level read (the CEO segment — slow down here).** NOT issue-by-issue. Name *where people are struggling* as a pattern, per community, plus the one structural pain. The CEO wants the shape of the hurt, not a bug list. (See "Pain segment" below.)
 5. **Enterprise** — count + trend + the one-line "how they showed up / what to do."
 6. **CopilotKit Reddit** — score + one-phrase vibe (trimmable).
-7. **AG-UI — top issues** — same plain treatment; flag the one that matters most.
+7. **AG-UI — top issues** — same plain treatment; flag the one that matters most. **This is a SEPARATE page** — the report is two pages (main = CopilotKit, sub-page = AG-UI), so open segment 7 with a `[SWITCH to the AG-UI sub-page]` stage cue and a spoken transition that signals the shift ("switching over to AG-UI…") so the viewer knows they've moved to the other page.
 8. **AG-UI pain** — where it hurts + the structural constraint (e.g. review bandwidth).
 9. **AG-UI Reddit / momentum** — the public win, end the body on an up note.
 10. **Close** (~20s) — the week in a sentence, restate the through-line, name the 1–2 asks, point to the linked report. Warm sign-off.
+
+**Both pages get airtime — never skip AG-UI.** The routine always produces two pages; even a thin AG-UI week gets segments 7–9 and the `[SWITCH to the AG-UI sub-page]` cue. If AG-UI is genuinely quiet, compress 7–9 into a shorter beat — but cover it and name the page switch. A script that only walks the CopilotKit page is incomplete.
 
 ## Pain segment (what the CEO wants)
 
