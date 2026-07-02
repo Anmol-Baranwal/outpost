@@ -461,6 +461,12 @@ The report is **company-readable** (product, marketing, leadership, sales/CS, en
 
 Test before publishing: read each parenthetical aloud and ask "would a non-engineer marketing person care?" If no, cut it.
 
+**Tone — honest but constructive; never reflect poorly on engineering.** This is an internal CopilotKit report; frame the state accurately without blame language. Prefer the constructive, true description over the negative-sounding one:
+- an in-progress fix is **"in progress" / "in active testing with the reporter" / "iterating on review"** — NOT "stalled" / "neglected" / "lagging" / "no live review."
+- a re-requested or dismissed review is part of **iteration**, not failure — describe it as testing/iterating, not as the fix being stuck.
+- an unowned item is **"needs an owner assigned"** — not "drifting" / "nobody cares."
+- keep every fact intact (PR numbers, states, dates, "shipped for Vue, in testing for React") — reframe the *interpretation*, don't drop the *facts*. Honesty first; blame never. (Precedent: `#5533`'s React fix `#5592` had its approval dismissed twice — that was Nathan iterating/testing the fix WITH the reporter, so it's "in active testing," not "stalled.")
+
 ## Conventions
 
 - **Dated report lists go oldest → newest.** Front-door entries, reporter rosters, Resolved rows, Reddit Pulse threads.
