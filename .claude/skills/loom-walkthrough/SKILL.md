@@ -1,11 +1,11 @@
 ---
 name: loom-walkthrough
-description: Generate the 5-7 minute Loom walkthrough script for a completed Weekly Community Signal report — radio-show style, plain English, sounds ad-libbed not read. Runs after every report (invoked by weekly-report) and on "loom script", "walkthrough script", "record the loom", "narrate the report".
+description: Generate the 5-7 minute Loom walkthrough script for a completed Weekly Community Signal report — a plain spoken briefing that notifies the team of the week's highlights and what the host needs to flag. Straightforward and factual, NOT a radio show or a performance. Runs after every report (invoked by weekly-report) and on "loom script", "walkthrough script", "record the loom", "narrate the report".
 ---
 
 # Loom walkthrough script
 
-Turn a finished Weekly Community Signal report into a spoken walkthrough the host can record with confidence — **without sounding like they're reading a script.** The host doesn't know the engineering deeply, so every line must be in plain "what it means for us" English, never internals.
+Turn a finished Weekly Community Signal report into a spoken briefing the host can record with confidence. **This is a plain internal update — the host is notifying the team of the week's highlights and what needs flagging, not putting on a show.** The host doesn't know the engineering deeply, so every line must be in plain "what it means for us" English, never internals.
 
 This runs **after every report** — the `weekly-report` orchestrator invokes it once both pages are published, and it's independently triggerable ("loom script", "record the loom").
 
@@ -13,16 +13,21 @@ This runs **after every report** — the `weekly-report` orchestrator invokes it
 
 The report is **two pages** — the main page (CopilotKit) and the AG-UI sub-page. **The script must walk BOTH.** A script that only covers the CopilotKit page is incomplete and must not be delivered. Segments 7–9 are the AG-UI page (top issues, pain, momentum); open them with a `[SWITCH to the AG-UI sub-page]` cue and a spoken transition so the viewer knows the page changed. Even a thin AG-UI week gets covered (compress, don't skip). This is non-negotiable.
 
-## The #1 rule: it must not sound scripted
+## Tone: a plain briefing, not a performance
 
-The host reads this on camera. If it sounds read, the whole thing falls flat. So:
+This is an internal report-out. The host is telling the team the week's highlights and what they need to flag — nothing more. Keep it neutral and factual. **No cheeky openers, no radio-show energy, no jokes, no dramatic asides, no manufactured suspense.** If a line sounds like entertainment, cut it.
 
-- **No on-camera meta.** Never write words the host would say that reveal a script or structure: no "in this report," "next section," "the top issues are," "moving on," "as you can see." Just talk.
-- **Vary the cold open every week.** Never reuse last week's opener. Rotate the *kind* of open — a number that surprised you, a one-line mood, a "good news first," a callback to last week, a single headline. Pick whatever fits this week's actual signal.
-- **Write in the host's cadence, not a memo's.** Contractions. Short sentences. The occasional aside ("honestly," "here's the part I'd flag," "quiet week, not a bad one"). One human reaction per segment.
-- **One fresh through-line per week, not a fixed catchphrase.** Find the week's actual pattern (e.g. "demand is outrunning polish") and land it twice — once in the middle, once at the close. Different phrase every week; don't make it a recurring slogan.
-- **Numbers spoken, not written.** "about two months," "fifty out of a hundred," "two companies to six" — never "~2mo" or "50/100" in the spoken lines.
+- **Straightforward and plain.** State the thing, its status, and whether it needs attention. The host is notifying, not narrating a story.
+- **Still easy to read aloud** — contractions and short sentences are fine (it's spoken, not a memo), but the register is a calm colleague giving an update, not a presenter.
+- **Open with the single most important thing** — the biggest highlight or the biggest flag, said plainly. No "hook," no rotating gimmick, no callback bit.
+- **No on-camera meta.** Don't narrate the document's structure — no "in this report," "next section," "as you can see." Just say what happened.
+- **No catchphrase / no through-line slogan.** Don't invent a theme to repeat. If there's a genuine pattern worth naming, state it once, plainly, where it's relevant.
+- **Numbers spoken, not written.** "about two months," "fifty out of a hundred" — never "~2mo" or "50/100" in the spoken lines.
 - **Stage directions live in a hidden sidebar** (`[SCROLL to …]`, `[beat]`, time markers) — clearly separated so the host reads them silently and never speaks them. They are cues, not lines.
+
+## Top issues are numbered — one beat each, never a paragraph
+
+The Top issues are the core of the briefing. Deliver them as a **numbered list matching the report's ranking** — "number one … number two … number three …" — each its **own short beat** with a `[beat]` between. **Never blur two or more top issues together into one paragraph.** Each beat says, plainly: what the issue is (user-facing), and its status (fixed / fix in progress / not started). Give each its own time marker so the host paces one at a time. If a top issue is AG-UI-scoped, still number it here, and note you'll revisit it on the AG-UI page.
 
 ## Length
 
@@ -30,16 +35,16 @@ The host reads this on camera. If it sounds read, the whole thing falls flat. So
 
 ## Segment flow (adapt to the week — don't force empty ones)
 
-1. **Cold open** (~20s) — hook, fresh each week. No meta.
-2. **The week in one breath** — the single takeaway + the pattern to watch. This is the TL;DR spoken aloud.
-3. **CopilotKit — top issues** — each top issue in 1–2 plain sentences: what it means for a user + status (fixed / open / approved). Never how it broke internally.
+1. **Open** (~15s) — lead with the single most important thing this week (biggest highlight or biggest flag), said plainly. No hook, no gimmick.
+2. **The week in one line** — the one-sentence takeaway + anything the team should watch. The TL;DR spoken aloud, plainly.
+3. **Top issues — NUMBERED, one beat each** — deliver the report's ranked top issues as a numbered list ("number one … number two …"), each its own short beat with a `[beat]` between, each with its own time marker. Per issue: what it means for a user + status (fixed / fix in progress / not started). Never how it broke internally, and never blur two into one paragraph. (See "Top issues are numbered" above.)
 4. **Pain — the high-level read (the CEO segment — slow down here).** NOT issue-by-issue. Name *where people are struggling* as a pattern, per community, plus the one structural pain. The CEO wants the shape of the hurt, not a bug list. (See "Pain segment" below.)
 5. **Enterprise** — count + trend + the one-line "how they showed up / what to do."
 6. **CopilotKit Reddit** — score + one-phrase vibe (trimmable).
 7. **AG-UI — top issues** — same plain treatment; flag the one that matters most. **This is a SEPARATE page** — the report is two pages (main = CopilotKit, sub-page = AG-UI), so open segment 7 with a `[SWITCH to the AG-UI sub-page]` stage cue and a spoken transition that signals the shift ("switching over to AG-UI…") so the viewer knows they've moved to the other page.
 8. **AG-UI pain** — where it hurts + the structural constraint (e.g. review bandwidth).
 9. **AG-UI Reddit / momentum** — the public win, end the body on an up note.
-10. **Close** (~20s) — the week in a sentence, restate the through-line, name the 1–2 asks, point to the linked report. Warm sign-off.
+10. **Close** (~15s) — the week in a sentence, name the 1–2 things the host needs the team to action, point to the linked report. Plain sign-off — no flourish.
 
 **Both pages get airtime — never skip AG-UI.** The routine always produces two pages; even a thin AG-UI week gets segments 7–9 and the `[SWITCH to the AG-UI sub-page]` cue. If AG-UI is genuinely quiet, compress 7–9 into a shorter beat — but cover it and name the page switch. A script that only walks the CopilotKit page is incomplete.
 
@@ -63,9 +68,9 @@ Lead with this framing in mind: **fixes are one thing; the *pattern* of pain is 
 
 Two columns / two blocks so the host can hide the cues:
 
-- **The spoken script** — what to say, top to bottom, with `[SCROLL to …]` / `[beat]` / `[~m:ss]` cues in brackets the host reads silently. **Bold the one anchor line per segment** so a host who blanks can just read the bold and move on.
-- **A cue card** (≤12 lines) — scroll cues + bold anchors only, for off-screen glancing while recording.
-- **Pacing notes** — which segment is the CEO's (slow down), what to cut for 5 min, and the week's through-line phrase to land twice.
+- **The spoken script** — what to say, top to bottom, with `[SCROLL to …]` / `[beat]` / `[~m:ss]` cues in brackets the host reads silently. **Bold the one anchor line per segment** so a host who blanks can just read the bold and move on. Top issues appear as a numbered list, one beat each.
+- **A cue card** (≤12 lines) — scroll cues + bold anchors only, for off-screen glancing while recording. List the top issues numbered.
+- **Pacing notes** — which segment to slow down on (the Pain read), and what to cut for 5 min. No through-line/catchphrase note.
 
 ## Hand-off
 
