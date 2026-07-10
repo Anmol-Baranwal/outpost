@@ -27,12 +27,16 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 ## Orchestrator flow
 
+0. **Fresh pull first — before anything else.** `git pull` the repo so you're running the LATEST skills/rules (they're the source of truth and change often — a stale checkout runs an old spec). And pull **fresh** source data for the window from Discord / GitHub / Reddit every run — never reuse a prior run's pull, a cache, or last week's numbers.
+
 1. **Determine the window.** Today's date → most recent complete Fri→Fri. State it.
+
+1b. **Spawn Subagent H — product-surface scan** (see `product-surface-scan` skill). Spawn it **at report start, in parallel with A/B/G**. It fetches CopilotKit's product / pricing / Premium pages and returns: the authoritative **commercial-surface list** (drives the 🏢 Enterprise "Surfaces this week" table), the **free-vs-paid classifier** (used to decide whether each issue belongs in 🏢 Enterprise — a commercial surface — vs Pain/Demand), a **diff of what commercial features changed since last week**, and a **cross-page contradiction check** (page-vs-page / page-vs-source conflicts → the ⚠️ Product surface contradictions category). Writes a snapshot to `docs/community-signal/commercial-surfaces.json`. **Enterprise = CopilotKit's commercial product, NOT "CopilotKit used at a big company"** — apply the classifier, don't shelve a free-OSS bug under Enterprise just because the reporter is enterprise.
 
 2. **Spawn Subagent A — Discord pull.** Tell it to pull both servers:
    - CopilotKit (`1122926057641742418`): `#💬｜general` (text `1182553320540352563`) + `#🤔｜support` (forum `1313616713647919218`)
    - AG-UI (`1379082175625953370`): `#🔧-building` (text `1379082271642095738`) + `#✈️-support` (forum `1384529894972592158`)
-   For forums use `mcp__discord__list_forum_threads` → filter to window → `mcp__discord__read_thread_messages` per in-window thread. **Read every thread to the bottom.** Return: compact per-channel substantive-message summary, with reporter handles + 1-line summaries. Skip hiring / self-promo / greetings (count them internally, but they only surface in Community ops if they rise to actual news — see "Community ops"; otherwise that section is omitted).
+   For forums use `mcp__discord__list_forum_threads` → filter to window → `mcp__discord__read_thread_messages` per in-window thread. **Read every thread to the bottom.** Return: compact per-channel substantive-message summary, with reporter handles + 1-line summaries. Skip hiring / self-promo / greetings entirely — they're not published (the Community ops section was removed).
    **Capture resolution signal per thread:** a **green-check ✅** reaction, or an explicit accepted/"marked solved" / "issue has been resolved ✅" marker in the comments, means the answer was confirmed correct → the thread counts as **resolved** (feeds ✅ Resolved this week + the Discord-resolved count, see steps 9 and Pulse). Be strict — a reply, a 👍, or a ❤️ is NOT a resolution; only a green-check / accepted-answer marker is. Return each thread's status `RESOLVED (green-check)` / `OPEN`.
 
 3. **Spawn Subagent B — GitHub pull.** Both repos, same window:
@@ -109,6 +113,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    - `notion-create-pages` interprets `\n` / `\t` escapes correctly — author content with them.
    - `notion-update-page` `replace_content` / `insert_content` do **NOT** interpret `\n` / `\t` — they pass through as literal `n` / `t` and mangle the page. Use **real newline and tab characters** in `new_str`.
    - `notion-update-page` `update_content` (search/replace via `content_updates`) **does** interpret `\n` — handy for surgical inline edits and small block inserts. **Notion normalizes stored markdown** (strips blank lines between bullets, may split one link into two) — so always `fetch` the page and match the *current stored* text in `old_str`, not the text you originally wrote.
+   - **Never put a `####`/heading line inside an `update_content` `new_str`.** Re-inserting a card header mid-edit can strip its `{toggle="true"}` and de-indent the body — the card then renders flat (no ▸ triangle, fields un-nested). To add a field (e.g. an Owner line) to a card, anchor on a line INSIDE that card (its **Fix plan** / **Fix** / **Status** line) and append the new tab-indented line; never let the match span into the next card's `####` header. (Precedent: a `.NET` card edit whose `new_str` re-included the next `#### mastra …` header flattened the mastra card.)
    - `replace_content` deletes any child page not referenced in `new_str`. To preserve sub/child pages, include their `<page url="…">` blocks in the new content (don't rely on `allow_deleting_content`).
 
 13. **Draft Slack TL;DR** via `slack-tldr` skill. Save to `/tmp/slack-msg.json`. Show Nathan to review before he curls.
@@ -120,6 +125,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 14b. **Spawn the Report Sources subagent** (see `report-sources` skill). After the link-review pass, build a **"Report Sources"** child page for the report — an evidence-backed defense of WHY every item landed in its column/section/rank (front-door yes/no, the five-axis rank, bug-vs-feature, community attribution, resolved class, enterprise/prospect, maturity flag). Lawyer-rigorous (claim → evidence → rule → rebuttal → confidence) but **under oath — every claim cites a verifiable source, no invention/spin, weaknesses conceded.** One per report page (main + AG-UI). Create the returned page as a child at the bottom of the report.
    **Findings feed BACK into the report — always.** If this pass uncovers a discrepancy (wrong resolved class/date, wrong attribution, stale version, a rank whose inputs don't add up, a "fixed" with no merged PR), **correct the report item first, then the defense reflects the corrected state** — the Report Sources page never sits next to a report it just proved wrong. Loop until zero entries contradict the report. (Precedent: the sources pass caught `ag-ui#2048` listed as `FIX_PR_MERGED / 07-01` when it was `CLOSED COMPLETED 2026-06-29` with no linked PR → the Resolved row was corrected, then defended.)
+   **This pass also writes the `Gaps & follow-ups` items** — it returns a short plain-human checklist of what's unresolved, which the orchestrator drops into the report's Gaps section. Written so the reader can't tell it came from an evidence pass (no lawyer voice, no citations) — see `report-sources`.
 
 15. **Generate the Loom walkthrough script + remind Nathan to record it — every report, no exceptions.** As the LAST step, invoke the `loom-walkthrough` skill to produce the 5–7 min radio-show script from the finished report (plain English, sounds ad-libbed, includes the CEO-level Pain read) so recording is painless. Then remind him to record. When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
 
@@ -144,7 +150,10 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Each item a toggle: what · impact · fix plan · owner · priority, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
 ---
 
-## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues (highlighted near the top, not buried). Cross-community. See "Enterprise section".
+## ⚠️ Product surface contradictions            ← CONDITIONAL — render ONLY when `product-surface-scan` finds a page-vs-page (or page-vs-source) conflict; sits here, under Top issues + above Enterprise. One card per contradiction: what conflicts · both quoted claims · both page links · suggested source of truth · Owner blank + Priority. When there are none, OMIT this section — a quiet "Product pages checked for contradictions — none this week." line + the referenced-page list lives inside 🏢 Enterprise instead. See `product-surface-scan`.
+---
+
+## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues / the contradictions category (highlighted near the top, not buried). Cross-community. **Scope: CopilotKit's COMMERCIAL surfaces** (Premium / CopilotKit Enterprise / Intelligence Platform / paid tiers), NOT "CopilotKit used at a big company" — apply the `product-surface-scan` classifier. See "Enterprise section".
    ### 🚩 Enterprise questions & complaints     ← any enterprise-related question/complaint this week (e.g. threads/persistence = the "enterprise threads" tier). Each a card with owner + priority. Highlighted at the top of this section.
    ### 🎯 Prospective enterprise customers {toggle="true"}   ← COLLAPSIBLE, company-first. Community members who look like enterprise prospects (e.g. Jasper AI), deep-enriched (LinkedIn + company site + size) via `enrich-prospect`, each with a **Passed to (sales):** owner field. See "Prospective enterprise customers".
    ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
@@ -156,15 +165,13 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 💢 Pain                                  ← plain `###` header, each item a `#### {toggle}` card (What/Impact/Fix plan)
    ### 📚 Docs                                  ← standing weekly section; plain `###` header, each item a `#### {toggle}` card (see "Docs section")
    ### ✅ Resolved this week                    ← XML table
-   ### 📊 Pulse                                 ← this-window snapshot (filed + closed-out counts) + open fix PRs. Month-over-month table lives in 📈 Trends now. (see "Pulse section")
-   ### Community ops                            ← OMIT ENTIRELY if nothing substantive (hiring/self-promo/greetings alone are NOT news — see "Community ops")
 ---
 
 ## 🟠 Reddit Pulse — CopilotKit · <band> NN/100 {toggle="true"}   ← CopilotKit-subject Reddit posts only, scored. Collapsible; score+band in the heading. (see "Reddit Pulse section")
 ---
 
-## 🔄 Patterns — the takeaways                  ← ELEVATED + always-open, cross-community. The compressed read — what to act on. (Most-read section.)
-## Gaps & follow-ups                            ← cross-community checklist
+## 🔄 Patterns — the takeaways {toggle="true"}   ← collapsible, cross-community. The compressed read — what to act on. Body tab-indented to nest in the toggle.
+## Gaps & follow-ups                            ← cross-community checklist, drawn from the report-sources evidence but written plain-human (see "Gaps & follow-ups")
 ## Methodology                                  ← <details><summary> wrapped; threshold, window, sources
 <page url="…">📊 Top-issue ranking</page>      ← child pages at the very bottom
 <page url="…">🔬 Ranking comparison</page>
@@ -191,21 +198,19 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 🔥 Demand                                ← plain `###` header, each item a `#### {toggle}` card
    ### 📚 Docs                                  ← plain `###` header, each item a `#### {toggle}` card
    ### ✅ Resolved this week
-   ### 📊 Pulse
-   ### Community ops                            ← OMIT ENTIRELY if nothing substantive (see "Community ops")
 ---
 
 ## 🟠 Reddit Pulse — AG-UI · <band> NN/100 {toggle="true"}   ← AG-UI-subject Reddit posts only, scored. (see "Reddit Pulse section")
 ---
 
-## 🔄 Patterns — AG-UI                          ← AG-UI-scoped; points to the main "Patterns — the takeaways" for the cross-community read
+## 🔄 Patterns — AG-UI {toggle="true"}          ← collapsible, AG-UI-scoped; points to the main "Patterns — the takeaways" for the cross-community read
 ## Gaps & follow-ups — AG-UI                     ← AG-UI-scoped checklist
 ## Methodology
 <mention-page>📊 Top-issue ranking</mention-page>  ← bottom link to the main report's ranking child page
 <page url="…">Report Sources</page>            ← AG-UI page's own evidence-backed defense (see `report-sources`)
 ```
 
-If a per-community subsection is empty, render "No X this week." Don't omit the heading. **Exception: Community ops is omitted entirely when there's nothing substantive** (see "Community ops" — hiring/self-promo/greetings alone are not news).
+If a per-community subsection is empty, render "No X this week." Don't omit the heading.
 
 **Page split is mandatory, not conditional.** AG-UI always gets its own sub-page (even when thin); the main page is always the CopilotKit report. 🏢 Enterprise, 🔝 Top issues, and 🔄 Patterns — the takeaways are cross-community on the main page. 🟠 Reddit Pulse is split per community (each page scores its own posts). Gaps / Methodology are split per page; AG-UI keeps a short AG-UI-scoped Patterns that points back to the main takeaways.
 
@@ -215,11 +220,11 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 
 ## Page rendering rules
 
-- **Always-open sections:** Header, 📦/🔷 community header + companion link, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, 🔄 Patterns — the takeaways, Gaps & follow-ups. **Patterns is always open — never a `<details>`.** It's the most-read section.
+- **Always-open sections:** Header, 📦/🔷 community header + companion link, 🔝 Top issues of the week, 🏢 Enterprise (all subsections), ✅ Resolved this week, Gaps & follow-ups.
 - **📈 Trends is a collapsible heading toggle** (`## 📈 Trends {toggle="true"}`) — its whole body (both tables + notes) is **tab-indented** to nest inside the toggle. (Notion heading-toggles only collapse children that are indented; un-indented tables render outside the toggle.)
 - **Toggle headings:** every Top-issue card (`### N. … {toggle="true"}`), **every item card in 🔥 Demand / 💢 Pain / 📚 Docs** (`#### … {toggle="true"}` — see "Section item cards"; the 🔥/💢/📚 section headers themselves are plain `###`, not toggles), and **each 🟠 Reddit Pulse section** (`## … {toggle="true"}`, with its score + band in the heading so it reads while collapsed). Card/body lines **tab-indented** to sit inside the toggle.
 - **No 🚨 sirens on the Top-issue cards.** Rank them `### 1.` / `### 2.` … — the numbering carries the priority.
-- **`<details><summary>` blocks:** Early signals, Pulse body, Community ops, Methodology. (Patterns is NOT one of these.)
+- **Collapsible:** `## 📈 Trends`, `## 🟠 Reddit Pulse`, and `## 🔄 Patterns — the takeaways` are heading toggles (`{toggle="true"}`, body tab-indented). Early signals + Methodology stay `<details><summary>` blocks.
 - **Notion XML `<table header-row="true">…</table>`** form (not Markdown pipes) inside toggles/details.
 - **Visual polish:** AG-UI sub-page gets a distinct icon (🔷) so its link doesn't read as a duplicate of the 📦 header; an italic "↓ Companion report" label sits above the link; `---` dividers between the top-level `##` sections to break up the column. (No table-of-contents — it ate too much vertical space.)
 
@@ -227,28 +232,28 @@ If a per-community subsection is empty, render "No X this week." Don't omit the 
 
 Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Docs — renders as a **self-contained toggle card**, never a run-on paragraph bullet. This is the format readers like on Top issues; it now applies to every section. A wall of prose in Pain (or anywhere) is the anti-pattern this replaces — if a reader has to parse a paragraph to find the impact, the card failed.
 
+**This report is read by HUMANS, not agents.** No card is a wall of text. Each field is one short, plain, readable line/clause a busy non-engineer scans in seconds. If a field reads like an agent wrote it (meta, scores, jargon dumps, "this issue…"), rewrite it in human voice.
+
 - **Section header stays a plain heading** (`### 🔥 Demand`, `### 💢 Pain`, `### 📚 Docs`). **Each item under it is its own toggle card**, one level down: `#### <short title> {toggle="true"}`. (Top issues are ranked one level up — `### N. <title> {toggle="true"}` — same card body.)
-- **Card body = four tab-indented labeled lines**, bold labels, one sentence each — the **What** line, then a **CopilotKit version** line, then two more that adapt per section:
-
-  | Section | Line 1 | Line 2 | Line 3 | Line 4 |
-  |---|---|---|---|---|
-  | 🔝 Top issues | **What** | **CopilotKit version** | **Impact** | **Fix plan** |
-  | 💢 Pain | **What** | **CopilotKit version** | **Impact** | **Fix plan** |
-  | 🔥 Demand | **What** | **CopilotKit version** | **Why it matters** | **Status** |
-  | 📚 Docs | **What** (`Drift`/`Gap`/`Links-bot`) | **CopilotKit version** | **Impact** | **Fix** |
-
-- **What** = the concrete thing, one sentence. **Impact / Why it matters** = who it hits and how bad / why we'd act. **Fix plan / Status / Fix** = shipped / in-progress / not-started + the PR or release (Pain, Top issues); requested / on-roadmap / workaround-exists (Demand); which doc to write or repair (Docs).
-- **CopilotKit version — mandatory, sits directly below What, above Impact.** The version the reporter is on: pulled from the repro / issue body, or asked-for/answered in the comments (the `deep-read-issue` subagent captures it). Write it exactly, e.g. `**CopilotKit version:** v1.61.0`. **If no version is stated anywhere in the thread, write `**CopilotKit version:** unknown`** — never guess. This flags at a glance whether a reporter is on an old release and may just need to upgrade. For an AG-UI-native issue with no CopilotKit involved, use the AG-UI package version (e.g. `@ag-ui/langgraph 0.0.42`) or `n/a — AG-UI issue`.
-- **Package maturity is ALWAYS surfaced — and in the FIRST SENTENCE (the What line), not just the version line.** When the reporter is on **experimental, deprecated, pre-release (0.x), beta/next, or otherwise not-a-stable-current-release** code, say so up front so a reader (Nathan) can tell *without parsing the paragraph* — the point is to NOT tag engineering / burn resources on what's really a "just migrate / upgrade" case. Two places, every time:
-  - **What line (sentence one):** lead the reader to it, e.g. *"…on the **deprecated `@copilotkitnext`** line…"* or *"…using the **experimental 0.x** `@ag-ui/*` packages…"*. If maturity is the only thing you can state, still state it.
-  - **Version line:** the exact version **plus the maturity tag** — `**CopilotKit version:** @copilotkitnext/core 1.54.0 🚩 (deprecated)`. A stable current release needs no tag; anything else does (`experimental` / `deprecated` / `pre-release 0.x` / `beta`).
-- **🚩 ANY `@copilotkitnext/*` version is FLAGGED — it is DEPRECATED.** The `@copilotkitnext/*` packages (the useAgent-era experimental v2 line) were deprecated on npm 2026-06-18 and merged into `@copilotkit` v2 (`@copilotkitnext/core`→`@copilotkit/core`, `@copilotkitnext/react`→`@copilotkit/react-core/v2`, `@copilotkitnext/runtime`→`@copilotkit/runtime/v2`; last publish 1.54.1). Whenever a reporter's version is `@copilotkitnext/*`, **call it out in the What line's first sentence AND append the flag on the version line** — `**CopilotKit version:** @copilotkitnext/core 1.54.0 🚩 (deprecated — migrate to @copilotkit/*/v2, current 1.6x)` — and the **Fix plan should first ask them to migrate** and check whether the bug is already gone in current `@copilotkit` v2 (usually a "just migrate" case, not a code fix). Cite the exact subpackage, never the bare `@copilotkitnext` scope. (Coding agents also *invent* `@copilotkitnext` from training data — only put it on a card when the reporter's own text used it.)
-- **Source link lives in the title or the What line** — mandatory, per "Source links are mandatory". Reporter handle hyperlinked.
-- **Owner + Priority — a fourth meta line, mandatory on 🔝 Top issues and 🏢 Enterprise question cards** (optional elsewhere): `**Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low`. **Owner** = who drives the issue to the other side (maintainers / eng); left **blank** for manual assignment — never auto-name a person. **Priority** = derived from the front-door ranking score → H/M/L (see `front-door-triage` "Priority from rank"); set the band, overridable by hand.
-- **One item, one card.** Don't merge two unrelated reports into one card; don't let a card spill past the three lines (+ the Owner/Priority meta line) — depth goes in the linked issue or in 🔄 Patterns.
 - **Short title ≈ 3–6 words that name the thing** (`A2UI needs scaffolding`, not `Issue with A2UI`).
+- **Card body = these tab-indented labeled lines, IN THIS ORDER:**
 
-Sections that do NOT use this card format: ✅ Resolved (XML table), 🟠 Reddit Pulse (one-line post bullets), 📊 Pulse, Community ops, Early signals — these stay tables / one-liners / `<details>` as specified.
+  | Line | Label | Content |
+  |---|---|---|
+  | 1 | **What it is:** | One plain-English line — what the thing actually is, said the way a person would out loud. NOT agent/meta (never "Landed Top issue #1, score 13, mirrored into Enterprise" — placement is obvious from where the card sits). ~8–18 words. Surface experimental/deprecated/pre-release maturity here in plain words if it applies. |
+  | 2 | **Source:** | The platform + the linked number/thread: `GitHub [#NNNN](url)` or `Discord [thread](url)`. (Mandatory source link.) |
+  | 3 | **Reported by:** | The reporter's handle, linked, + `🏢 Company` badge if enterprise. |
+  | 4 | **Description:** | The longer, very-readable explanation — 1–3 human sentences, no wall of text, no jargon dump. This is where detail lives (not the one-liner). |
+  | 5 | **CPK version:** | Just the version number — `v1.61.0`, `@copilotkitnext/core 1.54.0`, `unknown`, or `n/a — AG-UI`. **Number only** — the deprecated/experimental note goes in *What it is* / *Description* / *Fix plan*, not here. |
+  | 6 | **Impact:** | Human-readable — who it hits and how bad, in plain terms. (Demand: this is "why it matters".) |
+  | 7 | **Fix plan:** | Human-readable — shipped / in progress / in testing / not started + the PR or release. (Demand → **Status:**; Docs → **Fix:**.) |
+  | 8 | **Owner + Priority** | `**Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low`. **Mandatory on 🔝 Top issues, 🏢 Enterprise, 💢 Pain, and 📚 Docs cards** (optional only on 🔥 Demand). Owner always blank (never auto-named); Priority derived from the rank/severity (see `front-door-triage`). |
+
+- **Docs cards:** prefix *What it is* with the type — `Drift` / `Gap` / `Links-bot`.
+- **Deprecated `@copilotkitnext/*` (still true, just relocated):** it's the useAgent-era experimental v2 line, deprecated on npm 2026-06-18 → merged into `@copilotkit` v2 (`@copilotkitnext/core`→`@copilotkit/core`, `/react`→`@copilotkit/react-core/v2`, `/runtime`→`@copilotkit/runtime/v2`; last publish 1.54.1). When a reporter is on it: say so in **What it is** (plain: "on a retired/experimental package"), keep **CPK version** to the bare number, and have **Fix plan** lead with "ask them to migrate to `@copilotkit` v2 — the bug may already be gone there." Cite the exact subpackage, never the bare scope; only when the reporter's own text used it (agents invent it from training data).
+- **One item, one card — no exceptions, no bundling to save space.** Don't merge two unrelated reports; depth lives in **Description** or the linked issue, never a run-on paragraph. **This holds even for small "housekeeping" items**: a release-cut request, a docs-table addition, and an SDK chore are three different issues → three cards, in whichever section each belongs (they rarely share one). Never combine multiple issue numbers into a single card. If several issues are genuinely the same root cause (e.g. two bugs in one adapter by one reporter), a shared card is fine — but distinct asks are never bundled.
+
+Sections that do NOT use this card format: ✅ Resolved (XML table), 🟠 Reddit Pulse (one-line post bullets), 🎯 Prospective enterprise customers (its own company-first block — see that section), Early signals — these stay tables / one-liners as specified.
 
 ## Source links are mandatory
 
@@ -327,19 +332,9 @@ Rules:
 - A docs item that **blocks** a new/upgrading user is ALSO a Top issue — list it in both; in the Docs **Fix** line note "(blocking — also a Top issue)". Non-blocking docs items live only here.
 - Always render the section; if empty, "No docs items this week."
 
-## Community ops (conditional — omit when there's no news)
+## Removed sections (2026-07-02)
 
-A `### Community ops` `<details>` block, but **only when there's something a company reader would actually care about** — a channel that needs moderation, a recurring spam wave, a process/access change, a genuinely notable community contribution. **Hiring posts, freelancer self-promo, and greetings are NOT news** — don't publish "6 people posted portfolios." If the only in-window non-substantive traffic is that kind of noise, **omit the Community ops section entirely** (no heading, no "nothing this week" line — just leave it out).
-
-This is the one section that disappears when empty; every other section keeps its heading. The Discord pull still *counts* the skipped noise internally, but it only surfaces here if it rises to actual news.
-
-## Pulse section (this-window snapshot)
-
-The `### 📊 Pulse` `<details>` block on **each** page is a **point-in-time snapshot** (the over-time trends live in 📈 Trends now). In order:
-1. This window's issue-filed count + a comment/👍 high note, **and the closed-out tally for the window**: GitHub issues closed this window + **Discord threads resolved (green-check ✅, step 2)**. State it as a number, e.g. "Closed out this window: 5 GitHub issues + 1 Discord thread (green-check)."
-2. Open fix PRs (distinct fixes — see "Procedurally-closed PRs" in `deep-read-issue`).
-
-**The month-over-month filed/resolved table moved to 📈 Trends** (2026-06-30) — it was the same filed-vs-resolved view as the Trends weekly table, just monthly, so it was redundant sitting in two sections. Pulse no longer carries it. The monthly-table mechanics (MTD labeling, `gh created:`/`closed:` per-month counts, Combined row on both pages) are specified under "Trends section".
+**📊 Pulse (the this-window snapshot) and Community ops are removed** — no longer in the report. The filed/closed counts that Pulse carried live in 📈 Trends; open-fix-PR detail lives on the cards' **Fix plan** lines. Hiring/self-promo/greetings noise is simply skipped in the Discord pull (never published). Don't re-add either section. (🟠 Reddit Pulse — below — is a *different* section and stays.)
 
 ## Reddit Pulse section (per community, 90-day, scored)
 
@@ -393,7 +388,11 @@ When the algorithm changes, update the child page (don't recreate it) AND this s
 
 ## Enterprise section (elevated, current-employer rule)
 
-🏢 Enterprise is **cross-community and elevated to the top of the main page — directly under 🔝 Top issues, above the CopilotKit community body** (per Nathan: enterprise gets highlighted, not buried). Four subsections, in order:
+🏢 Enterprise is **cross-community and elevated to the top of the main page — directly under 🔝 Top issues (and the ⚠️ contradictions category when present), above the CopilotKit community body** (per Nathan: enterprise gets highlighted, not buried).
+
+**Scope — commercial surfaces only.** This section is CopilotKit's **commercial product** (Premium / CopilotKit Enterprise / Intelligence Platform / Cloud / paid-tier / license-gated), **not** "CopilotKit running at an enterprise company." Use the `product-surface-scan` **classifier** to decide whether a report belongs here: it belongs only if it hits a commercial surface (threads/persistence paid boundary, Inspector, Cloud/API-keys, self-host license/Helm, SSO/RBAC/SOC 2, analytics/self-learning, premium UI / Angular SDK, Slack/Teams, or a pricing/licensing question). A free-OSS bug (React SDK, AG-UI protocol, a backend/framework connection, a third-party integration's own auth) is a normal community issue **even when the reporter is at a big company** → Pain/Demand, not here. The "Surfaces this week" list is the `product-surface-scan` output, refreshed each run.
+
+Four subsections, in order:
 
 **🚩 Enterprise questions & complaints** (highlighted first) — **any question or complaint this week that touches an enterprise surface or the enterprise offering**, gathered from GitHub + Discord + Slack. This is the catch-all so nothing enterprise hides in the general body.
 - The **threads / persistence ("enterprise threads") tier** is enterprise by definition — a complaint about paying for threads, the persistence tier, or the self-host runtime belongs here, not just in Pain. (Precedent this cycle: the "threads off" / paid-persistence friction is an enterprise complaint.)
@@ -431,14 +430,23 @@ A standing subsection naming **community members who look like enterprise prospe
 - **Source link mandatory** (the `Issue:` / `Source:` link that surfaced them) — per the source-link rule. No source link → not published.
 - If none this week: "No new community-sourced enterprise prospects this week."
 
-## Patterns — the takeaways (elevated)
+## Patterns — the takeaways
 
-`## 🔄 Patterns — the takeaways` is **always open** (never a toggle/`<details>`) and sits cross-community on the main page. The compressed read of what to *act on*.
+`## 🔄 Patterns — the takeaways {toggle="true"}` is a **collapsible** heading toggle (body tab-indented to nest) and sits cross-community on the main page. The compressed read of what to *act on*.
 
 - Each bullet = one pattern, stated as a takeaway a busy exec can act on. Not "issue #X and #Y and #Z."
 - Think: "truck coming," not "there's a green flower." Surface the thing that changes a decision.
 - Every named entity hyperlinked (issues, handles, surfaces).
 - 3–5 patterns.
+
+## Gaps & follow-ups
+
+The action checklist. **Draw the items from the `report-sources` evidence pass** — every unresolved thing that pass surfaced (an owner not yet assigned, a fix awaiting confirmation, a discrepancy to run down, a doc to write) becomes a follow-up — but **write each one as plain, human, actionable text.** The reader never sees that it came from an evidence/defense pass; there's no "per the sources page," no lawyer voice, no citations — just a clear next step a person can pick up.
+
+- One checkbox per item, imperative, human: `- [ ] Assign an owner for the self-host auth issue and pick one of the three proposed fixes.` — not `- [ ] #5712 (score 13) requires owner assignment per rubric.`
+- Link the relevant issue/PR inline where it helps, but the sentence stands on its own in plain English.
+- Cross-community on the main page; AG-UI-scoped on the sub-page.
+- Keep it short — the few things that actually need doing, not every open issue.
 
 ## Reporter formatting
 
@@ -461,6 +469,12 @@ The report is **company-readable** (product, marketing, leadership, sales/CS, en
 
 Test before publishing: read each parenthetical aloud and ask "would a non-engineer marketing person care?" If no, cut it.
 
+**Tone — honest but constructive; never reflect poorly on engineering.** This is an internal CopilotKit report; frame the state accurately without blame language. Prefer the constructive, true description over the negative-sounding one:
+- an in-progress fix is **"in progress" / "in active testing with the reporter" / "iterating on review"** — NOT "stalled" / "neglected" / "lagging" / "no live review."
+- a re-requested or dismissed review is part of **iteration**, not failure — describe it as testing/iterating, not as the fix being stuck.
+- an unowned item is **"needs an owner assigned"** — not "drifting" / "nobody cares."
+- keep every fact intact (PR numbers, states, dates, "shipped for Vue, in testing for React") — reframe the *interpretation*, don't drop the *facts*. Honesty first; blame never. (Precedent: `#5533`'s React fix `#5592` had its approval dismissed twice — that was Nathan iterating/testing the fix WITH the reporter, so it's "in active testing," not "stalled.")
+
 ## Conventions
 
 - **Dated report lists go oldest → newest.** Front-door entries, reporter rosters, Resolved rows, Reddit Pulse threads.
@@ -474,6 +488,7 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 ## Cross-referenced skills
 
 - `front-door-triage` — P0 categories and classification rules
+- `product-surface-scan` — subagent: scans product/pricing/Premium pages → commercial-surface list + free-vs-paid classifier (defines the 🏢 Enterprise scope) + cross-page contradiction check (⚠️ category)
 - `deep-read-issue` — subagent flow for issue + fix PR deep read
 - `release-scan` — subagent: in-cycle release fix-map + authoritative version (open-issue cross-check)
 - `enrich-reporter` — subagent for GitHub author enterprise enrichment (shallow: company field → 🏢 badge, all reporters)

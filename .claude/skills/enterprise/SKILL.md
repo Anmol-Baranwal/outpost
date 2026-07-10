@@ -1,34 +1,45 @@
 ---
 name: enterprise
-description: Enterprise-specific view across CopilotKit + AG-UI. Tracks enterprise product surfaces (Enterprise Intelligence, CopilotKit Cloud, License flow, SSO, Self-host runtime, Security disclosure, Billing), enterprise questions/complaints (incl. the threads/persistence tier), community-sourced enterprise prospects (e.g. Jasper AI) with a sales owner, and enterprise reporters with prior-week trend. In the weekly report it is elevated to the top. Can run standalone ("who's at enterprise this week") or be invoked by weekly-report. Triggers on "enterprise report", "enterprise signals", "enterprise status", "who at enterprise this week".
+description: Enterprise-specific view across CopilotKit + AG-UI. "Enterprise" here = CopilotKit's COMMERCIAL surfaces (Premium / CopilotKit Enterprise / Intelligence Platform / paid tiers), NOT CopilotKit running inside a big company. Tracks the commercial product surfaces (from product-surface-scan — Enterprise Intelligence, Cloud, self-host license, threads/persistence tier, Inspector, premium UI/Angular SDK, analytics, security bundle, Slack/Teams), applies the free-vs-paid classifier to decide if an issue belongs here, surfaces cross-page product contradictions, and tracks enterprise questions/complaints, community-sourced prospects (with a sales owner), and enterprise reporters with prior-week trend. Elevated to the top of the weekly report. Runs standalone ("who's at enterprise this week") or invoked by weekly-report. Triggers on "enterprise report", "enterprise signals", "enterprise status", "who at enterprise this week".
 ---
 
 # Enterprise signals
 
+**What "Enterprise" means here (scope — read first).** This section is about **CopilotKit's commercial product surfaces** — anything sold as **Premium**, **CopilotKit Enterprise**, the **Intelligence Platform** (Enterprise Intelligence), **CopilotKit Cloud**, or gated behind a paid tier / license key. It is **NOT** "CopilotKit running inside an enterprise company." A bug in a free, open-source path used by a Fortune 500 is a normal community issue (Pain/Demand), **not** Enterprise. An item lands in 🏢 Enterprise only when it **hits a commercial surface**. Note a feature can be **free-but-limited AND commercial** — threads/persistence is free up to a cap, then Premium (that's why a paid-persistence complaint IS enterprise). The authoritative surface list + the free-vs-paid classifier are produced each week by the **`product-surface-scan`** skill — use its output, not a memorized list. (Precedent: agno AgentOS auth `ag-ui#2130` was mis-filed here — it's a third-party framework's endpoint auth on the OSS dojo integration, not a CopilotKit commercial surface → it belongs in Demand.)
+
 Two purposes:
 
-1. **Track the enterprise surfaces** — known enterprise-only product paths and their status this week.
+1. **Track the enterprise surfaces** — the commercial product paths (from `product-surface-scan`) and their status this week.
 2. **Track enterprise reporters** — GitHub authors with company affiliations, with prior-week trend.
 
 Can run **standalone** (just the enterprise view, no full weekly report) or **inline** as a subsection of the weekly report.
 
 ## Enterprise surfaces (tracked every week)
 
-Render as a Notion XML table:
+**The surface list comes from `product-surface-scan`** (run at report start), not a hardcoded list — features get added and tiers get redrawn, so refresh it each week. Render the scan's current surfaces as a Notion XML table:
 
 | Surface | Status this week | Detail |
 |---|---|---|
-| **Enterprise Intelligence** (IntelligenceIndicator, license verification, intelligence-mode) | 🚨 BROKEN / FR open / OK — no reports / unknown | one-line, linked to underlying issue/PR if any |
-| **CopilotKit Cloud** (auth, dashboard, console, sign-in) | ditto | |
-| **License flow / verifier** (`npx copilotkit@latest license`, token gen, runtime verifier) | ditto | |
-| **SSO / OAuth** | ditto | |
-| **Self-host runtime** (`AgentRunner`, `/threads` headers, custom runners) | ditto | |
-| **Security disclosure channel** (security@copilotkit.ai, GitHub PVR) | ditto | |
-| **Billing / quota** | ditto | |
+| **Enterprise Intelligence Platform** (durable threads, persistence, hosted inspection, analytics, learning) | 🚨 BROKEN / FR open / OK — no reports / unknown | one-line, linked to underlying issue/PR if any |
+| **CopilotKit Cloud** (managed hosting, project API key, sign-in/console) | ditto | |
+| **Self-Hosted Enterprise Intelligence** (license key, `copilot-intelligence` Helm chart) | ditto | |
+| **Threads & Persistence** (retention window, max-thread cap, resume/replay) | ditto | |
+| **CopilotKit Inspector** (monitoring, replay, tracing) | ditto | |
+| **Premium UI components** (Fully Headless Chat UI, Angular SDK) | ditto | |
+| **Analytics & Self-Learning** (dashboards, lakehouse, OTLP, in-context RL) | ditto | |
+| **Security bundle** (SOC 2, SSO / RBAC, offline licensing) | ditto | |
+| **Support / SLA** (dedicated Slack, SLA, priority fixes) | ditto | |
+| **Slack & Teams integrations** (agentic UI deployed into Slack/Teams) | ditto | |
 
-**Default cell** for a surface with no in-window reports: `OK — no reports`.
+**Default cell** for a surface with no in-window reports: `OK — no reports`. Surfaces are persistent — render every week even if all OK. Absence of reports IS a signal.
 
-Surfaces are persistent — render every week even if all OK. Absence of reports IS a signal.
+## The classifier — does an issue belong in 🏢 Enterprise?
+
+Apply the `product-surface-scan` classifier to every candidate. **YES** if it touches: threads/persistence (esp. the paid cap/retention/replay), Inspector, Cloud hosting / project API keys, self-host license keys / Helm, SSO/RBAC/SOC 2, Analytics/Self-Learning, the Fully Headless Chat UI or Angular SDK, Slack/Teams deployment, or a pricing/licensing/"is X Premium?" question. **NO** (→ Pain/Demand) for pure OSS usage under the free caps — React SDK, AG-UI protocol, backend/framework connections, a third-party integration's own auth — **even when the reporter works at a large company.**
+
+## ⚠️ Product surface contradictions (from `product-surface-scan`)
+
+`product-surface-scan` also compares the product/pricing/premium pages against each other. If it finds a contradiction (a cap/price/free-vs-premium/OSS-vs-Enterprise/availability claim that conflicts between pages, or a page-vs-maintainer conflict), the report carries a **`## ⚠️ Product surface contradictions`** category **near the top (under 🔝 Top issues, above 🏢 Enterprise)** — one card per contradiction with both quoted claims + both page links + a suggested source of truth, so product can fix the pages. When there are none, render a single quiet line in this section: *"Product pages checked for contradictions — none this week."* + the referenced page list.
 
 ## Enterprise reporters
 
@@ -79,6 +90,7 @@ In the weekly report the 🏢 Enterprise section is **elevated to the top of the
 A standing subsection (`### 🎯 Prospective enterprise customers`) naming **community members who look like enterprise prospects** — a lead list from the wild, distinct from "Companies building on us" (confirmed current-employer signal).
 
 - **Qualifies:** active in Discord/GitHub/Reddit, company is a recognizable enterprise / well-funded scale-up evaluating or building on us (e.g. **Jasper AI**). Judge by company + engagement depth + use case. When unsure, include with "(worth a look)".
+- **A current employee of a recognizable enterprise (especially a hyperscaler / large company) who CONTRIBUTES fixes or builds on our integration is HIGH-INTENT — list them as a prospect, do NOT dismiss them as "just an ecosystem contributor."** An AWS / Google / Microsoft / etc. engineer filing and fixing an adapter bug for our protocol means that company is actively investing in interop with us — that's an adoption signal sales wants, not noise. A code contribution counts as much as an eval. Include them even when LinkedIn can't be confirmed (mark `LinkedIn not confirmed`) — the confirmed current employer + the contribution are enough. (Precedent: `FriedhelmWS` @ AWS filed + fixed the AG-UI Strands adapter bugs `#2121`/`#2129` → high-intent prospect, not merely "companies building on us.")
 - **Deep-enrich each prospect via the `enrich-prospect` subagent** — finds the LinkedIn profile (employer verified against the GitHub company; keeps searching on a mismatch, never guesses), company website, and company size (ARR / latest funding round / employee count). Deep pass on the shortlist only.
 - **COLLAPSIBLE toggle heading, company-first** (from `enrich-prospect`): `### 🎯 Prospective enterprise customers {toggle="true"}` with every block tab-indented to nest inside (whole list collapses to one line). Author with REAL newlines + REAL tabs (not `\n`/`\t`).
   ```
