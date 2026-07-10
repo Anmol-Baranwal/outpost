@@ -27,7 +27,11 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 ## Orchestrator flow
 
+0. **Fresh pull first — before anything else.** `git pull` the repo so you're running the LATEST skills/rules (they're the source of truth and change often — a stale checkout runs an old spec). And pull **fresh** source data for the window from Discord / GitHub / Reddit every run — never reuse a prior run's pull, a cache, or last week's numbers.
+
 1. **Determine the window.** Today's date → most recent complete Fri→Fri. State it.
+
+1b. **Spawn Subagent H — product-surface scan** (see `product-surface-scan` skill). Spawn it **at report start, in parallel with A/B/G**. It fetches CopilotKit's product / pricing / Premium pages and returns: the authoritative **commercial-surface list** (drives the 🏢 Enterprise "Surfaces this week" table), the **free-vs-paid classifier** (used to decide whether each issue belongs in 🏢 Enterprise — a commercial surface — vs Pain/Demand), a **diff of what commercial features changed since last week**, and a **cross-page contradiction check** (page-vs-page / page-vs-source conflicts → the ⚠️ Product surface contradictions category). Writes a snapshot to `docs/community-signal/commercial-surfaces.json`. **Enterprise = CopilotKit's commercial product, NOT "CopilotKit used at a big company"** — apply the classifier, don't shelve a free-OSS bug under Enterprise just because the reporter is enterprise.
 
 2. **Spawn Subagent A — Discord pull.** Tell it to pull both servers:
    - CopilotKit (`1122926057641742418`): `#💬｜general` (text `1182553320540352563`) + `#🤔｜support` (forum `1313616713647919218`)
@@ -145,7 +149,10 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ## 🔝 Top issues of the week                    ← THE LEAD body section — cross-community, ranked by importance. Each item a toggle: what · impact · fix plan · owner · priority, tagged [CK]/[AG-UI]. Lead with the biggest front-door break. See "Top issues of the week".
 ---
 
-## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues (highlighted near the top, not buried). Cross-community. See "Enterprise section".
+## ⚠️ Product surface contradictions            ← CONDITIONAL — render ONLY when `product-surface-scan` finds a page-vs-page (or page-vs-source) conflict; sits here, under Top issues + above Enterprise. One card per contradiction: what conflicts · both quoted claims · both page links · suggested source of truth · Owner blank + Priority. When there are none, OMIT this section — a quiet "Product pages checked for contradictions — none this week." line + the referenced-page list lives inside 🏢 Enterprise instead. See `product-surface-scan`.
+---
+
+## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues / the contradictions category (highlighted near the top, not buried). Cross-community. **Scope: CopilotKit's COMMERCIAL surfaces** (Premium / CopilotKit Enterprise / Intelligence Platform / paid tiers), NOT "CopilotKit used at a big company" — apply the `product-surface-scan` classifier. See "Enterprise section".
    ### 🚩 Enterprise questions & complaints     ← any enterprise-related question/complaint this week (e.g. threads/persistence = the "enterprise threads" tier). Each a card with owner + priority. Highlighted at the top of this section.
    ### 🎯 Prospective enterprise customers {toggle="true"}   ← COLLAPSIBLE, company-first. Community members who look like enterprise prospects (e.g. Jasper AI), deep-enriched (LinkedIn + company site + size) via `enrich-prospect`, each with a **Passed to (sales):** owner field. See "Prospective enterprise customers".
    ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
@@ -239,7 +246,7 @@ Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Doc
   | 5 | **CPK version:** | Just the version number — `v1.61.0`, `@copilotkitnext/core 1.54.0`, `unknown`, or `n/a — AG-UI`. **Number only** — the deprecated/experimental note goes in *What it is* / *Description* / *Fix plan*, not here. |
   | 6 | **Impact:** | Human-readable — who it hits and how bad, in plain terms. (Demand: this is "why it matters".) |
   | 7 | **Fix plan:** | Human-readable — shipped / in progress / in testing / not started + the PR or release. (Demand → **Status:**; Docs → **Fix:**.) |
-  | 8 | **Owner + Priority** | `**Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low`. Mandatory on 🔝 Top issues + 🏢 Enterprise question cards; optional elsewhere. Owner always blank (never auto-named); Priority derived from the rank score (see `front-door-triage`). |
+  | 8 | **Owner + Priority** | `**Owner:** _<blank — Nathan fills>_ · **Priority:** 🔴 High / 🟡 Medium / 🟢 Low`. **Mandatory on 🔝 Top issues, 🏢 Enterprise, 💢 Pain, and 📚 Docs cards** (optional only on 🔥 Demand). Owner always blank (never auto-named); Priority derived from the rank/severity (see `front-door-triage`). |
 
 - **Docs cards:** prefix *What it is* with the type — `Drift` / `Gap` / `Links-bot`.
 - **Deprecated `@copilotkitnext/*` (still true, just relocated):** it's the useAgent-era experimental v2 line, deprecated on npm 2026-06-18 → merged into `@copilotkit` v2 (`@copilotkitnext/core`→`@copilotkit/core`, `/react`→`@copilotkit/react-core/v2`, `/runtime`→`@copilotkit/runtime/v2`; last publish 1.54.1). When a reporter is on it: say so in **What it is** (plain: "on a retired/experimental package"), keep **CPK version** to the bare number, and have **Fix plan** lead with "ask them to migrate to `@copilotkit` v2 — the bug may already be gone there." Cite the exact subpackage, never the bare scope; only when the reporter's own text used it (agents invent it from training data).
@@ -380,7 +387,11 @@ When the algorithm changes, update the child page (don't recreate it) AND this s
 
 ## Enterprise section (elevated, current-employer rule)
 
-🏢 Enterprise is **cross-community and elevated to the top of the main page — directly under 🔝 Top issues, above the CopilotKit community body** (per Nathan: enterprise gets highlighted, not buried). Four subsections, in order:
+🏢 Enterprise is **cross-community and elevated to the top of the main page — directly under 🔝 Top issues (and the ⚠️ contradictions category when present), above the CopilotKit community body** (per Nathan: enterprise gets highlighted, not buried).
+
+**Scope — commercial surfaces only.** This section is CopilotKit's **commercial product** (Premium / CopilotKit Enterprise / Intelligence Platform / Cloud / paid-tier / license-gated), **not** "CopilotKit running at an enterprise company." Use the `product-surface-scan` **classifier** to decide whether a report belongs here: it belongs only if it hits a commercial surface (threads/persistence paid boundary, Inspector, Cloud/API-keys, self-host license/Helm, SSO/RBAC/SOC 2, analytics/self-learning, premium UI / Angular SDK, Slack/Teams, or a pricing/licensing question). A free-OSS bug (React SDK, AG-UI protocol, a backend/framework connection, a third-party integration's own auth) is a normal community issue **even when the reporter is at a big company** → Pain/Demand, not here. The "Surfaces this week" list is the `product-surface-scan` output, refreshed each run.
+
+Four subsections, in order:
 
 **🚩 Enterprise questions & complaints** (highlighted first) — **any question or complaint this week that touches an enterprise surface or the enterprise offering**, gathered from GitHub + Discord + Slack. This is the catch-all so nothing enterprise hides in the general body.
 - The **threads / persistence ("enterprise threads") tier** is enterprise by definition — a complaint about paying for threads, the persistence tier, or the self-host runtime belongs here, not just in Pain. (Precedent this cycle: the "threads off" / paid-persistence friction is an enterprise complaint.)
@@ -476,6 +487,7 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 ## Cross-referenced skills
 
 - `front-door-triage` — P0 categories and classification rules
+- `product-surface-scan` — subagent: scans product/pricing/Premium pages → commercial-surface list + free-vs-paid classifier (defines the 🏢 Enterprise scope) + cross-page contradiction check (⚠️ category)
 - `deep-read-issue` — subagent flow for issue + fix PR deep read
 - `release-scan` — subagent: in-cycle release fix-map + authoritative version (open-issue cross-check)
 - `enrich-reporter` — subagent for GitHub author enterprise enrichment (shallow: company field → 🏢 badge, all reporters)
