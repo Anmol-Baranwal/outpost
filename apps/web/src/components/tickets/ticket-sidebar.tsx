@@ -69,11 +69,11 @@ function FieldSelect({
 }) {
     return (
         <div className="flex items-center justify-between py-1.5">
-            <span className="text-xs text-slate-500">{label}</span>
+            <span className="text-xs text-muted-foreground">{label}</span>
             <select
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
-                className="text-xs bg-transparent border border-transparent hover:border-slate-200 rounded px-1.5 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer text-right"
+                className="text-xs bg-transparent border border-transparent hover:border-input rounded px-1.5 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer text-right"
             >
                 {Object.entries(options).map(([val, display]) => (
                     <option key={val} value={val}>
@@ -114,20 +114,20 @@ function ExpandableSection({
     };
 
     return (
-        <div className="border-t border-slate-100" data-testid={testId}>
+        <div className="border-t border-border/60" data-testid={testId}>
             <button
                 onClick={handleToggle}
-                className="w-full flex items-center justify-between py-2 text-xs font-medium text-slate-600 hover:text-slate-800 transition-colors"
+                className="w-full flex items-center justify-between py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
                 data-testid={testId ? `${testId}-toggle` : undefined}
             >
                 <span>
                     {title}
                     {count !== undefined && count > 0 && (
-                        <span className="ml-1 text-slate-400">({count})</span>
+                        <span className="ml-1 text-muted-foreground/70">({count})</span>
                     )}
                 </span>
                 <svg
-                    className={cn('h-3 w-3 text-slate-400 transition-transform', open && 'rotate-180')}
+                    className={cn('h-3 w-3 text-muted-foreground transition-transform', open && 'rotate-180')}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -188,11 +188,11 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
     const discussions = ticket.discussions ?? [];
 
     return (
-        <div className={cn('flex flex-col overflow-y-auto', className)} data-testid="ticket-sidebar">
+        <div className={cn('flex h-full flex-col overflow-y-auto', className)} data-testid="ticket-sidebar">
             {/* Header */}
-            <div className="px-4 py-3 border-b border-slate-200">
-                <span className="text-xs font-mono text-slate-400">{ticket.displayId}</span>
-                <h3 className="text-sm font-medium text-slate-800 mt-0.5 leading-snug">
+            <div className="px-4 py-3 border-b border-border">
+                <span className="text-xs font-mono text-muted-foreground">{ticket.displayId}</span>
+                <h3 className="text-sm font-medium text-foreground mt-0.5 leading-snug">
                     {ticket.title}
                 </h3>
             </div>
@@ -200,7 +200,7 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
             {/* Fields */}
             <div className="px-4 py-2">
                 <div className="flex items-center justify-between py-1.5">
-                    <span className="text-xs text-slate-500">Assignee</span>
+                    <span className="text-xs text-muted-foreground">Assignee</span>
                     <select
                         value={ticket.assigneeId || ''}
                         onChange={(e) =>
@@ -209,7 +209,7 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
                                 assignee: teamMembers.find((tm) => tm.id === e.target.value) || null,
                             })
                         }
-                        className="text-xs bg-transparent border border-transparent hover:border-slate-200 rounded px-1.5 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer text-right"
+                        className="text-xs bg-transparent border border-transparent hover:border-input rounded px-1.5 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer text-right"
                     >
                         <option value="">Unassigned</option>
                         {teamMembers.map((tm) => (
@@ -240,14 +240,14 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
 
                 {/* Source */}
                 <div className="flex items-center justify-between py-1.5">
-                    <span className="text-xs text-slate-500">Source</span>
-                    <span className="text-xs text-slate-700">
+                    <span className="text-xs text-muted-foreground">Source</span>
+                    <span className="text-xs text-foreground">
                         {ticket.sourceUrl ? (
                             <a
                                 href={ticket.sourceUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-blue-600 hover:text-blue-700 hover:underline"
+                                className="text-primary hover:underline"
                             >
                                 {sourceLabels[ticket.source]}
                             </a>
@@ -260,18 +260,18 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
 
             {/* Additional Info */}
             {ticket.additionalInfo && Object.keys(ticket.additionalInfo).length > 0 && (
-                <div className="px-4 py-2 border-t border-slate-100">
+                <div className="px-4 py-2 border-t border-border/60">
                     <div className="flex items-center gap-1.5 mb-2">
-                        <span className="text-xs font-medium text-slate-600">Additional Info</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 font-medium">
+                        <span className="text-xs font-medium text-foreground">Additional Info</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 font-medium">
                             AI
                         </span>
                     </div>
                     <div className="space-y-1">
                         {Object.entries(ticket.additionalInfo).map(([key, value]) => (
                             <div key={key} className="flex items-center justify-between">
-                                <span className="text-[10px] text-slate-400">{key}</span>
-                                <span className="text-[10px] text-slate-600">{value}</span>
+                                <span className="text-[10px] text-muted-foreground">{key}</span>
+                                <span className="text-[10px] text-foreground">{value}</span>
                             </div>
                         ))}
                     </div>
@@ -284,16 +284,16 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
                     {(ticket.notes ?? []).length > 0 && (
                         <div className="space-y-2 mb-2">
                             {(ticket.notes ?? []).map((note) => (
-                                <div key={note.id} className="bg-yellow-50 rounded p-2">
+                                <div key={note.id} className="bg-amber-500/10 border border-amber-500/20 rounded p-2">
                                     <div className="flex items-center gap-1.5 mb-0.5">
-                                        <span className="text-[10px] font-medium text-slate-600">
+                                        <span className="text-[10px] font-medium text-foreground">
                                             {note.author}
                                         </span>
-                                        <span className="text-[10px] text-slate-400">
+                                        <span className="text-[10px] text-muted-foreground">
                                             {formatDate(note.createdAt)}
                                         </span>
                                     </div>
-                                    <p className="text-xs text-slate-700">{note.content}</p>
+                                    <p className="text-xs text-foreground/90">{note.content}</p>
                                 </div>
                             ))}
                         </div>
@@ -315,61 +315,61 @@ export const TicketSidebar = forwardRef<TicketSidebarHandle, TicketSidebarProps>
                     {discussions.length > 0 ? (
                         <div className="space-y-2">
                             {discussions.map((d) => (
-                                <div key={d.id} className="bg-slate-50 rounded p-2">
-                                    <span className="text-xs font-medium text-slate-600">{d.title}</span>
-                                    <span className="text-[10px] text-slate-400 ml-1">
+                                <div key={d.id} className="bg-muted rounded p-2">
+                                    <span className="text-xs font-medium text-foreground">{d.title}</span>
+                                    <span className="text-[10px] text-muted-foreground ml-1">
                                         ({d.messages.length} message{d.messages.length !== 1 ? 's' : ''})
                                     </span>
                                 </div>
                             ))}
                         </div>
                     ) : (
-                        <p className="text-[10px] text-slate-400">No discussions yet.</p>
+                        <p className="text-[10px] text-muted-foreground">No discussions yet.</p>
                     )}
                 </ExpandableSection>
 
                 <ExpandableSection title="Related Tickets" count={0}>
-                    <p className="text-[10px] text-slate-400">No related tickets.</p>
+                    <p className="text-[10px] text-muted-foreground">No related tickets.</p>
                 </ExpandableSection>
             </div>
 
             {/* Account info */}
             {ticket.account && (
-                <div className="mt-auto px-4 py-3 border-t border-slate-200 bg-slate-50">
-                    <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
+                <div className="mt-auto px-4 py-3 border-t border-border bg-muted/40">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                         Account
                     </span>
                     <div className="mt-1.5 space-y-1">
                         <div className="flex items-center justify-between">
-                            <span className="text-xs font-medium text-slate-700">
+                            <span className="text-xs font-medium text-foreground">
                                 {ticket.account.name}
                             </span>
                         </div>
                         {ticket.user && (
                             <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-slate-400">User</span>
-                                <span className="text-[10px] text-slate-600">{ticket.user.name}</span>
+                                <span className="text-[10px] text-muted-foreground">User</span>
+                                <span className="text-[10px] text-foreground">{ticket.user.name}</span>
                             </div>
                         )}
                         {ticket.account.acv != null && (
                             <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-slate-400">ACV</span>
-                                <span className="text-[10px] text-slate-600">
+                                <span className="text-[10px] text-muted-foreground">ACV</span>
+                                <span className="text-[10px] text-foreground">
                                     {formatCurrency(ticket.account.acv)}
                                 </span>
                             </div>
                         )}
                         {ticket.account.domain && (
                             <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-slate-400">Domain</span>
-                                <span className="text-[10px] text-slate-600">
+                                <span className="text-[10px] text-muted-foreground">Domain</span>
+                                <span className="text-[10px] text-foreground">
                                     {ticket.account.domain}
                                 </span>
                             </div>
                         )}
                         <div className="flex items-center justify-between">
-                            <span className="text-[10px] text-slate-400">Created</span>
-                            <span className="text-[10px] text-slate-600">
+                            <span className="text-[10px] text-muted-foreground">Created</span>
+                            <span className="text-[10px] text-foreground">
                                 {formatDate(ticket.account.createdAt)}
                             </span>
                         </div>

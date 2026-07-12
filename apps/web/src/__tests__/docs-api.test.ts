@@ -86,13 +86,16 @@ const MOCK_ARTICLE = {
 
 // ─── Session helpers ────────────────────────────────────────────────────────
 
+// Writes on these routes are admin-gated (see require-admin); role-tier
+// behaviour is covered in api-route-auth.test.ts. These route-logic tests
+// authenticate as an authorized admin.
 function userSession(memberId = 'tm-1') {
     return {
         user: {
             id: memberId,
             name: 'Test User',
             email: 'test@test.com',
-            role: 'MEMBER',
+            role: 'ADMIN',
             memberId,
         },
     };
