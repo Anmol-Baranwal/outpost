@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/lib/auth';
+import { requireSession, requireAdmin } from '@/lib/require-admin';
 import { prisma } from '@copilotkit/outpost/db';
 import type { Prisma, BroadcastStatus } from '@copilotkit/outpost/db';
 
@@ -13,10 +12,8 @@ const MAX_BROADCAST_LENGTH = 500;
  * Query params: status (DRAFT | SENT)
  */
 export async function GET(request: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { error } = await requireSession();
+    if (error) return error;
 
     const { searchParams } = request.nextUrl;
     const status = searchParams.get('status')?.toUpperCase() as BroadcastStatus | null;
@@ -41,10 +38,8 @@ export async function GET(request: NextRequest) {
  * Body: { message, status?, audience?, targetAccounts?, sendAs? }
  */
 export async function POST(request: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { error } = await requireAdmin();
+    if (error) return error;
 
     try {
         const body = await request.json();

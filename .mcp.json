@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "discord": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./apps/discord-mcp/dist/index.js"]
+    },
+    "composio": {
+      "type": "http",
+      "url": "https://connect.composio.dev/mcp"
+    }
+  }
+}

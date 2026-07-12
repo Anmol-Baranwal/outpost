@@ -75,7 +75,7 @@ function makeJsonRequest(url: string, body: unknown, method = 'POST'): NextReque
 
 // ─── Session helpers ────────────────────────────────────────────────────────
 
-function userSession(memberId = 'tm-1', role = 'MEMBER') {
+function userSession(memberId = 'tm-1', role = 'ADMIN') {
     return {
         user: {
             id: memberId,

@@ -1,0 +1,74 @@
+{
+  "_comment": "Reddit Pulse dedup ledger. Each weekly run looks back 90 days but skips any post id already listed here, so a thread is reported once. Add the run's surfaced + noise ids under a dated entry. Prune ids whose created date is older than 90 days from today (they can never reappear in the window anyway).",
+  "runs": [
+    {
+      "run_date": "2026-06-19",
+      "window": "2026-03-21..2026-06-19",
+      "seen_ids": [
+        "1u9lba5",
+        "1u8xx5e",
+        "1u2vu1g",
+        "1u1w2en",
+        "1u1ei2m",
+        "1u1bvk9",
+        "1u0guyz",
+        "1u02dhl",
+        "1txmvbl",
+        "1tx3nzn",
+        "1tc5bqm",
+        "1tc5dwb",
+        "1t5gus6",
+        "1t5fvvo"
+      ]
+    },
+    {
+      "run_date": "2026-06-26",
+      "window": "2026-03-28..2026-06-26",
+      "seen_ids": [
+        "1s72we1",
+        "1stdjiz",
+        "1t3kzl4",
+        "1t5q9i2",
+        "1t5qamn",
+        "1tba7cy",
+        "1tk1mxm",
+        "1tkqliz",
+        "1tuhvgt",
+        "1tuhvoo",
+        "1si3r4h",
+        "1sxx4bf",
+        "1tvyvhd"
+      ]
+    },
+    {
+      "run_date": "2026-07-02",
+      "window": "2026-04-03..2026-07-02",
+      "seen_ids": [
+        "1ul2oz2",
+        "1sbid5f",
+        "1sx3nko",
+        "1uhzbt8",
+        "1sdqdwk",
+        "1si3nya",
+        "1si4936",
+        "1t5w3pf",
+        "1ukd0er"
+      ]
+    },
+    {
+      "run_date": "2026-07-10",
+      "window": "2026-04-11..2026-07-10",
+      "seen_ids": [
+        "1tn12df",
+        "1tqcgb3",
+        "1ummoal",
+        "1ummuwc",
+        "1ununzw",
+        "1uqy7m0",
+        "1uqy8a4",
+        "1url0dp",
+        "1urz8s2"
+      ]
+    }
+  ]
+}
