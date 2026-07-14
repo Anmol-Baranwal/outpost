@@ -30,7 +30,6 @@ import {
     handleHubSpotSync,
     createTrackerSyncHandler,
     handleJobCleanup,
-    createJob,
 } from '@copilotkit/outpost/queue';
 import { buildSyncEngine } from './build-sync-engine.js';
 
