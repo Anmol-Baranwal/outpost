@@ -365,6 +365,39 @@ describe('PUT /api/sync/mappings', () => {
         expect(res.status).toBe(400);
         expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
     });
+
+    it('rejects labelRules of the wrong type', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: { linear: [] },
+            priorityMappings: { linear: [] },
+            labelRules: 'garbage',
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
+    it('persists a valid labelRules update', async () => {
+        const config = {
+            statusMappings: { linear: [] },
+            priorityMappings: { linear: [] },
+            labelRules: { linear: [{ externalPrefix: 'Priority: ', outpostPrefix: '' }] },
+        };
+        mockSystemConfigUpsert.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', config, 'PUT');
+        const res = await putMappings(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(mockSystemConfigUpsert).toHaveBeenCalledWith({
+            where: { key: 'sync.mappingConfig' },
+            update: { value: JSON.stringify(config) },
+            create: { key: 'sync.mappingConfig', value: JSON.stringify(config) },
+        });
+        expect(body.labelRules).toEqual(config.labelRules);
+    });
 });
 
 describe('POST /api/sync/force', () => {

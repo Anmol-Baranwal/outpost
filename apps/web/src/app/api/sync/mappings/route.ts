@@ -138,6 +138,33 @@ function isValidMappingShape(value: unknown, validOutpostValues: string[]): bool
 }
 
 /**
+ * Validates that `value` matches the expected labelRules shape:
+ * a plain object whose values are arrays of
+ * `{ externalPrefix: string; outpostPrefix: string }`. Unlike
+ * `isValidMappingShape`, there is no enum constraint on `outpostPrefix` —
+ * any string (including empty string) is valid.
+ */
+function isValidLabelRulesShape(value: unknown): boolean {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return false;
+    }
+
+    return Object.values(value as Record<string, unknown>).every((entries) => {
+        if (!Array.isArray(entries)) return false;
+
+        return entries.every((entry) => {
+            if (typeof entry !== 'object' || entry === null) return false;
+            const record = entry as Record<string, unknown>;
+
+            return (
+                typeof record.externalPrefix === 'string' &&
+                typeof record.outpostPrefix === 'string'
+            );
+        });
+    });
+}
+
+/**
  * PUT /api/sync/mappings
  *
  * Persists the mapping configuration as a single JSON row in SystemConfig.
@@ -167,6 +194,13 @@ export async function PUT(request: NextRequest) {
         if (!isValidMappingShape(body.priorityMappings, Object.values(TicketPriority))) {
             return NextResponse.json(
                 { error: 'priorityMappings has invalid shape or unknown outpostPriority value' },
+                { status: 400 },
+            );
+        }
+
+        if (body.labelRules !== undefined && !isValidLabelRulesShape(body.labelRules)) {
+            return NextResponse.json(
+                { error: 'labelRules has invalid shape' },
                 { status: 400 },
             );
         }
