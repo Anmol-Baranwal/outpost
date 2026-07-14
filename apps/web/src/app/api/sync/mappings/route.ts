@@ -174,55 +174,56 @@ export async function PUT(request: NextRequest) {
     const { error } = await requireAdmin();
     if (error) return error;
 
+    let body: { statusMappings?: unknown; priorityMappings?: unknown; labelRules?: unknown };
     try {
-        const body = await request.json();
-
-        if (!body.statusMappings || !body.priorityMappings) {
-            return NextResponse.json(
-                { error: 'statusMappings and priorityMappings are required' },
-                { status: 400 },
-            );
-        }
-
-        if (!isValidMappingShape(body.statusMappings, Object.values(TicketStatus))) {
-            return NextResponse.json(
-                { error: 'statusMappings has invalid shape or unknown outpostStatus value' },
-                { status: 400 },
-            );
-        }
-
-        if (!isValidMappingShape(body.priorityMappings, Object.values(TicketPriority))) {
-            return NextResponse.json(
-                { error: 'priorityMappings has invalid shape or unknown outpostPriority value' },
-                { status: 400 },
-            );
-        }
-
-        if (body.labelRules !== undefined && !isValidLabelRulesShape(body.labelRules)) {
-            return NextResponse.json(
-                { error: 'labelRules has invalid shape' },
-                { status: 400 },
-            );
-        }
-
-        const config: PersistedMappingConfig = {
-            statusMappings: body.statusMappings,
-            priorityMappings: body.priorityMappings,
-            ...(body.labelRules ? { labelRules: body.labelRules } : {}),
-        };
-        const value = JSON.stringify(config);
-
-        await prisma.systemConfig.upsert({
-            where: { key: MAPPING_CONFIG_KEY },
-            update: { value },
-            create: { key: MAPPING_CONFIG_KEY, value },
-        });
-
-        return NextResponse.json(config);
+        body = await request.json();
     } catch {
         return NextResponse.json(
             { error: 'Invalid request body' },
             { status: 400 },
         );
     }
+
+    if (!body.statusMappings || !body.priorityMappings) {
+        return NextResponse.json(
+            { error: 'statusMappings and priorityMappings are required' },
+            { status: 400 },
+        );
+    }
+
+    if (!isValidMappingShape(body.statusMappings, Object.values(TicketStatus))) {
+        return NextResponse.json(
+            { error: 'statusMappings has invalid shape or unknown outpostStatus value' },
+            { status: 400 },
+        );
+    }
+
+    if (!isValidMappingShape(body.priorityMappings, Object.values(TicketPriority))) {
+        return NextResponse.json(
+            { error: 'priorityMappings has invalid shape or unknown outpostPriority value' },
+            { status: 400 },
+        );
+    }
+
+    if (body.labelRules !== undefined && !isValidLabelRulesShape(body.labelRules)) {
+        return NextResponse.json(
+            { error: 'labelRules has invalid shape' },
+            { status: 400 },
+        );
+    }
+
+    const config: PersistedMappingConfig = {
+        statusMappings: body.statusMappings as PersistedMappingConfig['statusMappings'],
+        priorityMappings: body.priorityMappings as PersistedMappingConfig['priorityMappings'],
+        ...(body.labelRules ? { labelRules: body.labelRules as PersistedMappingConfig['labelRules'] } : {}),
+    };
+    const value = JSON.stringify(config);
+
+    await prisma.systemConfig.upsert({
+        where: { key: MAPPING_CONFIG_KEY },
+        update: { value },
+        create: { key: MAPPING_CONFIG_KEY, value },
+    });
+
+    return NextResponse.json(config);
 }

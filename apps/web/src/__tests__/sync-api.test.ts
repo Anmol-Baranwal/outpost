@@ -398,6 +398,18 @@ describe('PUT /api/sync/mappings', () => {
         });
         expect(body.labelRules).toEqual(config.labelRules);
     });
+
+    it('does not mislabel a DB write failure as "Invalid request body"', async () => {
+        const config = {
+            statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
+            priorityMappings: { linear: [] },
+        };
+        mockSystemConfigUpsert.mockRejectedValueOnce(new Error('db down'));
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', config, 'PUT');
+
+        await expect(putMappings(req as never)).rejects.toThrow('db down');
+    });
 });
 
 describe('POST /api/sync/force', () => {
