@@ -466,4 +466,16 @@ describe('POST /api/sync/force', () => {
 
         await expect(forceSync(req as never)).rejects.toThrow('db down');
     });
+
+    it('requires admin role', async () => {
+        mockGetServerSession.mockResolvedValue(userSession('tm-1', 'MEMBER'));
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        const res = await forceSync(req as never);
+
+        expect(res.status).toBe(403);
+        expect(mockSyncEventFindFirst).not.toHaveBeenCalled();
+        expect(mockTicketExternalLinkFindMany).not.toHaveBeenCalled();
+        expect(mockCreateJob).not.toHaveBeenCalled();
+    });
 });
