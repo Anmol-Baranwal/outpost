@@ -32,11 +32,11 @@ import {
     handleJobCleanup,
     createJob,
 } from '@copilotkit/outpost/queue';
-import { SyncEngine } from '@copilotkit/outpost/shared';
+import { buildSyncEngine } from './build-sync-engine.js';
 
 // ─── Build SyncEngine for TRACKER_SYNC handler ────────────────────────────
 
-const syncEngine = new SyncEngine({ prisma: prisma as any, createJob: createJob as any });
+const syncEngine = await buildSyncEngine();
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);
 

@@ -1,0 +1,21 @@
+/**
+ * Builds the SyncEngine for the TRACKER_SYNC handler, with the Linear
+ * adapter registered using the persisted status-map config (falling back
+ * to the hardcoded default when nothing is persisted). GitHub adapter
+ * registration is not wired here — it needs an authenticated Octokit
+ * instance that currently only exists inside apps/github-app.
+ */
+
+import { prisma } from '@copilotkit/outpost/db';
+import { createJob } from '@copilotkit/outpost/queue';
+import { loadStatusMap, initializeSyncEngine, type SyncEngine } from '@copilotkit/outpost/shared';
+
+export async function buildSyncEngine(): Promise<SyncEngine> {
+    const statusMap = await loadStatusMap('linear', prisma as never);
+
+    return initializeSyncEngine({
+        deps: { prisma: prisma as never, createJob: createJob as never },
+        identityDeps: prisma as never,
+        statusMapOverride: statusMap,
+    });
+}
