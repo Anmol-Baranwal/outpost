@@ -1,8 +1,8 @@
 export * from './types.js';
 export { SyncEngine } from './engine.js';
 export type { SyncEngineDeps } from './engine.js';
-export { StatusMap, createGitHubStatusMap, createLinearStatusMap } from './status-map.js';
-export type { StatusMappingConfig } from './status-map.js';
+export { StatusMap, createGitHubStatusMap, createLinearStatusMap, loadStatusMap } from './status-map.js';
+export type { StatusMappingConfig, StatusMapDb } from './status-map.js';
 export { PriorityMap, createLinearPriorityMap, createGitHubPriorityMap } from './priority-map.js';
 export type { PriorityMappingConfig } from './priority-map.js';
 export { IdentityMapper } from './identity-map.js';

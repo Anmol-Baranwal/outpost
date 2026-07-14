@@ -84,3 +84,55 @@ export function createLinearStatusMap(): StatusMap {
         Canceled: TicketStatus.CLOSED,
     });
 }
+
+// ─── Persisted Config Loading ─────────────────────────────────────────────
+
+/** Must match the key used by apps/web/src/app/api/sync/mappings/route.ts. */
+const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
+
+/** Minimal Prisma subset needed to load a persisted mapping config. */
+export interface StatusMapDb {
+    systemConfig: {
+        findUnique(args: { where: { key: string } }): Promise<{ key: string; value: string } | null>;
+    };
+}
+
+interface PersistedStatusMappingEntry {
+    externalStatus: string;
+    outpostStatus: TicketStatus;
+}
+
+/**
+ * Build a StatusMap for `plugin`, preferring the persisted SystemConfig
+ * row (written by the /api/sync/mappings dashboard) over the hardcoded
+ * factory defaults. Falls back to the hardcoded default whenever the
+ * config row is missing, malformed, or has no entry for this plugin.
+ */
+export async function loadStatusMap(
+    plugin: 'linear' | 'github',
+    db: StatusMapDb,
+): Promise<StatusMap> {
+    const fallback = plugin === 'linear' ? createLinearStatusMap() : createGitHubStatusMap();
+
+    const row = await db.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
+    if (!row) return fallback;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(row.value);
+    } catch {
+        return fallback;
+    }
+
+    const entries = (parsed as { statusMappings?: Record<string, PersistedStatusMappingEntry[]> })
+        ?.statusMappings?.[plugin];
+    if (!Array.isArray(entries) || entries.length === 0) return fallback;
+
+    const config: StatusMappingConfig = {};
+    for (const entry of entries) {
+        if (entry?.externalStatus && entry?.outpostStatus) {
+            config[entry.externalStatus] = entry.outpostStatus;
+        }
+    }
+    return Object.keys(config).length > 0 ? new StatusMap(config) : fallback;
+}
