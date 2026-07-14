@@ -8,6 +8,8 @@ const mockSyncEventFindUnique = vi.fn();
 const mockSyncEventCount = vi.fn();
 const mockSyncEventUpdate = vi.fn();
 const mockExternalIdentityFindMany = vi.fn();
+const mockSystemConfigFindUnique = vi.fn();
+const mockSystemConfigUpsert = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
@@ -20,6 +22,10 @@ vi.mock('@copilotkit/outpost/db', () => ({
         },
         externalIdentity: {
             findMany: (...args: unknown[]) => mockExternalIdentityFindMany(...args),
+        },
+        systemConfig: {
+            findUnique: (...args: unknown[]) => mockSystemConfigFindUnique(...args),
+            upsert: (...args: unknown[]) => mockSystemConfigUpsert(...args),
         },
     },
 }));
@@ -232,35 +238,59 @@ describe('GET /api/sync/mappings', () => {
         mockGetServerSession.mockResolvedValue(userSession('tm-1'));
     });
 
-    it('returns mapping config', async () => {
+    it('falls back to defaults when no SystemConfig row exists', async () => {
         mockExternalIdentityFindMany.mockResolvedValue([]);
+        mockSystemConfigFindUnique.mockResolvedValue(null);
 
         const res = await getMappings();
         const body = await res.json();
 
-        expect(body.statusMappings).toBeDefined();
+        expect(body.statusMappings.linear).toContainEqual({ externalStatus: 'Triage', outpostStatus: 'OPEN' });
         expect(body.priorityMappings).toBeDefined();
         expect(body.identityMappings).toBeDefined();
         expect(body.labelRules).toBeDefined();
+    });
+
+    it('returns the persisted config when a SystemConfig row exists', async () => {
+        mockExternalIdentityFindMany.mockResolvedValue([]);
+        const saved = {
+            statusMappings: { linear: [{ externalStatus: 'Custom', outpostStatus: 'OPEN' }] },
+            priorityMappings: { linear: [] },
+            labelRules: { linear: [] },
+        };
+        mockSystemConfigFindUnique.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(saved) });
+
+        const res = await getMappings();
+        const body = await res.json();
+
+        expect(body.statusMappings).toEqual(saved.statusMappings);
     });
 });
 
 describe('PUT /api/sync/mappings', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockGetServerSession.mockResolvedValue(userSession('tm-1'));
+        mockGetServerSession.mockResolvedValue(userSession('tm-1', 'ADMIN'));
     });
 
-    it('returns 501 for valid mapping update (persistence not yet implemented)', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: { linear: [] },
+    it('persists a valid mapping update', async () => {
+        const config = {
+            statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
             priorityMappings: { linear: [] },
-        }, 'PUT');
-        const res = await putMappings(req as never);
+        };
+        mockSystemConfigUpsert.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
 
-        expect(res.status).toBe(501);
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', config, 'PUT');
+        const res = await putMappings(req as never);
         const body = await res.json();
-        expect(body.error).toContain('not yet implemented');
+
+        expect(res.status).toBe(200);
+        expect(mockSystemConfigUpsert).toHaveBeenCalledWith({
+            where: { key: 'sync.mappingConfig' },
+            update: { value: JSON.stringify(config) },
+            create: { key: 'sync.mappingConfig', value: JSON.stringify(config) },
+        });
+        expect(body.statusMappings).toEqual(config.statusMappings);
     });
 
     it('rejects when required fields missing', async () => {
@@ -268,6 +298,20 @@ describe('PUT /api/sync/mappings', () => {
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
+    it('requires admin role', async () => {
+        mockGetServerSession.mockResolvedValue(userSession('tm-1', 'MEMBER'));
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: { linear: [] },
+            priorityMappings: { linear: [] },
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(403);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
     });
 });
 

@@ -51,18 +51,36 @@ const DEFAULT_LABEL_RULES: Record<string, Array<{ externalPrefix: string; outpos
     ],
 };
 
+export const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
+
+interface PersistedMappingConfig {
+    statusMappings: typeof DEFAULT_STATUS_MAPPINGS;
+    priorityMappings: typeof DEFAULT_PRIORITY_MAPPINGS;
+    labelRules?: typeof DEFAULT_LABEL_RULES;
+}
+
+async function readPersistedConfig(): Promise<PersistedMappingConfig | null> {
+    const row = await prisma.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
+    if (!row) return null;
+    try {
+        return JSON.parse(row.value) as PersistedMappingConfig;
+    } catch {
+        return null;
+    }
+}
+
 /**
  * GET /api/sync/mappings
  *
- * Returns the current mapping configuration. Identity mappings
- * are fetched from the ExternalIdentity table; status/priority/label
- * mappings are code defaults.
+ * Returns the current mapping configuration. Identity mappings are always
+ * fetched live from the ExternalIdentity table. Status/priority/label
+ * mappings come from the persisted SystemConfig row if one exists, else
+ * the code defaults.
  */
 export async function GET() {
     const { error } = await requireSession();
     if (error) return error;
 
-    // Fetch identity mappings from ExternalIdentity records
     const identities = await prisma.externalIdentity.findMany({
         include: { member: { select: { id: true, name: true } } },
     });
@@ -76,22 +94,21 @@ export async function GET() {
         memberName: ei.member?.name ?? null,
     }));
 
+    const persisted = await readPersistedConfig();
+
     return NextResponse.json({
-        statusMappings: DEFAULT_STATUS_MAPPINGS,
-        priorityMappings: DEFAULT_PRIORITY_MAPPINGS,
+        statusMappings: persisted?.statusMappings ?? DEFAULT_STATUS_MAPPINGS,
+        priorityMappings: persisted?.priorityMappings ?? DEFAULT_PRIORITY_MAPPINGS,
         identityMappings,
-        labelRules: DEFAULT_LABEL_RULES,
+        labelRules: persisted?.labelRules ?? DEFAULT_LABEL_RULES,
     });
 }
 
 /**
  * PUT /api/sync/mappings
  *
- * Update the mapping configuration.
- * Body: MappingConfig (statusMappings, priorityMappings required)
- *
- * Note: This currently validates but does not persist changes to a DB table.
- * A settings/config model would be needed for full persistence.
+ * Persists the mapping configuration as a single JSON row in SystemConfig.
+ * Body: MappingConfig (statusMappings, priorityMappings required; labelRules optional)
  */
 export async function PUT(request: NextRequest) {
     const { error } = await requireAdmin();
@@ -100,7 +117,6 @@ export async function PUT(request: NextRequest) {
     try {
         const body = await request.json();
 
-        // Basic validation
         if (!body.statusMappings || !body.priorityMappings) {
             return NextResponse.json(
                 { error: 'statusMappings and priorityMappings are required' },
@@ -108,11 +124,20 @@ export async function PUT(request: NextRequest) {
             );
         }
 
-        // TODO: Persist to a settings/config table once schema supports it
-        return NextResponse.json(
-            { error: 'Sync mapping persistence not yet implemented' },
-            { status: 501 },
-        );
+        const config: PersistedMappingConfig = {
+            statusMappings: body.statusMappings,
+            priorityMappings: body.priorityMappings,
+            ...(body.labelRules ? { labelRules: body.labelRules } : {}),
+        };
+        const value = JSON.stringify(config);
+
+        await prisma.systemConfig.upsert({
+            where: { key: MAPPING_CONFIG_KEY },
+            update: { value },
+            create: { key: MAPPING_CONFIG_KEY, value },
+        });
+
+        return NextResponse.json(config);
     } catch {
         return NextResponse.json(
             { error: 'Invalid request body' },
