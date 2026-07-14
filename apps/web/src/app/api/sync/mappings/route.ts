@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireSession, requireAdmin } from '@/lib/require-admin';
 import { prisma } from '@copilotkit/outpost/db';
+import { TicketStatus, TicketPriority } from '@copilotkit/outpost/shared';
 
 /**
  * Default mapping configuration. In a full implementation this would
@@ -105,6 +106,35 @@ export async function GET() {
 }
 
 /**
+ * Validates that `value` matches the expected mapping shape:
+ * a plain object whose values are arrays of
+ * `{ externalStatus: string; outpostStatus: <one of validOutpostValues> }`
+ * (or the priority equivalent, keyed `externalPriority`/`outpostPriority`).
+ */
+function isValidMappingShape(value: unknown, validOutpostValues: string[]): boolean {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return false;
+    }
+
+    return Object.values(value as Record<string, unknown>).every((entries) => {
+        if (!Array.isArray(entries)) return false;
+
+        return entries.every((entry) => {
+            if (typeof entry !== 'object' || entry === null) return false;
+            const record = entry as Record<string, unknown>;
+            const externalKey = 'externalStatus' in record ? 'externalStatus' : 'externalPriority';
+            const outpostKey = 'externalStatus' in record ? 'outpostStatus' : 'outpostPriority';
+
+            return (
+                typeof record[externalKey] === 'string' &&
+                typeof record[outpostKey] === 'string' &&
+                validOutpostValues.includes(record[outpostKey] as string)
+            );
+        });
+    });
+}
+
+/**
  * PUT /api/sync/mappings
  *
  * Persists the mapping configuration as a single JSON row in SystemConfig.
@@ -120,6 +150,20 @@ export async function PUT(request: NextRequest) {
         if (!body.statusMappings || !body.priorityMappings) {
             return NextResponse.json(
                 { error: 'statusMappings and priorityMappings are required' },
+                { status: 400 },
+            );
+        }
+
+        if (!isValidMappingShape(body.statusMappings, Object.values(TicketStatus))) {
+            return NextResponse.json(
+                { error: 'statusMappings has invalid shape or unknown outpostStatus value' },
+                { status: 400 },
+            );
+        }
+
+        if (!isValidMappingShape(body.priorityMappings, Object.values(TicketPriority))) {
+            return NextResponse.json(
+                { error: 'priorityMappings has invalid shape or unknown outpostPriority value' },
                 { status: 400 },
             );
         }

@@ -307,6 +307,28 @@ describe('PUT /api/sync/mappings', () => {
         expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
     });
 
+    it('rejects statusMappings of the wrong type entirely', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: 'garbage',
+            priorityMappings: { linear: [] },
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a mapping with an unknown outpostStatus value', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'NOT_REAL' }] },
+            priorityMappings: { linear: [] },
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
     it('requires admin role', async () => {
         mockGetServerSession.mockResolvedValue(userSession('tm-1', 'MEMBER'));
 
