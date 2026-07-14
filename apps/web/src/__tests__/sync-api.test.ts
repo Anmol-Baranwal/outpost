@@ -271,6 +271,19 @@ describe('GET /api/sync/mappings', () => {
 
         expect(body.statusMappings).toEqual(saved.statusMappings);
     });
+
+    it('falls back to defaults when the persisted SystemConfig value is malformed JSON', async () => {
+        mockExternalIdentityFindMany.mockResolvedValue([]);
+        mockSystemConfigFindUnique.mockResolvedValue({ key: 'sync.mappingConfig', value: 'not valid json {{{' });
+
+        const res = await getMappings();
+        const body = await res.json();
+
+        expect(body.statusMappings.linear).toContainEqual({ externalStatus: 'Triage', outpostStatus: 'OPEN' });
+        expect(body.priorityMappings).toBeDefined();
+        expect(body.identityMappings).toBeDefined();
+        expect(body.labelRules).toBeDefined();
+    });
 });
 
 describe('PUT /api/sync/mappings', () => {
