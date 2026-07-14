@@ -130,7 +130,11 @@ export async function loadStatusMap(
 
     const config: StatusMappingConfig = {};
     for (const entry of entries) {
-        if (entry?.externalStatus && entry?.outpostStatus) {
+        if (
+            entry?.externalStatus &&
+            entry?.outpostStatus &&
+            Object.values(TicketStatus).includes(entry.outpostStatus as TicketStatus)
+        ) {
             config[entry.externalStatus] = entry.outpostStatus;
         }
     }

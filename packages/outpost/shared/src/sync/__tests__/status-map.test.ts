@@ -52,4 +52,37 @@ describe('loadStatusMap', () => {
 
         expect(map.toOutpost('Done')).toBe(TicketStatus.RESOLVED);
     });
+
+    it('skips a persisted entry whose outpostStatus is not a valid TicketStatus enum value', async () => {
+        const config = {
+            statusMappings: {
+                linear: [
+                    { externalStatus: 'Shipped', outpostStatus: 'RESOLVED' },
+                    { externalStatus: 'Custom', outpostStatus: 'NOT_A_REAL_STATUS' },
+                ],
+            },
+        };
+        const db = makeDb({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
+
+        const map = await loadStatusMap('linear', db);
+
+        expect(map.toOutpost('Shipped')).toBe(TicketStatus.RESOLVED);
+        // Invalid entry must not pass through as a literal garbage string.
+        expect(map.toOutpost('Custom')).toBe(TicketStatus.OPEN);
+    });
+
+    it('falls back to the hardcoded default map when every persisted entry for a plugin is invalid', async () => {
+        const config = {
+            statusMappings: {
+                linear: [{ externalStatus: 'Custom', outpostStatus: 'NOT_A_REAL_STATUS' }],
+            },
+        };
+        const db = makeDb({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
+
+        const map = await loadStatusMap('linear', db);
+
+        // All entries filtered out -> falls back to createLinearStatusMap() defaults.
+        expect(map.toOutpost('Done')).toBe(TicketStatus.RESOLVED);
+        expect(map.toOutpost('Custom')).toBe(TicketStatus.OPEN);
+    });
 });
