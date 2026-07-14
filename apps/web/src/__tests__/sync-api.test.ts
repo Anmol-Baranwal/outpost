@@ -11,6 +11,7 @@ const mockExternalIdentityFindMany = vi.fn();
 const mockSystemConfigFindUnique = vi.fn();
 const mockSystemConfigUpsert = vi.fn();
 const mockTicketExternalLinkFindMany = vi.fn();
+const mockTicketExternalLinkFindFirst = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
@@ -30,6 +31,7 @@ vi.mock('@copilotkit/outpost/db', () => ({
         },
         ticketExternalLink: {
             findMany: (...args: unknown[]) => mockTicketExternalLinkFindMany(...args),
+            findFirst: (...args: unknown[]) => mockTicketExternalLinkFindFirst(...args),
         },
     },
 }));
@@ -323,6 +325,7 @@ describe('POST /api/sync/force', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockGetServerSession.mockResolvedValue(userSession('tm-1', 'ADMIN'));
+        mockTicketExternalLinkFindFirst.mockResolvedValue(null);
     });
 
     it('enqueues status_change and priority_change jobs for every ticket linked to the plugin', async () => {
@@ -386,6 +389,7 @@ describe('POST /api/sync/force', () => {
 
     it('returns 404 for unknown plugin', async () => {
         mockSyncEventFindFirst.mockResolvedValue(null);
+        mockTicketExternalLinkFindFirst.mockResolvedValue(null);
 
         const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'unknown' });
         const res = await forceSync(req as never);
@@ -394,10 +398,50 @@ describe('POST /api/sync/force', () => {
         expect(mockTicketExternalLinkFindMany).not.toHaveBeenCalled();
     });
 
+    it('recognizes a plugin via TicketExternalLink even with no prior SyncEvent', async () => {
+        mockSyncEventFindFirst.mockResolvedValue(null);
+        mockTicketExternalLinkFindFirst.mockResolvedValue({ id: 'link-1', plugin: 'linear' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+        ]);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        const res = await forceSync(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(body).toEqual({ queued: 1, jobs: 2 });
+    });
+
     it('rejects when plugin is missing', async () => {
         const req = makeJsonRequest('http://localhost:3000/api/sync/force', {});
         const res = await forceSync(req as never);
 
         expect(res.status).toBe(400);
+    });
+
+    it('still returns 400 "Invalid request body" for malformed JSON', async () => {
+        const req = new NextRequest('http://localhost:3000/api/sync/force', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: 'not json',
+        });
+        const res = await forceSync(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(400);
+        expect(body.error).toBe('Invalid request body');
+    });
+
+    it('does not mislabel a mid-loop DB/queue error as "Invalid request body"', async () => {
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+        ]);
+        mockCreateJob.mockRejectedValueOnce(new Error('db down'));
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+
+        await expect(forceSync(req as never)).rejects.toThrow('db down');
     });
 });
