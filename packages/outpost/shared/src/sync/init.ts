@@ -9,7 +9,7 @@
 import { SyncEngine } from './engine.js';
 import type { SyncEngineDeps } from './engine.js';
 import { LinearAdapter } from './adapters/linear.js';
-import { createLinearStatusMap } from './status-map.js';
+import { createLinearStatusMap, StatusMap } from './status-map.js';
 import { createLinearPriorityMap } from './priority-map.js';
 import { createLinearLabelMapper } from './label-map.js';
 import { IdentityMapper } from './identity-map.js';
@@ -24,6 +24,8 @@ interface InitOptions {
     identityDeps?: IdentityMapperDeps;
     /** Override for environment variables (testing). */
     env?: Record<string, string | undefined>;
+    /** Pre-built StatusMap to use instead of createLinearStatusMap(). */
+    statusMapOverride?: StatusMap;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────
@@ -54,7 +56,7 @@ export function initializeSyncEngine(options: InitOptions): SyncEngine {
             const adapter = new LinearAdapter({
                 apiKey: linearApiKey,
                 teamId: linearTeamId,
-                statusMap: createLinearStatusMap(),
+                statusMap: options.statusMapOverride ?? createLinearStatusMap(),
                 priorityMap: createLinearPriorityMap(),
                 labelMapper: createLinearLabelMapper(),
                 identityMapper,
