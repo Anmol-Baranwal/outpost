@@ -342,6 +342,17 @@ describe('PUT /api/sync/mappings', () => {
         expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
     });
 
+    it('rejects a mapping with an unknown outpostPriority value', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: { linear: [] },
+            priorityMappings: { linear: [{ externalPriority: 'X', outpostPriority: 'NOT_REAL' }] },
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
     it('requires admin role', async () => {
         mockGetServerSession.mockResolvedValue(userSession('tm-1', 'MEMBER'));
 
