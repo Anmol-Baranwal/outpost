@@ -10,6 +10,7 @@ const mockSyncEventUpdate = vi.fn();
 const mockExternalIdentityFindMany = vi.fn();
 const mockSystemConfigFindUnique = vi.fn();
 const mockSystemConfigUpsert = vi.fn();
+const mockTicketExternalLinkFindMany = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
@@ -26,6 +27,9 @@ vi.mock('@copilotkit/outpost/db', () => ({
         systemConfig: {
             findUnique: (...args: unknown[]) => mockSystemConfigFindUnique(...args),
             upsert: (...args: unknown[]) => mockSystemConfigUpsert(...args),
+        },
+        ticketExternalLink: {
+            findMany: (...args: unknown[]) => mockTicketExternalLinkFindMany(...args),
         },
     },
 }));
@@ -321,15 +325,63 @@ describe('POST /api/sync/force', () => {
         mockGetServerSession.mockResolvedValue(userSession('tm-1', 'ADMIN'));
     });
 
-    it('returns 501 for force sync (bulk sync not yet implemented)', async () => {
+    it('enqueues status_change and priority_change jobs for every ticket linked to the plugin', async () => {
         mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+            { ticketId: 't-2', plugin: 'linear', ticket: { id: 't-2', status: 'RESOLVED', priority: 'LOW' } },
+        ]);
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'github' });
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
         const res = await forceSync(req as never);
-
-        expect(res.status).toBe(501);
         const body = await res.json();
-        expect(body.error).toContain('not yet implemented');
+
+        expect(res.status).toBe(200);
+        expect(body).toEqual({ queued: 2, jobs: 4 });
+        expect(mockCreateJob).toHaveBeenCalledTimes(4);
+        expect(mockCreateJob).toHaveBeenCalledWith('TRACKER_SYNC', {
+            ticketId: 't-1',
+            targetPlugin: 'linear',
+            action: 'status_change',
+            changeData: { status: 'OPEN' },
+        });
+        expect(mockCreateJob).toHaveBeenCalledWith('TRACKER_SYNC', {
+            ticketId: 't-1',
+            targetPlugin: 'linear',
+            action: 'priority_change',
+            changeData: { priority: 'HIGH' },
+        });
+    });
+
+    it('returns zero counts and does not call createJob when no tickets are linked', async () => {
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([]);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        const res = await forceSync(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(body).toEqual({ queued: 0, jobs: 0 });
+        expect(mockCreateJob).not.toHaveBeenCalled();
+    });
+
+    it('syncs only the given ticket when ticketId is provided', async () => {
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+        ]);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear', ticketId: 't-1' });
+        const res = await forceSync(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(body).toEqual({ queued: 1, jobs: 2 });
+        expect(mockTicketExternalLinkFindMany).toHaveBeenCalledWith({
+            where: { plugin: 'linear', ticketId: 't-1' },
+            include: { ticket: true },
+        });
     });
 
     it('returns 404 for unknown plugin', async () => {
@@ -339,6 +391,7 @@ describe('POST /api/sync/force', () => {
         const res = await forceSync(req as never);
 
         expect(res.status).toBe(404);
+        expect(mockTicketExternalLinkFindMany).not.toHaveBeenCalled();
     });
 
     it('rejects when plugin is missing', async () => {

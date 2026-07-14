@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
+import { createJob, JobType } from '@copilotkit/outpost/queue';
 import { requireAdmin } from '@/lib/require-admin';
 
 /**
  * POST /api/sync/force
  *
- * Trigger a force sync for a specific system plugin.
- * Body: { plugin: string }
+ * Trigger a force sync for a specific system plugin. Enqueues a
+ * TRACKER_SYNC job per changed field (status, priority) for every ticket
+ * currently linked to that plugin, or just one ticket when `ticketId`
+ * is given. Ticket has no tags/labels field, so label_change is not
+ * part of a resync.
+ *
+ * Body: { plugin: string, ticketId?: string }
  */
 export async function POST(request: NextRequest) {
     const { error } = await requireAdmin();
@@ -15,6 +21,7 @@ export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
         const plugin = body.plugin;
+        const ticketId = typeof body.ticketId === 'string' ? body.ticketId : undefined;
 
         if (!plugin || typeof plugin !== 'string') {
             return NextResponse.json(
@@ -23,7 +30,6 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Verify the plugin is known by checking if any sync events exist for it
         const knownPlugin = await prisma.syncEvent.findFirst({
             where: {
                 OR: [
@@ -40,13 +46,31 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // TODO: TRACKER_SYNC expects a real ticketId; bulk/full sync needs a
-        // dedicated FULL_SYNC job type or iteration over all linked tickets.
-        // For now, return 501 until the handler supports bulk sync.
-        return NextResponse.json(
-            { error: 'Bulk force sync not yet implemented' },
-            { status: 501 },
-        );
+        const links = await prisma.ticketExternalLink.findMany({
+            where: ticketId ? { plugin, ticketId } : { plugin },
+            include: { ticket: true },
+        });
+
+        let jobs = 0;
+        for (const link of links) {
+            await createJob(JobType.TRACKER_SYNC, {
+                ticketId: link.ticket.id,
+                targetPlugin: plugin,
+                action: 'status_change',
+                changeData: { status: link.ticket.status },
+            });
+            jobs += 1;
+
+            await createJob(JobType.TRACKER_SYNC, {
+                ticketId: link.ticket.id,
+                targetPlugin: plugin,
+                action: 'priority_change',
+                changeData: { priority: link.ticket.priority },
+            });
+            jobs += 1;
+        }
+
+        return NextResponse.json({ queued: links.length, jobs });
     } catch {
         return NextResponse.json(
             { error: 'Invalid request body' },
