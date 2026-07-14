@@ -115,6 +115,10 @@ function isValidMappingShape(value: unknown, validOutpostValues: string[]): bool
         return false;
     }
 
+    if (Object.keys(value as Record<string, unknown>).length === 0) {
+        return false;
+    }
+
     return Object.values(value as Record<string, unknown>).every((entries) => {
         if (!Array.isArray(entries)) return false;
 

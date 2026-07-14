@@ -354,6 +354,17 @@ describe('PUT /api/sync/mappings', () => {
         expect(res.status).toBe(403);
         expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
     });
+
+    it('rejects completely empty statusMappings/priorityMappings objects instead of silently wiping config', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: {},
+            priorityMappings: {},
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
 });
 
 describe('POST /api/sync/force', () => {
