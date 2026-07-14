@@ -410,6 +410,18 @@ describe('PUT /api/sync/mappings', () => {
         expect(body.labelRules).toEqual(config.labelRules);
     });
 
+    it('rejects a completely empty labelRules object instead of silently wiping config', async () => {
+        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
+            statusMappings: { linear: [] },
+            priorityMappings: { linear: [] },
+            labelRules: {},
+        }, 'PUT');
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
     it('does not mislabel a DB write failure as "Invalid request body"', async () => {
         const config = {
             statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
