@@ -4,10 +4,9 @@ import { prisma } from '@copilotkit/outpost/db';
 import { TicketStatus, TicketPriority } from '@copilotkit/outpost/shared';
 
 /**
- * Default mapping configuration. In a full implementation this would
- * come from a dedicated settings/config table. For now we derive
- * identity mappings from ExternalIdentity records and keep
- * status/priority/label mappings as code defaults.
+ * Default mapping configuration, used when nothing has been persisted
+ * to SystemConfig yet (see PUT below, which persists real overrides).
+ * Identity mappings always come live from ExternalIdentity records.
  */
 const DEFAULT_STATUS_MAPPINGS: Record<string, Array<{ externalStatus: string; outpostStatus: string }>> = {
     linear: [

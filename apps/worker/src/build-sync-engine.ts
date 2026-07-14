@@ -1,9 +1,11 @@
 /**
- * Builds the SyncEngine for the TRACKER_SYNC handler, with the Linear
- * adapter registered using the persisted status-map config (falling back
- * to the hardcoded default when nothing is persisted). GitHub adapter
- * registration is not wired here — it needs an authenticated Octokit
- * instance that currently only exists inside apps/github-app.
+ * Builds the SyncEngine for the TRACKER_SYNC handler. Registers the
+ * Linear adapter, using the persisted status-map config (falling back
+ * to the hardcoded default when nothing is persisted), only when
+ * LINEAR_API_KEY and LINEAR_TEAM_ID are set — absent those, the engine
+ * has zero registered adapters and TRACKER_SYNC jobs no-op. GitHub
+ * adapter registration is not wired here — it needs an authenticated
+ * Octokit instance that currently only exists inside apps/github-app.
  */
 
 import { prisma } from '@copilotkit/outpost/db';

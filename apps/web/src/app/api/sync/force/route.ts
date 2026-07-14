@@ -6,11 +6,11 @@ import { requireAdmin } from '@/lib/require-admin';
 /**
  * POST /api/sync/force
  *
- * Trigger a force sync for a specific system plugin. Enqueues a
- * TRACKER_SYNC job per changed field (status, priority) for every ticket
- * currently linked to that plugin, or just one ticket when `ticketId`
- * is given. Ticket has no tags/labels field, so label_change is not
- * part of a resync.
+ * Trigger a force sync for a specific system plugin. Unconditionally
+ * enqueues status_change and priority_change TRACKER_SYNC jobs (no
+ * change detection) for every ticket currently linked to that plugin,
+ * or just one ticket when `ticketId` is given. Ticket has no
+ * tags/labels field, so label_change is not part of a resync.
  *
  * Body: { plugin: string, ticketId?: string }
  */
