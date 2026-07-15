@@ -35,11 +35,17 @@ WORKDIR /app
 COPY --from=installer --chown=outpost:outpost /app/node_modules ./node_modules
 COPY --from=installer --chown=outpost:outpost /app/apps/worker/dist ./apps/worker/dist
 COPY --from=installer --chown=outpost:outpost /app/apps/worker/package.json ./apps/worker/package.json
+# pnpm's isolated layout keeps the app's own deps here (symlinked into root .pnpm) — required at runtime.
+COPY --from=installer --chown=outpost:outpost /app/apps/worker/node_modules ./apps/worker/node_modules
 COPY --from=installer --chown=outpost:outpost /app/packages ./packages
 COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 
 COPY --chown=outpost:outpost apps/worker/start.sh ./apps/worker/start.sh
 RUN chmod +x apps/worker/start.sh
+
+# Prisma CLI for running migrations at startup (installed standalone, mirrors apps/web/Dockerfile —
+# the pnpm workspace .bin paths don't resolve reliably in the pruned production image).
+RUN npm install --prefix /opt/prisma --no-save prisma@6
 
 USER outpost
 ENV NODE_ENV=production

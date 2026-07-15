@@ -35,6 +35,8 @@ WORKDIR /app
 COPY --from=installer --chown=outpost:outpost /app/node_modules ./node_modules
 COPY --from=installer --chown=outpost:outpost /app/apps/slack-bot/dist ./apps/slack-bot/dist
 COPY --from=installer --chown=outpost:outpost /app/apps/slack-bot/package.json ./apps/slack-bot/package.json
+# pnpm's isolated layout keeps the app's own deps here (symlinked into root .pnpm) — required at runtime.
+COPY --from=installer --chown=outpost:outpost /app/apps/slack-bot/node_modules ./apps/slack-bot/node_modules
 COPY --from=installer --chown=outpost:outpost /app/packages ./packages
 COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 

@@ -27,10 +27,12 @@ const adapters = new Map<TicketSource, PlatformAdapter>();
  */
 const factories: Partial<Record<TicketSource, () => PlatformAdapter>> = {
     [TicketSource.DISCORD]: () => {
-        const token = process.env.DISCORD_BOT_TOKEN;
+        // Use DISCORD_TOKEN (the name used by the bot app, .env.example, and docs);
+        // fall back to DISCORD_BOT_TOKEN for backward compatibility.
+        const token = process.env.DISCORD_TOKEN ?? process.env.DISCORD_BOT_TOKEN;
         if (!token) {
             throw new Error(
-                'Missing DISCORD_BOT_TOKEN environment variable — cannot initialize Discord adapter',
+                'Missing DISCORD_TOKEN environment variable — cannot initialize Discord adapter',
             );
         }
         return new DiscordAdapter({ token });
