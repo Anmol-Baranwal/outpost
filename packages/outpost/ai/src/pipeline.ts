@@ -17,9 +17,10 @@ import { validateConfig } from './config.js';
 /**
  * Main entry point for the Outpost AI pipeline.
  *
- * Orchestrates: Pathfinder retrieval → Claude response generation (parallel
- * with confidence scoring) → response formatting. Every step has error
- * handling — the pipeline never crashes, always returns a graceful fallback.
+ * Orchestrates: Pathfinder retrieval → Claude response generation → confidence
+ * scoring (against the real generated response) → response formatting. Every
+ * step has error handling — the pipeline never crashes, always returns a
+ * graceful fallback.
  */
 export class AIPipeline {
     private pathfinder: PathfinderClient;
@@ -46,7 +47,8 @@ export class AIPipeline {
     /**
      * Generate a complete support response: retrieval → generation → scoring → formatting.
      *
-     * Steps 2 (response generation) and 3 (confidence scoring) run in parallel.
+     * Steps 2 (response generation) and 3 (confidence scoring) run sequentially —
+     * scoring needs the real generated text, not a placeholder.
      */
     async generateSupportResponse(
         question: string,
@@ -66,30 +68,26 @@ export class AIPipeline {
             searchResults = [];
         }
 
-        // Steps 2 & 3: Generate response AND score confidence in parallel
+        // Step 2: Generate response
         const pipelineContext: PipelineContext = {
             question,
         };
 
-        const [generatedResponse, confidenceAssessment] = await Promise.all([
-            // Step 2: Generate response
-            this.generator.generate(
-                pipelineContext,
-                searchResults,
-                options.conversationHistory,
-            ),
-            // Step 3: Score confidence (uses heuristic first, then Claude for refinement)
-            // We pass a placeholder response text since generation hasn't completed yet.
-            // The confidence scorer primarily evaluates search result quality.
-            this.confidenceScorer.score(
-                question,
-                '', // Response not yet available — scorer focuses on search result quality
-                searchResults,
-            ).catch((error) => {
+        const generatedResponse = await this.generator.generate(
+            pipelineContext,
+            searchResults,
+            options.conversationHistory,
+        );
+
+        // Step 3: Score confidence against the ACTUAL generated response
+        // (sequential, not parallel — the scorer needs the real text to
+        // produce a meaningful signal, not a retrieval-quality proxy).
+        const confidenceAssessment = await this.confidenceScorer
+            .score(question, generatedResponse.text, searchResults)
+            .catch((error) => {
                 console.error(`[Pipeline] Confidence scoring failed: ${error instanceof Error ? error.message : String(error)}`);
                 return this.confidenceScorer.heuristicScore(searchResults);
-            }),
-        ]);
+            });
 
         // Aggregate token usage
         if (generatedResponse.tokenUsage) {

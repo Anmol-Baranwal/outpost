@@ -211,6 +211,19 @@ describe('AIPipeline', () => {
             expect(result.response).toBeDefined();
         });
 
+        it('should score confidence against the actual generated response text, not a placeholder', async () => {
+            await pipeline.generateSupportResponse(
+                'a question',
+                { source: 'discord' },
+            );
+
+            expect(mockScore).toHaveBeenCalledWith(
+                'a question',
+                sampleGeneratedResponse.text,
+                sampleSearchResults,
+            );
+        });
+
         it('should pass conversation history to generator', async () => {
             const history = [
                 { role: 'user' as const, content: 'What is CopilotKit?' },
