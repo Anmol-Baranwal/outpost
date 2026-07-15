@@ -23,6 +23,20 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
     }
 }
 
+async function recordFeedback(ticketId: string, feedback: 'POSITIVE' | 'NEGATIVE'): Promise<void> {
+    const latestAiMessage = await prisma.message.findFirst({
+        where: { ticketId, isAiGenerated: true, feedback: null },
+        orderBy: { createdAt: 'desc' },
+    });
+
+    if (latestAiMessage) {
+        await prisma.message.update({
+            where: { id: latestAiMessage.id },
+            data: { feedback },
+        });
+    }
+}
+
 async function handleIssueSolved(interaction: ButtonInteraction): Promise<void> {
     const threadId = getThreadId(interaction);
     if (!threadId) {
@@ -47,6 +61,8 @@ async function handleIssueSolved(interaction: ButtonInteraction): Promise<void> 
         where: { id: ticket.id },
         data: { status: 'CLOSED' },
     });
+
+    await recordFeedback(ticket.id, 'POSITIVE');
 
     // Log the resolution as a system message
     await prisma.message.create({
@@ -90,6 +106,8 @@ async function handleNeedMoreHelp(interaction: ButtonInteraction): Promise<void>
         where: { id: ticket.id },
         data: { status: 'WAITING_ON_TEAM' },
     });
+
+    await recordFeedback(ticket.id, 'NEGATIVE');
 
     // Enqueue an escalation notification
     await createJob(JobType.ESCALATION, {
