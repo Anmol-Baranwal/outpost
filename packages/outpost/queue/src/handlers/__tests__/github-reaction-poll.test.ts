@@ -112,6 +112,49 @@ describe('handleGithubReactionPoll', () => {
         expect(mockMessageUpdate).not.toHaveBeenCalled();
     });
 
+    it('catches a listCommentReactions rejection, logs, and continues without updating', async () => {
+        mockMessageFindMany.mockResolvedValue([
+            {
+                id: 'msg-1',
+                externalCommentId: '999',
+                ticket: { sourceId: 'owner/repo#42', user: { externalId: 'reporter-login' } },
+            },
+        ]);
+        mockListCommentReactions.mockRejectedValue(new Error('GitHub API down'));
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        const result = await handleGithubReactionPoll({}, context);
+
+        expect(consoleErrorSpy).toHaveBeenCalled();
+        expect(mockMessageUpdate).not.toHaveBeenCalled();
+        expect(mockCreateJob).not.toHaveBeenCalled();
+        expect(result.success).toBe(true);
+
+        consoleErrorSpy.mockRestore();
+    });
+
+    it('returns a failure result and skips GitHub calls when env vars are missing', async () => {
+        delete process.env.GITHUB_APP_ID;
+        delete process.env.GITHUB_PRIVATE_KEY;
+        delete process.env.GITHUB_INSTALLATION_ID;
+        mockMessageFindMany.mockResolvedValue([
+            {
+                id: 'msg-1',
+                externalCommentId: '999',
+                ticket: { sourceId: 'owner/repo#42', user: { externalId: 'reporter-login' } },
+            },
+        ]);
+
+        const result = await handleGithubReactionPoll({}, context);
+
+        expect(result).toEqual({
+            success: false,
+            error: 'GITHUB_APP_ID/GITHUB_PRIVATE_KEY/GITHUB_INSTALLATION_ID not configured',
+        });
+        expect(mockCreateGithubClient).not.toHaveBeenCalled();
+        expect(mockListCommentReactions).not.toHaveBeenCalled();
+    });
+
     it('queries only unresolved AI-generated GitHub messages', async () => {
         mockMessageFindMany.mockResolvedValue([]);
 

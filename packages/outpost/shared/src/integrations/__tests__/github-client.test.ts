@@ -24,6 +24,7 @@ describe('listCommentReactions', () => {
             owner: 'owner',
             repo: 'repo',
             comment_id: 12345,
+            per_page: 100,
         });
     });
 });

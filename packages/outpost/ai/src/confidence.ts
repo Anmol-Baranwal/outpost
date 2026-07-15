@@ -27,11 +27,11 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 }`;
 
 /**
- * Independent confidence scorer that runs in parallel with response generation.
+ * Confidence scorer that runs after response generation completes.
  *
- * Uses Claude Haiku for cost-effective, fast confidence assessment. Evaluates
- * the quality of search results and generated response independently from
- * the response generator.
+ * Uses Claude Haiku for cost-effective, fast confidence assessment. Scores
+ * the quality of the search results against the actual generated response
+ * text, sequentially after the response generator has produced it.
  */
 export class ConfidenceScorer {
     private client: Anthropic;

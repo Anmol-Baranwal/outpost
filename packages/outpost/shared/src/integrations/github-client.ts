@@ -24,6 +24,7 @@ export interface GithubReactionClient {
             owner: string;
             repo: string;
             comment_id: number;
+            per_page?: number;
         }): Promise<{ data: Array<{ content: string; user: { login: string } | null }> }>;
     };
 }
@@ -45,9 +46,10 @@ export interface CommentReaction {
 }
 
 /**
- * List reactions on a GitHub issue comment (also works for discussion
- * comments posted via REST-style comment IDs — GitHub reactions share
- * the same endpoint shape for both).
+ * List reactions on a GitHub issue comment. Only works for issue comments
+ * (numeric REST comment IDs) — discussion-comment reactions are addressed
+ * by GraphQL node_ids, not numeric REST IDs, and require the GraphQL API,
+ * which is out of scope for this client.
  */
 export async function listCommentReactions(
     client: GithubReactionClient,
@@ -59,6 +61,7 @@ export async function listCommentReactions(
         owner,
         repo,
         comment_id: commentId,
+        per_page: 100,
     });
 
     return response.data

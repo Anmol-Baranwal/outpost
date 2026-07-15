@@ -186,7 +186,7 @@ describe('AIPipeline', () => {
         it('should handle generator failure by rejecting (generator errors are not caught)', async () => {
             mockGenerate.mockRejectedValueOnce(new Error('Claude down'));
 
-            // Generator runs inside Promise.all — its rejection propagates.
+            // Generator is awaited directly; its rejection propagates.
             // The pipeline does NOT silently swallow generator failures.
             await expect(
                 pipeline.generateSupportResponse('test question', { source: 'discord' }),
