@@ -29,6 +29,7 @@ function createMockPrisma(): PrismaLike {
         },
         user: {
             findFirst: vi.fn().mockResolvedValue(null),
+            create: vi.fn().mockResolvedValue({ id: 'user-new-1' }),
         },
         teamMember: {
             findUnique: vi.fn().mockResolvedValue(null),
@@ -186,6 +187,48 @@ describe('InboundHandler', () => {
             const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
             expect(msgData.attachments).toBeDefined();
             expect(msgData.attachments[0].filename).toBe('screenshot.png');
+        });
+
+        // ── User linkage ────────────────────────────────────────────
+
+        it('links the ticket to an existing User found by externalId + source', async () => {
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+                id: 'user-existing-1',
+                email: 'existing@example.com',
+            });
+
+            const msg = makeInboundMessage();
+            await handler.handle(msg);
+
+            expect(prisma.user.findFirst).toHaveBeenCalledWith({
+                where: {
+                    externalId: 'user-123',
+                    source: 'DISCORD',
+                },
+            });
+            expect(prisma.user.create).not.toHaveBeenCalled();
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            expect(ticketData.userId).toBe('user-existing-1');
+        });
+
+        it('creates a new User with a synthesized placeholder email when none exists, and links it to the ticket', async () => {
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+            const msg = makeInboundMessage();
+            await handler.handle(msg);
+
+            expect(prisma.user.create).toHaveBeenCalledWith({
+                data: {
+                    name: 'testuser',
+                    email: 'discord-user-123@reporters.outpost.internal',
+                    externalId: 'user-123',
+                    source: 'DISCORD',
+                },
+            });
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            expect(ticketData.userId).toBe('user-new-1');
         });
     });
 

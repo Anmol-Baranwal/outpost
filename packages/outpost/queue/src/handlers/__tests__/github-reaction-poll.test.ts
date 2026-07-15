@@ -110,6 +110,42 @@ describe('handleGithubReactionPoll', () => {
         expect(mockMessageUpdate).not.toHaveBeenCalled();
     });
 
+    it('skips a message gracefully when the ticket has no linked user (ticket.user is null)', async () => {
+        mockMessageFindMany.mockResolvedValue([
+            {
+                id: 'msg-1',
+                externalCommentId: '999',
+                ticket: { sourceId: 'owner/repo#42', user: null },
+            },
+        ]);
+
+        const result = await handleGithubReactionPoll({}, context);
+
+        expect(mockListCommentReactions).not.toHaveBeenCalled();
+        expect(mockMessageUpdate).not.toHaveBeenCalled();
+        expect(mockCreateJob).not.toHaveBeenCalled();
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({ checked: 1, updated: 0 });
+    });
+
+    it('skips a message gracefully when ticket.user.externalId is null', async () => {
+        mockMessageFindMany.mockResolvedValue([
+            {
+                id: 'msg-1',
+                externalCommentId: '999',
+                ticket: { sourceId: 'owner/repo#42', user: { externalId: null } },
+            },
+        ]);
+
+        const result = await handleGithubReactionPoll({}, context);
+
+        expect(mockListCommentReactions).not.toHaveBeenCalled();
+        expect(mockMessageUpdate).not.toHaveBeenCalled();
+        expect(mockCreateJob).not.toHaveBeenCalled();
+        expect(result.success).toBe(true);
+        expect(result.data).toEqual({ checked: 1, updated: 0 });
+    });
+
     it('catches a listCommentReactions rejection, logs, and continues without updating', async () => {
         mockMessageFindMany.mockResolvedValue([
             {
