@@ -93,7 +93,9 @@ const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
 /** Minimal Prisma subset needed to load a persisted mapping config. */
 export interface StatusMapDb {
     systemConfig: {
-        findUnique(args: { where: { key: string } }): Promise<{ key: string; value: string } | null>;
+        findUnique(args: {
+            where: { key: string };
+        }): Promise<{ key: string; value: string } | null>;
     };
 }
 

@@ -171,8 +171,12 @@ describe('POST /api/sync/conflicts/[id]/resolve', () => {
         mockSyncEventFindUnique.mockResolvedValue({ id: 'se-1', status: 'conflict' });
         mockSyncEventUpdate.mockResolvedValue({ id: 'se-1', status: 'success' });
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', { resolution: 'outpost' });
-        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'se-1' }) });
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', {
+            resolution: 'outpost',
+        });
+        const res = await resolveConflict(req as never, {
+            params: Promise.resolve({ id: 'se-1' }),
+        });
         const body = await res.json();
 
         expect(body.success).toBe(true);
@@ -182,15 +186,23 @@ describe('POST /api/sync/conflicts/[id]/resolve', () => {
     it('returns 404 for non-existent conflict', async () => {
         mockSyncEventFindUnique.mockResolvedValue(null);
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/nope/resolve', { resolution: 'outpost' });
-        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'nope' }) });
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/nope/resolve', {
+            resolution: 'outpost',
+        });
+        const res = await resolveConflict(req as never, {
+            params: Promise.resolve({ id: 'nope' }),
+        });
 
         expect(res.status).toBe(404);
     });
 
     it('rejects invalid resolution', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', { resolution: 'invalid' });
-        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'se-1' }) });
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', {
+            resolution: 'invalid',
+        });
+        const res = await resolveConflict(req as never, {
+            params: Promise.resolve({ id: 'se-1' }),
+        });
 
         expect(res.status).toBe(400);
     });
@@ -198,8 +210,12 @@ describe('POST /api/sync/conflicts/[id]/resolve', () => {
     it('rejects when event is not a conflict', async () => {
         mockSyncEventFindUnique.mockResolvedValue({ id: 'se-1', status: 'success' });
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', { resolution: 'outpost' });
-        const res = await resolveConflict(req as never, { params: Promise.resolve({ id: 'se-1' }) });
+        const req = makeJsonRequest('http://localhost:3000/api/sync/conflicts/se-1/resolve', {
+            resolution: 'outpost',
+        });
+        const res = await resolveConflict(req as never, {
+            params: Promise.resolve({ id: 'se-1' }),
+        });
 
         expect(res.status).toBe(400);
     });
@@ -251,7 +267,10 @@ describe('GET /api/sync/mappings', () => {
         const res = await getMappings();
         const body = await res.json();
 
-        expect(body.statusMappings.linear).toContainEqual({ externalStatus: 'Triage', outpostStatus: 'OPEN' });
+        expect(body.statusMappings.linear).toContainEqual({
+            externalStatus: 'Triage',
+            outpostStatus: 'OPEN',
+        });
         expect(body.priorityMappings).toBeDefined();
         expect(body.identityMappings).toBeDefined();
         expect(body.labelRules).toBeDefined();
@@ -264,7 +283,10 @@ describe('GET /api/sync/mappings', () => {
             priorityMappings: { linear: [] },
             labelRules: { linear: [] },
         };
-        mockSystemConfigFindUnique.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(saved) });
+        mockSystemConfigFindUnique.mockResolvedValue({
+            key: 'sync.mappingConfig',
+            value: JSON.stringify(saved),
+        });
 
         const res = await getMappings();
         const body = await res.json();
@@ -274,12 +296,18 @@ describe('GET /api/sync/mappings', () => {
 
     it('falls back to defaults when the persisted SystemConfig value is malformed JSON', async () => {
         mockExternalIdentityFindMany.mockResolvedValue([]);
-        mockSystemConfigFindUnique.mockResolvedValue({ key: 'sync.mappingConfig', value: 'not valid json {{{' });
+        mockSystemConfigFindUnique.mockResolvedValue({
+            key: 'sync.mappingConfig',
+            value: 'not valid json {{{',
+        });
 
         const res = await getMappings();
         const body = await res.json();
 
-        expect(body.statusMappings.linear).toContainEqual({ externalStatus: 'Triage', outpostStatus: 'OPEN' });
+        expect(body.statusMappings.linear).toContainEqual({
+            externalStatus: 'Triage',
+            outpostStatus: 'OPEN',
+        });
         expect(body.priorityMappings).toBeDefined();
         expect(body.identityMappings).toBeDefined();
         expect(body.labelRules).toBeDefined();
@@ -297,7 +325,10 @@ describe('PUT /api/sync/mappings', () => {
             statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
             priorityMappings: { linear: [] },
         };
-        mockSystemConfigUpsert.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
+        mockSystemConfigUpsert.mockResolvedValue({
+            key: 'sync.mappingConfig',
+            value: JSON.stringify(config),
+        });
 
         const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', config, 'PUT');
         const res = await putMappings(req as never);
@@ -321,10 +352,14 @@ describe('PUT /api/sync/mappings', () => {
     });
 
     it('rejects statusMappings of the wrong type entirely', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: 'garbage',
-            priorityMappings: { linear: [] },
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: 'garbage',
+                priorityMappings: { linear: [] },
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
@@ -332,10 +367,14 @@ describe('PUT /api/sync/mappings', () => {
     });
 
     it('rejects a mapping with an unknown outpostStatus value', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'NOT_REAL' }] },
-            priorityMappings: { linear: [] },
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'NOT_REAL' }] },
+                priorityMappings: { linear: [] },
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
@@ -343,10 +382,16 @@ describe('PUT /api/sync/mappings', () => {
     });
 
     it('rejects a mapping with an unknown outpostPriority value', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: { linear: [] },
-            priorityMappings: { linear: [{ externalPriority: 'X', outpostPriority: 'NOT_REAL' }] },
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: { linear: [] },
+                priorityMappings: {
+                    linear: [{ externalPriority: 'X', outpostPriority: 'NOT_REAL' }],
+                },
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
@@ -356,10 +401,14 @@ describe('PUT /api/sync/mappings', () => {
     it('requires admin role', async () => {
         mockGetServerSession.mockResolvedValue(userSession('tm-1', 'MEMBER'));
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: { linear: [] },
-            priorityMappings: { linear: [] },
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: { linear: [] },
+                priorityMappings: { linear: [] },
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(403);
@@ -367,10 +416,14 @@ describe('PUT /api/sync/mappings', () => {
     });
 
     it('rejects completely empty statusMappings/priorityMappings objects instead of silently wiping config', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: {},
-            priorityMappings: {},
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: {},
+                priorityMappings: {},
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
@@ -378,11 +431,15 @@ describe('PUT /api/sync/mappings', () => {
     });
 
     it('rejects labelRules of the wrong type', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: { linear: [] },
-            priorityMappings: { linear: [] },
-            labelRules: 'garbage',
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: { linear: [] },
+                priorityMappings: { linear: [] },
+                labelRules: 'garbage',
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
@@ -395,7 +452,10 @@ describe('PUT /api/sync/mappings', () => {
             priorityMappings: { linear: [] },
             labelRules: { linear: [{ externalPrefix: 'Priority: ', outpostPrefix: '' }] },
         };
-        mockSystemConfigUpsert.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
+        mockSystemConfigUpsert.mockResolvedValue({
+            key: 'sync.mappingConfig',
+            value: JSON.stringify(config),
+        });
 
         const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', config, 'PUT');
         const res = await putMappings(req as never);
@@ -411,11 +471,15 @@ describe('PUT /api/sync/mappings', () => {
     });
 
     it('rejects a completely empty labelRules object instead of silently wiping config', async () => {
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: { linear: [] },
-            priorityMappings: { linear: [] },
-            labelRules: {},
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: { linear: [] },
+                priorityMappings: { linear: [] },
+                labelRules: {},
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
@@ -445,8 +509,16 @@ describe('POST /api/sync/force', () => {
     it('enqueues status_change and priority_change jobs for every ticket linked to the plugin', async () => {
         mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
         mockTicketExternalLinkFindMany.mockResolvedValue([
-            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
-            { ticketId: 't-2', plugin: 'linear', ticket: { id: 't-2', status: 'RESOLVED', priority: 'LOW' } },
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
+            {
+                ticketId: 't-2',
+                plugin: 'linear',
+                ticket: { id: 't-2', status: 'RESOLVED', priority: 'LOW' },
+            },
         ]);
 
         const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
@@ -486,10 +558,17 @@ describe('POST /api/sync/force', () => {
     it('syncs only the given ticket when ticketId is provided', async () => {
         mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
         mockTicketExternalLinkFindMany.mockResolvedValue([
-            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
         ]);
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear', ticketId: 't-1' });
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', {
+            plugin: 'linear',
+            ticketId: 't-1',
+        });
         const res = await forceSync(req as never);
         const body = await res.json();
 
@@ -516,7 +595,11 @@ describe('POST /api/sync/force', () => {
         mockSyncEventFindFirst.mockResolvedValue(null);
         mockTicketExternalLinkFindFirst.mockResolvedValue({ id: 'link-1', plugin: 'linear' });
         mockTicketExternalLinkFindMany.mockResolvedValue([
-            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
         ]);
 
         const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
@@ -550,7 +633,11 @@ describe('POST /api/sync/force', () => {
     it('does not mislabel a mid-loop DB/queue error as "Invalid request body"', async () => {
         mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
         mockTicketExternalLinkFindMany.mockResolvedValue([
-            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
         ]);
         mockCreateJob.mockRejectedValueOnce(new Error('db down'));
 

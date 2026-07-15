@@ -22,39 +22,27 @@ export async function POST(request: NextRequest) {
     try {
         body = await request.json();
     } catch {
-        return NextResponse.json(
-            { error: 'Invalid request body' },
-            { status: 400 },
-        );
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
     const plugin = body.plugin;
     const ticketId = typeof body.ticketId === 'string' ? body.ticketId : undefined;
 
     if (!plugin || typeof plugin !== 'string') {
-        return NextResponse.json(
-            { error: 'plugin is required' },
-            { status: 400 },
-        );
+        return NextResponse.json({ error: 'plugin is required' }, { status: 400 });
     }
 
     const [knownPlugin, hasLinks] = await Promise.all([
         prisma.syncEvent.findFirst({
             where: {
-                OR: [
-                    { sourcePlugin: plugin },
-                    { targetPlugin: plugin },
-                ],
+                OR: [{ sourcePlugin: plugin }, { targetPlugin: plugin }],
             },
         }),
         prisma.ticketExternalLink.findFirst({ where: { plugin } }),
     ]);
 
     if (!knownPlugin && !hasLinks) {
-        return NextResponse.json(
-            { error: `Unknown plugin: ${plugin}` },
-            { status: 404 },
-        );
+        return NextResponse.json({ error: `Unknown plugin: ${plugin}` }, { status: 404 });
     }
 
     const links = await prisma.ticketExternalLink.findMany({

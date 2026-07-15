@@ -37,7 +37,9 @@ describe('loadStatusMap', () => {
     });
 
     it('falls back to defaults when persisted config has no entry for this plugin', async () => {
-        const config = { statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'OPEN' }] } };
+        const config = {
+            statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'OPEN' }] },
+        };
         const db = makeDb({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
 
         const map = await loadStatusMap('github', db);

@@ -8,7 +8,10 @@ import { TicketStatus, TicketPriority } from '@copilotkit/outpost/shared';
  * to SystemConfig yet (see PUT below, which persists real overrides).
  * Identity mappings always come live from ExternalIdentity records.
  */
-const DEFAULT_STATUS_MAPPINGS: Record<string, Array<{ externalStatus: string; outpostStatus: string }>> = {
+const DEFAULT_STATUS_MAPPINGS: Record<
+    string,
+    Array<{ externalStatus: string; outpostStatus: string }>
+> = {
     linear: [
         { externalStatus: 'Triage', outpostStatus: 'OPEN' },
         { externalStatus: 'Backlog', outpostStatus: 'OPEN' },
@@ -23,7 +26,10 @@ const DEFAULT_STATUS_MAPPINGS: Record<string, Array<{ externalStatus: string; ou
     ],
 };
 
-const DEFAULT_PRIORITY_MAPPINGS: Record<string, Array<{ externalPriority: string; outpostPriority: string }>> = {
+const DEFAULT_PRIORITY_MAPPINGS: Record<
+    string,
+    Array<{ externalPriority: string; outpostPriority: string }>
+> = {
     linear: [
         { externalPriority: '0 (None)', outpostPriority: 'MEDIUM' },
         { externalPriority: '1 (Urgent)', outpostPriority: 'CRITICAL' },
@@ -39,7 +45,10 @@ const DEFAULT_PRIORITY_MAPPINGS: Record<string, Array<{ externalPriority: string
     ],
 };
 
-const DEFAULT_LABEL_RULES: Record<string, Array<{ externalPrefix: string; outpostPrefix: string }>> = {
+const DEFAULT_LABEL_RULES: Record<
+    string,
+    Array<{ externalPrefix: string; outpostPrefix: string }>
+> = {
     github: [
         { externalPrefix: 'priority:', outpostPrefix: '' },
         { externalPrefix: 'type:', outpostPrefix: '' },
@@ -51,7 +60,7 @@ const DEFAULT_LABEL_RULES: Record<string, Array<{ externalPrefix: string; outpos
     ],
 };
 
-export const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
+const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
 
 interface PersistedMappingConfig {
     statusMappings: typeof DEFAULT_STATUS_MAPPINGS;
@@ -85,7 +94,7 @@ export async function GET() {
         include: { member: { select: { id: true, name: true } } },
     });
 
-    const identityMappings = identities.map((ei: typeof identities[number]) => ({
+    const identityMappings = identities.map((ei: (typeof identities)[number]) => ({
         id: ei.id,
         externalPlugin: ei.plugin,
         externalUserId: ei.externalId,
@@ -182,10 +191,7 @@ export async function PUT(request: NextRequest) {
     try {
         body = await request.json();
     } catch {
-        return NextResponse.json(
-            { error: 'Invalid request body' },
-            { status: 400 },
-        );
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
     if (!body.statusMappings || !body.priorityMappings) {
@@ -210,16 +216,15 @@ export async function PUT(request: NextRequest) {
     }
 
     if (body.labelRules !== undefined && !isValidLabelRulesShape(body.labelRules)) {
-        return NextResponse.json(
-            { error: 'labelRules has invalid shape' },
-            { status: 400 },
-        );
+        return NextResponse.json({ error: 'labelRules has invalid shape' }, { status: 400 });
     }
 
     const config: PersistedMappingConfig = {
         statusMappings: body.statusMappings as PersistedMappingConfig['statusMappings'],
         priorityMappings: body.priorityMappings as PersistedMappingConfig['priorityMappings'],
-        ...(body.labelRules ? { labelRules: body.labelRules as PersistedMappingConfig['labelRules'] } : {}),
+        ...(body.labelRules
+            ? { labelRules: body.labelRules as PersistedMappingConfig['labelRules'] }
+            : {}),
     };
     const value = JSON.stringify(config);
 
