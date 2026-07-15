@@ -21,10 +21,12 @@
 ## Task 1: Persist mapping config via SystemConfig
 
 **Files:**
+
 - Modify: `apps/web/src/app/api/sync/mappings/route.ts`
 - Modify: `apps/web/src/__tests__/sync-api.test.ts:229-272` (the two `describe` blocks for `GET`/`PUT /api/sync/mappings`)
 
 **Interfaces:**
+
 - Consumes: `prisma.systemConfig.findUnique({ where: { key } })` / `.upsert({ where, update, create })` — same shape already used in `packages/outpost/shared/src/dispatch/on-call.ts:45-60`.
 - Produces: `MAPPING_CONFIG_KEY = 'sync.mappingConfig'` constant (exported from this route file) — Task 2 imports the same string literal into `status-map.ts` (kept as a plain string constant, not cross-imported, to avoid a web→shared reverse dependency; both sides must use the exact string `'sync.mappingConfig'`).
 
@@ -46,7 +48,10 @@ describe('GET /api/sync/mappings', () => {
         const res = await getMappings();
         const body = await res.json();
 
-        expect(body.statusMappings.linear).toContainEqual({ externalStatus: 'Triage', outpostStatus: 'OPEN' });
+        expect(body.statusMappings.linear).toContainEqual({
+            externalStatus: 'Triage',
+            outpostStatus: 'OPEN',
+        });
         expect(body.priorityMappings).toBeDefined();
         expect(body.identityMappings).toBeDefined();
         expect(body.labelRules).toBeDefined();
@@ -59,7 +64,10 @@ describe('GET /api/sync/mappings', () => {
             priorityMappings: { linear: [] },
             labelRules: { linear: [] },
         };
-        mockSystemConfigFindUnique.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(saved) });
+        mockSystemConfigFindUnique.mockResolvedValue({
+            key: 'sync.mappingConfig',
+            value: JSON.stringify(saved),
+        });
 
         const res = await getMappings();
         const body = await res.json();
@@ -79,7 +87,10 @@ describe('PUT /api/sync/mappings', () => {
             statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
             priorityMappings: { linear: [] },
         };
-        mockSystemConfigUpsert.mockResolvedValue({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
+        mockSystemConfigUpsert.mockResolvedValue({
+            key: 'sync.mappingConfig',
+            value: JSON.stringify(config),
+        });
 
         const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', config, 'PUT');
         const res = await putMappings(req as never);
@@ -105,10 +116,14 @@ describe('PUT /api/sync/mappings', () => {
     it('requires admin role', async () => {
         mockGetServerSession.mockResolvedValue(userSession('tm-1', 'MEMBER'));
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/mappings', {
-            statusMappings: { linear: [] },
-            priorityMappings: { linear: [] },
-        }, 'PUT');
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: { linear: [] },
+                priorityMappings: { linear: [] },
+            },
+            'PUT',
+        );
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(403);
@@ -177,7 +192,7 @@ export async function GET() {
         include: { member: { select: { id: true, name: true } } },
     });
 
-    const identityMappings = identities.map((ei: typeof identities[number]) => ({
+    const identityMappings = identities.map((ei: (typeof identities)[number]) => ({
         id: ei.id,
         externalPlugin: ei.plugin,
         externalUserId: ei.externalId,
@@ -231,10 +246,7 @@ export async function PUT(request: NextRequest) {
 
         return NextResponse.json(config);
     } catch {
-        return NextResponse.json(
-            { error: 'Invalid request body' },
-            { status: 400 },
-        );
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 }
 ```
@@ -258,11 +270,13 @@ git commit -m "feat(sync): persist mapping config to SystemConfig"
 ## Task 2: Load status map from persisted config
 
 **Files:**
+
 - Modify: `packages/outpost/shared/src/sync/status-map.ts`
 - Modify: `packages/outpost/shared/src/sync/index.ts:4` (export the new function)
 - Create: `packages/outpost/shared/src/sync/__tests__/status-map.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing new from earlier tasks (the `'sync.mappingConfig'` key string must match Task 1's `MAPPING_CONFIG_KEY` value exactly).
 - Produces: `loadStatusMap(plugin: 'linear' | 'github', db: StatusMapDb): Promise<StatusMap>` and `export interface StatusMapDb`. Task 3 imports both.
 
@@ -310,7 +324,9 @@ describe('loadStatusMap', () => {
     });
 
     it('falls back to defaults when persisted config has no entry for this plugin', async () => {
-        const config = { statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'OPEN' }] } };
+        const config = {
+            statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'OPEN' }] },
+        };
         const db = makeDb({ key: 'sync.mappingConfig', value: JSON.stringify(config) });
 
         const map = await loadStatusMap('github', db);
@@ -346,7 +362,9 @@ const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
 /** Minimal Prisma subset needed to load a persisted mapping config. */
 export interface StatusMapDb {
     systemConfig: {
-        findUnique(args: { where: { key: string } }): Promise<{ key: string; value: string } | null>;
+        findUnique(args: {
+            where: { key: string };
+        }): Promise<{ key: string; value: string } | null>;
     };
 }
 
@@ -394,7 +412,12 @@ export async function loadStatusMap(
 Add the export to `packages/outpost/shared/src/sync/index.ts:4`:
 
 ```typescript
-export { StatusMap, createGitHubStatusMap, createLinearStatusMap, loadStatusMap } from './status-map.js';
+export {
+    StatusMap,
+    createGitHubStatusMap,
+    createLinearStatusMap,
+    loadStatusMap,
+} from './status-map.js';
 export type { StatusMappingConfig, StatusMapDb } from './status-map.js';
 ```
 
@@ -415,10 +438,12 @@ git commit -m "feat(sync): load status map from persisted mapping config"
 ## Task 3: Let `initializeSyncEngine` accept a pre-loaded status map
 
 **Files:**
+
 - Modify: `packages/outpost/shared/src/sync/init.ts`
 - Create: `packages/outpost/shared/src/sync/__tests__/init.test.ts`
 
 **Interfaces:**
+
 - Consumes: `loadStatusMap`, `StatusMapDb` from Task 2 (imported by the caller, not by `init.ts` itself — `init.ts` just accepts an already-built `StatusMap`).
 - Produces: `InitOptions.statusMapOverride?: StatusMap` — Task 4's `buildSyncEngine` passes this in.
 
@@ -534,11 +559,13 @@ git commit -m "feat(sync): support statusMapOverride in initializeSyncEngine"
 ## Task 4: Wire the worker to register the Linear adapter
 
 **Files:**
+
 - Create: `apps/worker/src/build-sync-engine.ts`
 - Create: `apps/worker/src/__tests__/build-sync-engine.test.ts`
 - Modify: `apps/worker/src/index.ts:37-41`
 
 **Interfaces:**
+
 - Consumes: `loadStatusMap`, `initializeSyncEngine`, `SyncEngine` from `@copilotkit/outpost/shared` (Tasks 2 & 3); `prisma` from `@copilotkit/outpost/db`; `createJob` from `@copilotkit/outpost/queue`.
 - Produces: `export async function buildSyncEngine(): Promise<SyncEngine>` — `index.ts` calls this in place of the bare `new SyncEngine(...)`.
 
@@ -672,10 +699,12 @@ git commit -m "fix(worker): register Linear sync adapter (was never wired up)"
 ## Task 5: Bulk force-sync
 
 **Files:**
+
 - Modify: `apps/web/src/app/api/sync/force/route.ts`
 - Modify: `apps/web/src/__tests__/sync-api.test.ts:274-306` (the `describe('POST /api/sync/force', ...)` block)
 
 **Interfaces:**
+
 - Consumes: `createJob(JobType.TRACKER_SYNC, payload)` from `@copilotkit/outpost/queue` (already mocked in this test file as `mockCreateJob`); `prisma.ticketExternalLink.findMany` (new mock needed).
 - Produces: nothing consumed by later tasks — this is the last task.
 
@@ -693,8 +722,16 @@ describe('POST /api/sync/force', () => {
     it('enqueues status_change and priority_change jobs for every ticket linked to the plugin', async () => {
         mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
         mockTicketExternalLinkFindMany.mockResolvedValue([
-            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
-            { ticketId: 't-2', plugin: 'linear', ticket: { id: 't-2', status: 'RESOLVED', priority: 'LOW' } },
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
+            {
+                ticketId: 't-2',
+                plugin: 'linear',
+                ticket: { id: 't-2', status: 'RESOLVED', priority: 'LOW' },
+            },
         ]);
 
         const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
@@ -734,10 +771,17 @@ describe('POST /api/sync/force', () => {
     it('syncs only the given ticket when ticketId is provided', async () => {
         mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
         mockTicketExternalLinkFindMany.mockResolvedValue([
-            { ticketId: 't-1', plugin: 'linear', ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' } },
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
         ]);
 
-        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear', ticketId: 't-1' });
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', {
+            plugin: 'linear',
+            ticketId: 't-1',
+        });
         const res = await forceSync(req as never);
         const body = await res.json();
 
@@ -818,26 +862,17 @@ export async function POST(request: NextRequest) {
         const ticketId = typeof body.ticketId === 'string' ? body.ticketId : undefined;
 
         if (!plugin || typeof plugin !== 'string') {
-            return NextResponse.json(
-                { error: 'plugin is required' },
-                { status: 400 },
-            );
+            return NextResponse.json({ error: 'plugin is required' }, { status: 400 });
         }
 
         const knownPlugin = await prisma.syncEvent.findFirst({
             where: {
-                OR: [
-                    { sourcePlugin: plugin },
-                    { targetPlugin: plugin },
-                ],
+                OR: [{ sourcePlugin: plugin }, { targetPlugin: plugin }],
             },
         });
 
         if (!knownPlugin) {
-            return NextResponse.json(
-                { error: `Unknown plugin: ${plugin}` },
-                { status: 404 },
-            );
+            return NextResponse.json({ error: `Unknown plugin: ${plugin}` }, { status: 404 });
         }
 
         const links = await prisma.ticketExternalLink.findMany({
@@ -866,10 +901,7 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json({ queued: links.length, jobs });
     } catch {
-        return NextResponse.json(
-            { error: 'Invalid request body' },
-            { status: 400 },
-        );
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 }
 ```

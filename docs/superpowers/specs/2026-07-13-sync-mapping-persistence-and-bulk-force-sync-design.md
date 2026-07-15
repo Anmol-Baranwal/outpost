@@ -54,7 +54,7 @@ at worker boot in `apps/worker/src/index.ts`. Add:
 
 ```ts
 // status-map.ts
-export async function loadStatusMap(plugin: 'linear' | 'github'): Promise<StatusMap>
+export async function loadStatusMap(plugin: 'linear' | 'github'): Promise<StatusMap>;
 ```
 
 which reads `SystemConfig["sync.mappingConfig"]`, extracts `statusMappings[plugin]` if
@@ -75,14 +75,14 @@ caller, not looked up from a plugin-level map, per `tracker-sync.ts:181-188`).
 - `ticketId` present → sync that one ticket (existing single-ticket path; still needs the
   same "current values" push described below, since it's currently also unimplemented).
 - `ticketId` absent → bulk mode:
-  1. `prisma.ticketExternalLink.findMany({ where: { plugin }, include: { ticket: true } })`
-  2. For each linked ticket, enqueue two `TRACKER_SYNC` jobs (reusing the existing job
-     type/handler, untouched) via `createJob`:
-     - `action: 'status_change'`, `changeData: { status: ticket.status }`
-     - `action: 'priority_change'`, `changeData: { priority: ticket.priority }`
-     (`Ticket` has no tags/labels field in the current schema, so `label_change` is not
-     part of bulk resync — there's no source value to push.)
-  3. Return `{ queued: <ticket count>, jobs: <job count> }`.
+    1. `prisma.ticketExternalLink.findMany({ where: { plugin }, include: { ticket: true } })`
+    2. For each linked ticket, enqueue two `TRACKER_SYNC` jobs (reusing the existing job
+       type/handler, untouched) via `createJob`:
+        - `action: 'status_change'`, `changeData: { status: ticket.status }`
+        - `action: 'priority_change'`, `changeData: { priority: ticket.priority }`
+          (`Ticket` has no tags/labels field in the current schema, so `label_change` is not
+          part of bulk resync — there's no source value to push.)
+    3. Return `{ queued: <ticket count>, jobs: <job count> }`.
 
 The route only inserts jobs (cheap Postgres writes); the worker performs the actual pushes
 asynchronously, so this stays fast even for a few hundred linked tickets. No pagination
