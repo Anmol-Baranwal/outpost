@@ -2,6 +2,10 @@
 
 Outpost — AI-powered customer support operations platform. See [README](./README.md) for the product overview.
 
+## Code review before push
+
+Before pushing any non-trivial code change or opening a PR, run `copilotkit-internal:cr-loop` (the CopilotKit-internal 7-agent review-fix loop) on the diff first. This is a standing rule, not case-by-case. If the `pr-review-toolkit` plugin it depends on isn't installed, ask before falling back to a lighter review — don't silently skip it. Exception: mechanical-only diffs (lockfile regen, whitespace) don't need it, per the skill's own scope rules.
+
 ## Community Signals workflow
 
 This repo carries a runnable Claude Code skill suite under `.claude/skills/` for the weekly cross-source (Discord + GitHub) community report. The report is produced by Outpost's community manager today via the manual routine; engineering is porting it into Outpost as native TS per [#66](https://github.com/CopilotKit/outpost/issues/66). Until that lands, the skill suite IS the workflow.
