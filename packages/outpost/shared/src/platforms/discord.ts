@@ -152,7 +152,7 @@ export class DiscordAdapter implements PlatformAdapter {
     async postResponse(
         ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
         response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         if (!ticket.sourceId) {
             throw new Error(`Cannot post Discord response — ticket ${ticket.id} has no sourceId (thread ID)`);
         }
@@ -192,6 +192,7 @@ export class DiscordAdapter implements PlatformAdapter {
         }
 
         await rest.post(Routes.channelMessages(threadId), { body });
+        return undefined;
     }
 
     /**

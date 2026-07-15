@@ -95,7 +95,7 @@ export class SlackAdapter implements PlatformAdapter {
     async postResponse(
         ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
         response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         if (!ticket.sourceId || !ticket.channel) {
             throw new Error(
                 `Cannot post Slack response — ticket ${ticket.id} missing sourceId or channel`,
@@ -123,6 +123,7 @@ export class SlackAdapter implements PlatformAdapter {
             text: response.text, // Fallback for notifications
             blocks: blocks as any,
         });
+        return undefined;
     }
 
     // ── postSystemMessage ────────────────────────────────────────────────

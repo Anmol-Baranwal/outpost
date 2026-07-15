@@ -255,6 +255,17 @@ describe('GitHubPlatformAdapter', () => {
             await expect(adapter.postResponse(ticket, { text: 'Answer' }))
                 .rejects.toThrow('no sourceId');
         });
+
+        it('returns the created comment ID', async () => {
+            vi.mocked(octokit.issues.createComment).mockResolvedValueOnce({
+                data: { id: 999888 },
+            });
+            const ticket = makeTicket();
+
+            const result = await adapter.postResponse(ticket, { text: 'Answer' });
+
+            expect(result).toBe('999888');
+        });
     });
 
     // ── postSystemMessage ────────────────────────────────────────────

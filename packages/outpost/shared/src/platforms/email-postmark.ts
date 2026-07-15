@@ -85,7 +85,7 @@ export class EmailPostmarkAdapter implements PlatformAdapter {
     async postResponse(
         _ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
         _response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         throw new Error('EmailPostmarkAdapter.postResponse not yet implemented');
     }
 

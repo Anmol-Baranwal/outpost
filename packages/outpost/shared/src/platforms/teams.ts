@@ -134,7 +134,7 @@ export class TeamsAdapter implements PlatformAdapter {
     async postResponse(
         ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource; additionalInfo?: Record<string, unknown> },
         response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         if (!ticket.sourceId) {
             throw new Error(
                 `Cannot post Teams response — ticket ${ticket.id} has no sourceId`,
@@ -156,6 +156,7 @@ export class TeamsAdapter implements PlatformAdapter {
         const convRef = (ticket.additionalInfo?.conversationReference as Record<string, unknown>) ?? undefined;
         const serviceUrl = (convRef?.serviceUrl as string) ?? undefined;
         await this.sendToConversation(ticket.sourceId, messagePayload, serviceUrl);
+        return undefined;
     }
 
     /**
