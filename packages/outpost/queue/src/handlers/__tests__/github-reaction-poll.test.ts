@@ -123,7 +123,7 @@ describe('handleGithubReactionPoll', () => {
                 feedback: null,
                 externalCommentId: { not: null },
                 ticket: {
-                    source: { in: ['GITHUB_ISSUE', 'GITHUB_DISCUSSION'] },
+                    source: { in: ['GITHUB_ISSUE'] },
                 },
             },
             include: {

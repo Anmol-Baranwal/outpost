@@ -37,7 +37,11 @@ export async function handleGithubReactionPoll(
             feedback: null,
             externalCommentId: { not: null },
             ticket: {
-                source: { in: ['GITHUB_ISSUE', 'GITHUB_DISCUSSION'] },
+                // GITHUB_DISCUSSION excluded: discussion comments are created via GraphQL
+                // and their externalCommentId is a GraphQL node_id, not a numeric REST
+                // comment ID — reactions on them are only readable via GraphQL, which this
+                // poll doesn't use. Follow-up work, not in scope here.
+                source: { in: ['GITHUB_ISSUE'] },
             },
         },
         include: {
