@@ -414,13 +414,14 @@ describe('Scheduler', () => {
     });
 
     it('has correct default scheduled jobs', () => {
-        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(5);
+        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(6);
         const types = DEFAULT_SCHEDULED_JOBS.map((d) => d.type);
         expect(types).toContain(JobType.SLA_CHECK);
         expect(types).toContain(JobType.ONBOARDING_DIGEST);
         expect(types).toContain(JobType.ACCOUNT_SCORING);
         expect(types).toContain(JobType.HUBSPOT_SYNC);
         expect(types).toContain(JobType.JOB_CLEANUP);
+        expect(types).toContain(JobType.GITHUB_REACTION_POLL);
     });
 
     it('creates a job immediately on start if none exists', async () => {
