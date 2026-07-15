@@ -116,7 +116,12 @@ export interface PlatformAdapter {
      * platform doesn't expose one / the adapter doesn't track it.
      */
     postResponse(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         response: FormattedResponse,
     ): Promise<string | undefined>;
 
@@ -124,7 +129,12 @@ export interface PlatformAdapter {
      * Post a system-level message (acknowledgments, status updates, errors).
      */
     postSystemMessage(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         message: string,
     ): Promise<void>;
 }

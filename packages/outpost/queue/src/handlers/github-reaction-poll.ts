@@ -76,7 +76,11 @@ export async function handleGithubReactionPoll(
     for (const message of pendingMessages) {
         checked += 1;
 
-        if (!message.externalCommentId || !message.ticket.sourceId || !message.ticket.user?.externalId) {
+        if (
+            !message.externalCommentId ||
+            !message.ticket.sourceId ||
+            !message.ticket.user?.externalId
+        ) {
             continue;
         }
 
@@ -121,7 +125,9 @@ export async function handleGithubReactionPoll(
 
     await context.reportProgress(100);
 
-    console.log(`[GithubReactionPoll] Checked ${checked} messages, updated ${updated} with feedback`);
+    console.log(
+        `[GithubReactionPoll] Checked ${checked} messages, updated ${updated} with feedback`,
+    );
 
     return {
         success: true,

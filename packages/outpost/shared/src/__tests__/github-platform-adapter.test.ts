@@ -57,32 +57,39 @@ describe('GitHubPlatformAdapter', () => {
                 sender: { login: 'user123', id: 999, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'user123',
-                platformUsername: 'user123',
-                content: 'It crashes on init',
-                threadId: 'CopilotKit/CopilotKit#42',
-                channelId: 'CopilotKit/CopilotKit',
-                source: TicketSource.GITHUB_ISSUE,
-                isThreadStart: true,
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'user123',
+                    platformUsername: 'user123',
+                    content: 'It crashes on init',
+                    threadId: 'CopilotKit/CopilotKit#42',
+                    channelId: 'CopilotKit/CopilotKit',
+                    source: TicketSource.GITHUB_ISSUE,
+                    isThreadStart: true,
+                }),
+            );
         });
 
         it('parses issue_comment.created into a follow-up InboundMessage', () => {
             const result = adapter.parseInboundEvent({
                 action: 'created',
                 comment: { id: 100, body: 'Still broken' },
-                issue: { number: 42, html_url: 'https://github.com/CopilotKit/CopilotKit/issues/42' },
+                issue: {
+                    number: 42,
+                    html_url: 'https://github.com/CopilotKit/CopilotKit/issues/42',
+                },
                 repository: { full_name: 'CopilotKit/CopilotKit' },
                 sender: { login: 'user123', id: 999, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'user123',
-                content: 'Still broken',
-                source: TicketSource.GITHUB_ISSUE,
-                isThreadStart: false,
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'user123',
+                    content: 'Still broken',
+                    source: TicketSource.GITHUB_ISSUE,
+                    isThreadStart: false,
+                }),
+            );
         });
 
         it('parses discussion.created into a new InboundMessage', () => {
@@ -99,14 +106,16 @@ describe('GitHubPlatformAdapter', () => {
                 sender: { login: 'asker', id: 888, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'asker',
-                content: 'Help please',
-                source: TicketSource.GITHUB_DISCUSSION,
-                isThreadStart: true,
-                threadId: 'CopilotKit/CopilotKit#7',
-                channelId: 'CopilotKit/CopilotKit',
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'asker',
+                    content: 'Help please',
+                    source: TicketSource.GITHUB_DISCUSSION,
+                    isThreadStart: true,
+                    threadId: 'CopilotKit/CopilotKit#7',
+                    channelId: 'CopilotKit/CopilotKit',
+                }),
+            );
         });
 
         it('parses discussion_comment.created into a follow-up InboundMessage', () => {
@@ -122,12 +131,14 @@ describe('GitHubPlatformAdapter', () => {
                 sender: { login: 'another', id: 111, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'another',
-                content: 'Me too',
-                source: TicketSource.GITHUB_DISCUSSION,
-                isThreadStart: false,
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'another',
+                    content: 'Me too',
+                    source: TicketSource.GITHUB_DISCUSSION,
+                    isThreadStart: false,
+                }),
+            );
         });
 
         it('returns a minimal InboundMessage for unknown event types', () => {
@@ -246,14 +257,16 @@ describe('GitHubPlatformAdapter', () => {
 
         it('throws for invalid sourceId format', async () => {
             const ticket = makeTicket({ sourceId: 'bad-format' });
-            await expect(adapter.postResponse(ticket, { text: 'Answer' }))
-                .rejects.toThrow('Invalid GitHub sourceId');
+            await expect(adapter.postResponse(ticket, { text: 'Answer' })).rejects.toThrow(
+                'Invalid GitHub sourceId',
+            );
         });
 
         it('throws when sourceId is null', async () => {
             const ticket = makeTicket({ sourceId: null });
-            await expect(adapter.postResponse(ticket, { text: 'Answer' }))
-                .rejects.toThrow('no sourceId');
+            await expect(adapter.postResponse(ticket, { text: 'Answer' })).rejects.toThrow(
+                'no sourceId',
+            );
         });
 
         it('returns the created comment ID', async () => {

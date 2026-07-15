@@ -59,8 +59,8 @@ const worker = new Worker({
         [JobType.GITHUB_REACTION_POLL]: 1,
     },
     jobTimeouts: {
-        [JobType.AI_RESPONSE]: 120_000,   // 2 minutes — AI pipeline is slow
-        [JobType.HUBSPOT_SYNC]: 300_000,   // 5 minutes — full sync can be large
+        [JobType.AI_RESPONSE]: 120_000, // 2 minutes — AI pipeline is slow
+        [JobType.HUBSPOT_SYNC]: 300_000, // 5 minutes — full sync can be large
         [JobType.ACCOUNT_SCORING]: 300_000, // 5 minutes — many accounts
     },
 });

@@ -7,12 +7,7 @@
  */
 
 import { TicketSource } from '../types.js';
-import type {
-    PlatformAdapter,
-    InboundMessage,
-    PlatformUser,
-    FormattedResponse,
-} from './types.js';
+import type { PlatformAdapter, InboundMessage, PlatformUser, FormattedResponse } from './types.js';
 
 /**
  * Minimal shape of a Bot Framework Activity, extracted to avoid pulling
@@ -132,13 +127,17 @@ export class TeamsAdapter implements PlatformAdapter {
      * so this can be called from the worker without a live TurnContext.
      */
     async postResponse(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource; additionalInfo?: Record<string, unknown> },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+            additionalInfo?: Record<string, unknown>;
+        },
         response: FormattedResponse,
     ): Promise<string | undefined> {
         if (!ticket.sourceId) {
-            throw new Error(
-                `Cannot post Teams response — ticket ${ticket.id} has no sourceId`,
-            );
+            throw new Error(`Cannot post Teams response — ticket ${ticket.id} has no sourceId`);
         }
 
         // Build Adaptive Card payload for the response
@@ -153,7 +152,8 @@ export class TeamsAdapter implements PlatformAdapter {
             ],
         };
 
-        const convRef = (ticket.additionalInfo?.conversationReference as Record<string, unknown>) ?? undefined;
+        const convRef =
+            (ticket.additionalInfo?.conversationReference as Record<string, unknown>) ?? undefined;
         const serviceUrl = (convRef?.serviceUrl as string) ?? undefined;
         await this.sendToConversation(ticket.sourceId, messagePayload, serviceUrl);
         return undefined;
@@ -163,7 +163,13 @@ export class TeamsAdapter implements PlatformAdapter {
      * Post a system/status message to the Teams conversation.
      */
     async postSystemMessage(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource; additionalInfo?: Record<string, unknown> },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+            additionalInfo?: Record<string, unknown>;
+        },
         message: string,
     ): Promise<void> {
         if (!ticket.sourceId) {
@@ -177,7 +183,8 @@ export class TeamsAdapter implements PlatformAdapter {
             text: message,
         };
 
-        const convRef = (ticket.additionalInfo?.conversationReference as Record<string, unknown>) ?? undefined;
+        const convRef =
+            (ticket.additionalInfo?.conversationReference as Record<string, unknown>) ?? undefined;
         const serviceUrl = (convRef?.serviceUrl as string) ?? undefined;
         await this.sendToConversation(ticket.sourceId, messagePayload, serviceUrl);
     }
@@ -199,8 +206,7 @@ export class TeamsAdapter implements PlatformAdapter {
         }
 
         const baseUrl = serviceUrl ?? 'https://smba.trafficmanager.net/teams/';
-        const url =
-            `${baseUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
+        const url = `${baseUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
 
         const response = await fetch(url, {
             method: 'POST',
@@ -217,9 +223,7 @@ export class TeamsAdapter implements PlatformAdapter {
 
         if (!response.ok) {
             const body = await response.text().catch(() => '(no body)');
-            throw new Error(
-                `[TeamsAdapter] Failed to send message: ${response.status} ${body}`,
-            );
+            throw new Error(`[TeamsAdapter] Failed to send message: ${response.status} ${body}`);
         }
     }
 
@@ -230,8 +234,7 @@ export class TeamsAdapter implements PlatformAdapter {
      * https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token
      */
     private async getBotToken(): Promise<string | null> {
-        const tokenUrl =
-            'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token';
+        const tokenUrl = 'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token';
 
         try {
             const response = await fetch(tokenUrl, {
@@ -264,7 +267,12 @@ export class TeamsAdapter implements PlatformAdapter {
      * Build an Adaptive Card for an AI response.
      */
     private buildResponseCard(
-        _ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        _ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         response: FormattedResponse,
     ): Record<string, unknown> {
         const body: Record<string, unknown>[] = [

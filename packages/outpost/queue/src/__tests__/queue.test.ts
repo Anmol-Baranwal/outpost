@@ -11,11 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { JobType } from '../types.js';
-import type {
-    JobResult,
-    JobHandlerContext,
-    WorkerHealthStatus,
-} from '../types.js';
+import type { JobResult, JobHandlerContext, WorkerHealthStatus } from '../types.js';
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
 
@@ -49,13 +45,15 @@ const { Scheduler, DEFAULT_SCHEDULED_JOBS } = await import('../scheduler.js');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeJobRow(overrides: Partial<{
-    id: string;
-    type: string;
-    payload: unknown;
-    attempts: number;
-    maxAttempts: number;
-}> = {}) {
+function makeJobRow(
+    overrides: Partial<{
+        id: string;
+        type: string;
+        payload: unknown;
+        attempts: number;
+        maxAttempts: number;
+    }> = {},
+) {
     return {
         id: overrides.id ?? 'job-1',
         type: overrides.type ?? JobType.AI_RESPONSE,

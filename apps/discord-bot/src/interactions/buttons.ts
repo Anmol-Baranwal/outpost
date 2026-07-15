@@ -136,10 +136,7 @@ async function handleNeedMoreHelp(interaction: ButtonInteraction): Promise<void>
 function getThreadId(interaction: ButtonInteraction): string | null {
     const channel = interaction.channel;
     if (!channel) return null;
-    if (
-        channel.type === ChannelType.PublicThread ||
-        channel.type === ChannelType.PrivateThread
-    ) {
+    if (channel.type === ChannelType.PublicThread || channel.type === ChannelType.PrivateThread) {
         return channel.id;
     }
     return null;

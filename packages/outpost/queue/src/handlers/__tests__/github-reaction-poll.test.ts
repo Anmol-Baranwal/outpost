@@ -45,9 +45,7 @@ describe('handleGithubReactionPoll', () => {
                 ticket: { sourceId: 'owner/repo#42', user: { externalId: 'reporter-login' } },
             },
         ]);
-        mockListCommentReactions.mockResolvedValue([
-            { content: '+1', login: 'reporter-login' },
-        ]);
+        mockListCommentReactions.mockResolvedValue([{ content: '+1', login: 'reporter-login' }]);
 
         const result = await handleGithubReactionPoll({}, context);
 
@@ -68,9 +66,7 @@ describe('handleGithubReactionPoll', () => {
                 ticket: { sourceId: 'owner/repo#42', user: { externalId: 'reporter-login' } },
             },
         ]);
-        mockListCommentReactions.mockResolvedValue([
-            { content: '-1', login: 'reporter-login' },
-        ]);
+        mockListCommentReactions.mockResolvedValue([{ content: '-1', login: 'reporter-login' }]);
 
         await handleGithubReactionPoll({}, context);
 
@@ -92,9 +88,7 @@ describe('handleGithubReactionPoll', () => {
                 ticket: { sourceId: 'owner/repo#42', user: { externalId: 'reporter-login' } },
             },
         ]);
-        mockListCommentReactions.mockResolvedValue([
-            { content: '+1', login: 'someone-else' },
-        ]);
+        mockListCommentReactions.mockResolvedValue([{ content: '+1', login: 'someone-else' }]);
 
         await handleGithubReactionPoll({}, context);
 
@@ -103,7 +97,11 @@ describe('handleGithubReactionPoll', () => {
 
     it('skips a message with no externalCommentId', async () => {
         mockMessageFindMany.mockResolvedValue([
-            { id: 'msg-1', externalCommentId: null, ticket: { sourceId: 'owner/repo#42', user: { externalId: 'reporter-login' } } },
+            {
+                id: 'msg-1',
+                externalCommentId: null,
+                ticket: { sourceId: 'owner/repo#42', user: { externalId: 'reporter-login' } },
+            },
         ]);
 
         await handleGithubReactionPoll({}, context);

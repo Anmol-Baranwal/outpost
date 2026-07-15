@@ -38,7 +38,13 @@ describe('ConversationThread confidence badge', () => {
     it('does not render a confidence badge for a non-AI message', () => {
         render(
             <ConversationThread
-                messages={[makeMessage({ isAiGenerated: false, type: MessageType.USER, confidenceLevel: null })]}
+                messages={[
+                    makeMessage({
+                        isAiGenerated: false,
+                        type: MessageType.USER,
+                        confidenceLevel: null,
+                    }),
+                ]}
             />,
         );
         expect(screen.queryByTestId('confidence-badge')).not.toBeInTheDocument();

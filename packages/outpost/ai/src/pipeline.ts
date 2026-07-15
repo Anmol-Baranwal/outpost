@@ -64,7 +64,9 @@ export class AIPipeline {
                 query: question,
             });
         } catch (error) {
-            console.error(`[Pipeline] Pathfinder search failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(
+                `[Pipeline] Pathfinder search failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
             searchResults = [];
         }
 
@@ -85,7 +87,9 @@ export class AIPipeline {
         const confidenceAssessment = await this.confidenceScorer
             .score(question, generatedResponse.text, searchResults)
             .catch((error) => {
-                console.error(`[Pipeline] Confidence scoring failed: ${error instanceof Error ? error.message : String(error)}`);
+                console.error(
+                    `[Pipeline] Confidence scoring failed: ${error instanceof Error ? error.message : String(error)}`,
+                );
                 return this.confidenceScorer.heuristicScore(searchResults);
             });
 
@@ -106,18 +110,15 @@ export class AIPipeline {
 
         // Step 4: Format for target platform
         const needsDisclaimer = finalConfidence !== ConfidenceLevel.HIGH;
-        const disclaimerText = finalConfidence === ConfidenceLevel.LOW
-            ? 'This is an AI-generated response with low confidence. A human agent has been notified and will follow up.'
-            : 'This is an AI-generated response. A human agent will verify shortly.';
+        const disclaimerText =
+            finalConfidence === ConfidenceLevel.LOW
+                ? 'This is an AI-generated response with low confidence. A human agent has been notified and will follow up.'
+                : 'This is an AI-generated response. A human agent will verify shortly.';
 
-        const formatted = this.formatter.format(
-            generatedResponse.text,
-            options.source,
-            {
-                addDisclaimer: needsDisclaimer,
-                disclaimerText,
-            },
-        );
+        const formatted = this.formatter.format(generatedResponse.text, options.source, {
+            addDisclaimer: needsDisclaimer,
+            disclaimerText,
+        });
 
         const latencyMs = Date.now() - startTime;
 
@@ -135,11 +136,15 @@ export class AIPipeline {
     /**
      * Classify a ticket based on its content.
      */
-    async classifyTicket(content: string): Promise<TicketClassification & { tokenUsage: TokenUsage }> {
+    async classifyTicket(
+        content: string,
+    ): Promise<TicketClassification & { tokenUsage: TokenUsage }> {
         try {
             return await this.classifier.classify(content);
         } catch (error) {
-            console.error(`[Pipeline] Classification failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(
+                `[Pipeline] Classification failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
             return {
                 ...this.classifier.heuristicClassify(content),
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
@@ -161,7 +166,10 @@ export class AIPipeline {
                 query: question,
             });
         } catch (error) {
-            console.error(`[Pipeline] Streaming search failed: ${error instanceof Error ? error.message : String(error)}`, error);
+            console.error(
+                `[Pipeline] Streaming search failed: ${error instanceof Error ? error.message : String(error)}`,
+                error,
+            );
             searchResults = [];
         }
 

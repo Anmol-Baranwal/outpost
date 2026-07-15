@@ -46,13 +46,21 @@ function makeButtonInteraction(customId: string, overrides: Record<string, unkno
 
 describe('handleButtonInteraction', () => {
     beforeEach(() => {
-        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
-        vi.mocked(prisma.ticket.update).mockResolvedValue(TICKET as ReturnType<typeof prisma.ticket.update> extends Promise<infer T> ? T : never);
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(
+            TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T>
+                ? T
+                : never,
+        );
+        vi.mocked(prisma.ticket.update).mockResolvedValue(
+            TICKET as ReturnType<typeof prisma.ticket.update> extends Promise<infer T> ? T : never,
+        );
         vi.mocked(prisma.message.create).mockResolvedValue({
             id: 'msg-1',
         } as ReturnType<typeof prisma.message.create> extends Promise<infer T> ? T : never);
         vi.mocked(prisma.message.findFirst).mockResolvedValue(
-            null as ReturnType<typeof prisma.message.findFirst> extends Promise<infer T> ? T : never,
+            null as ReturnType<typeof prisma.message.findFirst> extends Promise<infer T>
+                ? T
+                : never,
         );
         vi.mocked(prisma.message.update).mockResolvedValue({
             id: 'msg-ai-1',
@@ -186,7 +194,9 @@ describe('handleButtonInteraction', () => {
 
     it('does not throw when no un-fed-back AI message exists', async () => {
         vi.mocked(prisma.message.findFirst).mockResolvedValue(
-            null as ReturnType<typeof prisma.message.findFirst> extends Promise<infer T> ? T : never,
+            null as ReturnType<typeof prisma.message.findFirst> extends Promise<infer T>
+                ? T
+                : never,
         );
 
         const interaction = makeButtonInteraction('issue_solved');

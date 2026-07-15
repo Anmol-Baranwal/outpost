@@ -119,7 +119,10 @@ export class ConfidenceScorer {
         searchResults: SearchResult[],
     ): string {
         const resultsText = searchResults
-            .map((r, i) => `[Result ${i + 1}] Score: ${r.score.toFixed(2)} | Title: ${r.title}\n${r.content.slice(0, 500)}`)
+            .map(
+                (r, i) =>
+                    `[Result ${i + 1}] Score: ${r.score.toFixed(2)} | Title: ${r.title}\n${r.content.slice(0, 500)}`,
+            )
             .join('\n\n');
 
         return [
@@ -137,8 +140,15 @@ export class ConfidenceScorer {
     private parseAssessment(text: string, tokenUsage: TokenUsage): ConfidenceAssessment {
         try {
             // Strip any markdown code fences
-            const cleaned = text.replace(/```json?\s*/g, '').replace(/```\s*/g, '').trim();
-            const parsed = JSON.parse(cleaned) as { score?: number; level?: string; reasoning?: string };
+            const cleaned = text
+                .replace(/```json?\s*/g, '')
+                .replace(/```\s*/g, '')
+                .trim();
+            const parsed = JSON.parse(cleaned) as {
+                score?: number;
+                level?: string;
+                reasoning?: string;
+            };
 
             const score = Math.max(0, Math.min(1, Number(parsed.score ?? 0.5)));
             const level = this.parseLevel(parsed.level) ?? classifyConfidence(score);
@@ -171,5 +181,4 @@ export class ConfidenceScorer {
         if (upper === 'LOW') return ConfidenceLevel.LOW;
         return null;
     }
-
 }
