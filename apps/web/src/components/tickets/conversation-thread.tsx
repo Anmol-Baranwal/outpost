@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { MessageType } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
+import { ConfidenceBadge } from '@/components/qa/confidence-badge';
 import type { TicketMessage } from './types';
 
 interface ConversationThreadProps {
@@ -173,6 +174,9 @@ function UserMessage({ message }: { message: TicketMessage }) {
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 font-medium">
                                 AI generated
                             </span>
+                        )}
+                        {message.isAiGenerated && message.confidenceLevel && (
+                            <ConfidenceBadge level={message.confidenceLevel} />
                         )}
                         <span className="text-[10px] text-muted-foreground">
                             {formatTimestamp(message.createdAt)}

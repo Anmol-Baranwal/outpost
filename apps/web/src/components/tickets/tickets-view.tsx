@@ -193,6 +193,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                 isAiGenerated: false,
                 attachments: null,
                 createdAt: new Date().toISOString(),
+                confidenceLevel: null,
             };
             setTicketOverrides((prev) => ({
                 ...prev,

@@ -49,6 +49,7 @@ const testTickets: Ticket[] = [
                 isAiGenerated: false,
                 attachments: null,
                 createdAt: '2025-04-14T09:30:00Z',
+                confidenceLevel: null,
             },
         ],
         slaBreachedAt: null,
