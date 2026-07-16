@@ -1,0 +1,136 @@
+/**
+ * GITHUB_REACTION_POLL job handler.
+ *
+ * GitHub has no webhook event for reactions (confirmed against GitHub's
+ * official webhook docs) — this is the only way to detect a 👍/👎 on the
+ * AI's own comment. Runs every 24 hours (see scheduler.ts). For each
+ * AI-generated GitHub message with no feedback yet, checks whether the
+ * ticket's original reporter reacted +1 or -1 on that specific comment.
+ * A -1 also enqueues an ESCALATION job, matching Discord's
+ * "Need more help" button behavior.
+ */
+
+import { prisma } from '@copilotkit/outpost/db';
+import { createGithubClient, listCommentReactions } from '@copilotkit/outpost/shared';
+import { createJob } from '../create-job.js';
+import { JobType } from '../types.js';
+import type { GithubReactionPollPayload, JobResult, JobHandlerContext } from '../types.js';
+
+/**
+ * Parse "owner/repo#number" into its components.
+ */
+function parseSourceId(sourceId: string): { owner: string; repo: string } | null {
+    const match = sourceId.match(/^(.+?)\/(.+?)#\d+$/);
+    if (!match) return null;
+    return { owner: match[1], repo: match[2] };
+}
+
+export async function handleGithubReactionPoll(
+    _payload: GithubReactionPollPayload,
+    context: JobHandlerContext,
+): Promise<JobResult> {
+    await context.reportProgress(10);
+
+    const pendingMessages = await prisma.message.findMany({
+        where: {
+            isAiGenerated: true,
+            feedback: null,
+            externalCommentId: { not: null },
+            ticket: {
+                // GITHUB_DISCUSSION excluded: discussion comments are created via GraphQL
+                // and their externalCommentId is a GraphQL node_id, not a numeric REST
+                // comment ID — reactions on them are only readable via GraphQL, which this
+                // poll doesn't use. Follow-up work, not in scope here.
+                source: { in: ['GITHUB_ISSUE'] },
+            },
+        },
+        include: {
+            ticket: {
+                select: {
+                    id: true,
+                    sourceId: true,
+                    user: { select: { externalId: true } },
+                },
+            },
+        },
+    });
+
+    await context.reportProgress(20);
+
+    const appId = process.env.GITHUB_APP_ID;
+    const privateKey = process.env.GITHUB_PRIVATE_KEY;
+    const installationId = process.env.GITHUB_INSTALLATION_ID;
+
+    if (!appId || !privateKey || !installationId) {
+        return {
+            success: false,
+            error: 'GITHUB_APP_ID/GITHUB_PRIVATE_KEY/GITHUB_INSTALLATION_ID not configured',
+        };
+    }
+
+    const client = createGithubClient({ appId, privateKey, installationId });
+
+    let checked = 0;
+    let updated = 0;
+
+    for (const message of pendingMessages) {
+        checked += 1;
+
+        if (
+            !message.externalCommentId ||
+            !message.ticket.sourceId ||
+            !message.ticket.user?.externalId
+        ) {
+            continue;
+        }
+
+        const parsed = parseSourceId(message.ticket.sourceId);
+        if (!parsed) continue;
+
+        const reporterLogin = message.ticket.user.externalId;
+        const commentId = Number(message.externalCommentId);
+
+        let reactions;
+        try {
+            reactions = await listCommentReactions(client, parsed.owner, parsed.repo, commentId);
+        } catch (error) {
+            console.error(
+                `[GithubReactionPoll] Failed to list reactions for message ${message.id}:`,
+                error instanceof Error ? error.message : String(error),
+            );
+            continue;
+        }
+
+        const reporterReaction = reactions.find((r) => r.login === reporterLogin);
+        if (!reporterReaction) continue;
+
+        if (reporterReaction.content === '+1') {
+            await prisma.message.update({
+                where: { id: message.id },
+                data: { feedback: 'POSITIVE' },
+            });
+            updated += 1;
+        } else if (reporterReaction.content === '-1') {
+            await prisma.message.update({
+                where: { id: message.id },
+                data: { feedback: 'NEGATIVE' },
+            });
+            await createJob(JobType.ESCALATION, {
+                ticketId: message.ticketId,
+                reason: 'User reacted 👎 (negative) via GitHub reaction — automated escalation',
+            });
+            updated += 1;
+        }
+    }
+
+    await context.reportProgress(100);
+
+    console.log(
+        `[GithubReactionPoll] Checked ${checked} messages, updated ${updated} with feedback`,
+    );
+
+    return {
+        success: true,
+        data: { checked, updated },
+    };
+}

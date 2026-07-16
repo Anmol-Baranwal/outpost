@@ -35,6 +35,8 @@ WORKDIR /app
 COPY --from=installer --chown=outpost:outpost /app/node_modules ./node_modules
 COPY --from=installer --chown=outpost:outpost /app/apps/linear-sync/dist ./apps/linear-sync/dist
 COPY --from=installer --chown=outpost:outpost /app/apps/linear-sync/package.json ./apps/linear-sync/package.json
+# pnpm's isolated layout keeps the app's own deps here (symlinked into root .pnpm) — required at runtime.
+COPY --from=installer --chown=outpost:outpost /app/apps/linear-sync/node_modules ./apps/linear-sync/node_modules
 COPY --from=installer --chown=outpost:outpost /app/packages ./packages
 COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 

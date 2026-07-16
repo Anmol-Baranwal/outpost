@@ -58,7 +58,12 @@ function createPipeline() {
 }
 
 const sampleSearchResults: SearchResult[] = [
-    { title: 'Actions', content: 'Guide to actions...', score: 0.9, sourceUrl: 'https://docs.copilotkit.ai/actions' },
+    {
+        title: 'Actions',
+        content: 'Guide to actions...',
+        score: 0.9,
+        sourceUrl: 'https://docs.copilotkit.ai/actions',
+    },
     { title: 'Hooks', content: 'Guide to hooks...', score: 0.85 },
 ];
 
@@ -121,10 +126,9 @@ describe('AIPipeline', () => {
                 level: ConfidenceLevel.MEDIUM,
             });
 
-            const result = await pipeline.generateSupportResponse(
-                'test question',
-                { source: 'discord' },
-            );
+            const result = await pipeline.generateSupportResponse('test question', {
+                source: 'discord',
+            });
 
             expect(result.confidenceScore).toBe(0.6);
             expect(result.confidenceLevel).toBe(ConfidenceLevel.MEDIUM);
@@ -137,10 +141,7 @@ describe('AIPipeline', () => {
                 level: ConfidenceLevel.MEDIUM,
             });
 
-            await pipeline.generateSupportResponse(
-                'test question',
-                { source: 'github' },
-            );
+            await pipeline.generateSupportResponse('test question', { source: 'github' });
 
             expect(mockFormat).toHaveBeenCalledWith(
                 expect.any(String),
@@ -152,10 +153,7 @@ describe('AIPipeline', () => {
         });
 
         it('should not add disclaimer for HIGH confidence', async () => {
-            await pipeline.generateSupportResponse(
-                'test question',
-                { source: 'discord' },
-            );
+            await pipeline.generateSupportResponse('test question', { source: 'discord' });
 
             expect(mockFormat).toHaveBeenCalledWith(
                 expect.any(String),
@@ -169,10 +167,9 @@ describe('AIPipeline', () => {
         it('should handle Pathfinder failure gracefully', async () => {
             mockSearchDocs.mockRejectedValueOnce(new Error('MCP down'));
 
-            const result = await pipeline.generateSupportResponse(
-                'test question',
-                { source: 'web' },
-            );
+            const result = await pipeline.generateSupportResponse('test question', {
+                source: 'web',
+            });
 
             // Should still return a result, just with empty search results
             expect(result.response).toBeDefined();
@@ -186,7 +183,7 @@ describe('AIPipeline', () => {
         it('should handle generator failure by rejecting (generator errors are not caught)', async () => {
             mockGenerate.mockRejectedValueOnce(new Error('Claude down'));
 
-            // Generator runs inside Promise.all — its rejection propagates.
+            // Generator is awaited directly; its rejection propagates.
             // The pipeline does NOT silently swallow generator failures.
             await expect(
                 pipeline.generateSupportResponse('test question', { source: 'discord' }),
@@ -202,13 +199,22 @@ describe('AIPipeline', () => {
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
             });
 
-            const result = await pipeline.generateSupportResponse(
-                'test question',
-                { source: 'discord' },
-            );
+            const result = await pipeline.generateSupportResponse('test question', {
+                source: 'discord',
+            });
 
             // Should use heuristic fallback
             expect(result.response).toBeDefined();
+        });
+
+        it('should score confidence against the actual generated response text, not a placeholder', async () => {
+            await pipeline.generateSupportResponse('a question', { source: 'discord' });
+
+            expect(mockScore).toHaveBeenCalledWith(
+                'a question',
+                sampleGeneratedResponse.text,
+                sampleSearchResults,
+            );
         });
 
         it('should pass conversation history to generator', async () => {
@@ -217,10 +223,10 @@ describe('AIPipeline', () => {
                 { role: 'assistant' as const, content: 'CopilotKit is...' },
             ];
 
-            await pipeline.generateSupportResponse(
-                'How about streaming?',
-                { source: 'discord', conversationHistory: history },
-            );
+            await pipeline.generateSupportResponse('How about streaming?', {
+                source: 'discord',
+                conversationHistory: history,
+            });
 
             expect(mockGenerate).toHaveBeenCalledWith(
                 expect.any(Object),
@@ -257,9 +263,7 @@ describe('AIPipeline', () => {
                 reasoning: 'Heuristic',
             });
 
-            const result = await pipeline.classifyTicket(
-                'Error: something broke',
-            );
+            const result = await pipeline.classifyTicket('Error: something broke');
 
             expect(result.priority).toBe(TicketPriority.HIGH);
             expect(result.tokenUsage.inputTokens).toBe(0);

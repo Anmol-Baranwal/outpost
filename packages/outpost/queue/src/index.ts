@@ -10,4 +10,5 @@ export { handleAccountScoring } from './handlers/account-scoring.js';
 export { handleHubSpotSync } from './handlers/hubspot-sync.js';
 export { createTrackerSyncHandler } from './handlers/tracker-sync.js';
 export { handleJobCleanup } from './handlers/job-cleanup.js';
+export { handleGithubReactionPoll } from './handlers/github-reaction-poll.js';
 export * from './types.js';

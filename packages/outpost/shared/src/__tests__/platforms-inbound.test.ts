@@ -29,6 +29,7 @@ function createMockPrisma(): PrismaLike {
         },
         user: {
             findFirst: vi.fn().mockResolvedValue(null),
+            create: vi.fn().mockResolvedValue({ id: 'user-new-1' }),
         },
         teamMember: {
             findUnique: vi.fn().mockResolvedValue(null),
@@ -186,6 +187,84 @@ describe('InboundHandler', () => {
             const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
             expect(msgData.attachments).toBeDefined();
             expect(msgData.attachments[0].filename).toBe('screenshot.png');
+        });
+
+        // ── User linkage ────────────────────────────────────────────
+
+        it('links the ticket to an existing User found by externalId + source', async () => {
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+                id: 'user-existing-1',
+                email: 'existing@example.com',
+            });
+
+            const msg = makeInboundMessage();
+            await handler.handle(msg);
+
+            expect(prisma.user.findFirst).toHaveBeenCalledWith({
+                where: {
+                    externalId: 'user-123',
+                    source: 'DISCORD',
+                },
+            });
+            expect(prisma.user.create).not.toHaveBeenCalled();
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            expect(ticketData.userId).toBe('user-existing-1');
+        });
+
+        it('creates a new User with a synthesized placeholder email when none exists, and links it to the ticket', async () => {
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+            const msg = makeInboundMessage();
+            await handler.handle(msg);
+
+            expect(prisma.user.create).toHaveBeenCalledWith({
+                data: {
+                    name: 'testuser',
+                    email: 'discord-user-123@reporters.outpost.internal',
+                    externalId: 'user-123',
+                    source: 'DISCORD',
+                },
+            });
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            expect(ticketData.userId).toBe('user-new-1');
+        });
+
+        it('recovers from a concurrent-create race: re-reads the User when create hits a unique violation', async () => {
+            // Two first-ever messages from the same sender arrive at once: both
+            // findFirst -> null, both attempt create with the same synthesized
+            // (unique) email. The loser gets P2002; it must re-read and reuse the
+            // winner's row, not throw and drop the ticket.
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>)
+                .mockReset()
+                // 1st: initial lookup -> null. 2nd: recovery re-read after the
+                // race -> the winner's row. (A later call from isTeamMember
+                // falls through to null.)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({ id: 'user-raced-1', email: 'discord-user-123@reporters.outpost.internal' })
+                .mockResolvedValue(null);
+            (prisma.user.create as ReturnType<typeof vi.fn>)
+                .mockReset()
+                .mockRejectedValueOnce({ code: 'P2002' });
+
+            const msg = makeInboundMessage();
+            const result = await handler.handle(msg);
+
+            expect(result.isNewTicket).toBe(true);
+            expect(prisma.user.create).toHaveBeenCalledTimes(1);
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            expect(ticketData.userId).toBe('user-raced-1');
+        });
+
+        it('rethrows a non-unique-violation create error', async () => {
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+            (prisma.user.create as ReturnType<typeof vi.fn>)
+                .mockReset()
+                .mockRejectedValueOnce({ code: 'P1001', message: 'db unreachable' });
+
+            await expect(handler.handle(makeInboundMessage())).rejects.toMatchObject({ code: 'P1001' });
         });
     });
 

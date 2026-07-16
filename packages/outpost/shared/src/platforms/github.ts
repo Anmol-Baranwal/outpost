@@ -73,8 +73,8 @@ export class GitHubAdapter implements PlatformAdapter {
             const hasInstall = !!this.config.installationId;
             throw new Error(
                 `[GitHubAdapter] No Octokit instance available. ` +
-                `Credentials present: appId=${hasAppId}, privateKey=${hasKey}, installationId=${hasInstall}. ` +
-                `To use App credentials, install @octokit/auth-app and pass an authenticated Octokit instance.`,
+                    `Credentials present: appId=${hasAppId}, privateKey=${hasKey}, installationId=${hasInstall}. ` +
+                    `To use App credentials, install @octokit/auth-app and pass an authenticated Octokit instance.`,
             );
         }
         return this.octokit;
@@ -212,7 +212,8 @@ export class GitHubAdapter implements PlatformAdapter {
             content: (comment?.body as string) ?? '',
             threadId: `${fullName}#${number}`,
             channelId: fullName,
-            sourceUrl: (comment?.html_url as string) ?? (discussion?.html_url as string) ?? undefined,
+            sourceUrl:
+                (comment?.html_url as string) ?? (discussion?.html_url as string) ?? undefined,
             source: TicketSource.GITHUB_DISCUSSION,
             isThreadStart: false,
             rawEvent: payload,
@@ -239,19 +240,22 @@ export class GitHubAdapter implements PlatformAdapter {
      * - Routes to REST (issues) or GraphQL (discussions) based on ticket source
      */
     async postResponse(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         if (!ticket.sourceId) {
-            throw new Error(
-                `Cannot post GitHub response — ticket ${ticket.id} has no sourceId`,
-            );
+            throw new Error(`Cannot post GitHub response — ticket ${ticket.id} has no sourceId`);
         }
 
         let body = response.text;
         body += '\n\n---\nWas this helpful? React with \uD83D\uDC4D or \uD83D\uDC4E';
 
-        await this.postComment(ticket, body);
+        return this.postComment(ticket, body);
     }
 
     /**
@@ -259,7 +263,12 @@ export class GitHubAdapter implements PlatformAdapter {
      * No feedback section or confidence disclaimer.
      */
     async postSystemMessage(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         message: string,
     ): Promise<void> {
         if (!ticket.sourceId) {
@@ -277,35 +286,45 @@ export class GitHubAdapter implements PlatformAdapter {
      * Post a comment to the correct GitHub endpoint based on ticket source.
      */
     private async postComment(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         body: string,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         if (ticket.source === TicketSource.GITHUB_DISCUSSION) {
-            await this.postDiscussionComment(ticket, body);
-        } else {
-            await this.postIssueComment(ticket, body);
+            return this.postDiscussionComment(ticket, body);
         }
+        return this.postIssueComment(ticket, body);
     }
 
     /**
      * Post a comment on a GitHub issue via REST API.
      */
     private async postIssueComment(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         body: string,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         const parsed = parseSourceId(ticket.sourceId!);
         if (!parsed) {
             throw new Error(`Invalid GitHub sourceId: ${ticket.sourceId}`);
         }
 
         const octokit = this.getOctokit();
-        await octokit.issues.createComment({
+        const result = await octokit.issues.createComment({
             owner: parsed.owner,
             repo: parsed.repo,
             issue_number: parsed.number,
             body,
         });
+        return String(result.data.id);
     }
 
     /**
@@ -315,9 +334,14 @@ export class GitHubAdapter implements PlatformAdapter {
      * looking it up from the sourceId.
      */
     private async postDiscussionComment(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         body: string,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         const octokit = this.getOctokit();
 
         // Try to get the discussion node_id from the ticket
@@ -350,7 +374,9 @@ export class GitHubAdapter implements PlatformAdapter {
             nodeId = result.repository.discussion.id;
         }
 
-        await octokit.graphql(
+        const result = await octokit.graphql<{
+            addDiscussionComment: { comment: { id: string } };
+        }>(
             `mutation AddDiscussionComment($discussionId: ID!, $body: String!) {
                 addDiscussionComment(input: { discussionId: $discussionId, body: $body }) {
                     comment {
@@ -363,6 +389,8 @@ export class GitHubAdapter implements PlatformAdapter {
                 body,
             },
         );
+
+        return result.addDiscussionComment.comment.id;
     }
 }
 

@@ -71,6 +71,9 @@ describe('handleThreadCreate', () => {
 
         // Default: not a team member
         vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+        vi.mocked(prisma.user.create).mockResolvedValue({
+            id: 'user-internal-id',
+        } as ReturnType<typeof prisma.user.create> extends Promise<infer T> ? T : never);
     });
 
     it('ignores threads that are not newly created', async () => {

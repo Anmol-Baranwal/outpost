@@ -8,12 +8,11 @@ on:
       - ".github/actions/**"
       - ".github/zizmor.yml"
       - ".github/dependabot.yml"
+  # Run on every PR (no paths filter): this check is a required status check on
+  # the protected branch, so it must report on all PRs. A paths filter would
+  # skip it on PRs that don't touch .github/, leaving the required check stuck
+  # "expected" forever and blocking the merge.
   pull_request:
-    paths:
-      - ".github/workflows/**"
-      - ".github/actions/**"
-      - ".github/zizmor.yml"
-      - ".github/dependabot.yml"
   schedule:
     - cron: "0 9 * * 1"
   workflow_dispatch:
