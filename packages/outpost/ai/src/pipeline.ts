@@ -101,10 +101,16 @@ export class AIPipeline {
         totalTokenUsage.inputTokens += confidenceAssessment.tokenUsage.inputTokens;
         totalTokenUsage.outputTokens += confidenceAssessment.tokenUsage.outputTokens;
 
-        // Use the more conservative confidence (lower of generator's and scorer's)
-        const finalConfidenceScore = Math.min(
+        // Use the more conservative confidence (lower of generator's and scorer's),
+        // then apply the aggregate-feedback calibration (default 0 = no change).
+        const combinedConfidenceScore = Math.min(
             generatedResponse.confidenceScore,
             confidenceAssessment.score,
+        );
+        const calibration = options.confidenceCalibration ?? 0;
+        const finalConfidenceScore = Math.max(
+            0,
+            Math.min(1, combinedConfidenceScore + calibration),
         );
         const finalConfidence = classifyConfidence(finalConfidenceScore);
 
