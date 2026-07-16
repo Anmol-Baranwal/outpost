@@ -49,6 +49,12 @@ vi.mock('@copilotkit/outpost/ai', () => ({
     AIPipeline: MockAIPipeline,
 }));
 
+// Mock the feedback-calibration reader so wiring can be asserted in isolation.
+const mockGetFeedbackCalibration = vi.fn();
+vi.mock('../feedback-calibration.js', () => ({
+    getFeedbackCalibration: mockGetFeedbackCalibration,
+}));
+
 const mockPostResponse = vi.fn().mockResolvedValue(undefined);
 const mockHasAdapter = vi.fn().mockReturnValue(true);
 const mockGetAdapter = vi.fn().mockReturnValue({
@@ -164,6 +170,7 @@ describe('handleAiResponse', () => {
         mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
         mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
         mockClassifyTicket.mockResolvedValue(sampleClassification);
+        mockGetFeedbackCalibration.mockResolvedValue(0);
         mockPostResponse.mockResolvedValue(undefined);
         mockHasAdapter.mockReturnValue(true);
         mockGetAdapter.mockReturnValue({
@@ -173,6 +180,35 @@ describe('handleAiResponse', () => {
             parseInboundEvent: vi.fn(),
             fetchUserInfo: vi.fn(),
         });
+    });
+
+    it('reads the calibration factor and passes it into the pipeline', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockGetFeedbackCalibration.mockResolvedValue(0.1);
+
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+        expect(mockGetFeedbackCalibration).toHaveBeenCalled();
+        expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({ confidenceCalibration: 0.1 }),
+        );
+    });
+
+    it('falls back to 0 calibration when the reader throws (response still generated)', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockGetFeedbackCalibration.mockRejectedValue(new Error('db down'));
+
+        const result = await handleAiResponse(
+            { ticketId: 'tkt-1', source: 'discord' },
+            makeContext(),
+        );
+
+        expect(result.success).toBe(true);
+        expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({ confidenceCalibration: 0 }),
+        );
     });
 
     it('processes a ticket end-to-end with high confidence', async () => {

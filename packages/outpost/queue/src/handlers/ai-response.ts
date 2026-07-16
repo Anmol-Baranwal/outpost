@@ -19,6 +19,7 @@ import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
 import { hasAdapter, getAdapter } from '@copilotkit/outpost/shared/platforms';
 import { createJob } from '../create-job.js';
+import { getFeedbackCalibration } from '../feedback-calibration.js';
 import { JobType } from '../types.js';
 import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.js';
 
@@ -99,12 +100,25 @@ export async function handleAiResponse(
         };
     }
 
+    // Read the aggregate feedback calibration; never fail generation because
+    // the tally couldn't be read (single fail-soft site).
+    let confidenceCalibration = 0;
+    try {
+        confidenceCalibration = await getFeedbackCalibration(prisma);
+    } catch (error) {
+        console.error(
+            `[AI Response] Failed to read feedback calibration, defaulting to 0: ${error instanceof Error ? error.message : String(error)}`,
+        );
+    }
+    console.log(`[AI Response] Confidence calibration: ${confidenceCalibration.toFixed(4)}`);
+
     let pipelineResult;
     try {
         try {
             pipelineResult = await pipeline.generateSupportResponse(question, {
                 source: platform,
                 conversationHistory,
+                confidenceCalibration,
             });
         } catch (error) {
             return {
