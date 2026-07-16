@@ -4,10 +4,9 @@ import { createJob, JobType } from '@copilotkit/outpost/queue';
 import { findTicketByThreadId } from '../lib/tickets.js';
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
+    // Buttons emitted by the shared AI formatter (packages/outpost/ai/formatter.ts).
+    // These are the only custom_ids Discord actually posts (custom_id = btn.action).
     const handlers: Record<string, (i: ButtonInteraction) => Promise<void>> = {
-        issue_solved: handleIssueSolved,
-        need_more_help: handleNeedMoreHelp,
-        // Buttons emitted by the shared AI formatter (packages/outpost/ai/formatter.ts)
         feedback_positive: handleFeedbackPositive,
         feedback_negative: handleFeedbackNegative,
         escalate: handleEscalate,
@@ -57,102 +56,6 @@ async function recordFeedback(ticketId: string, feedback: 'POSITIVE' | 'NEGATIVE
             data: { feedback },
         });
     }
-}
-
-async function handleIssueSolved(interaction: ButtonInteraction): Promise<void> {
-    const threadId = getThreadId(interaction);
-    if (!threadId) {
-        await interaction.reply({
-            content: 'This button can only be used inside a support thread.',
-            ephemeral: true,
-        });
-        return;
-    }
-
-    const ticket = await findTicketByThreadId(threadId);
-    if (!ticket) {
-        await interaction.reply({
-            content: 'No ticket found for this thread.',
-            ephemeral: true,
-        });
-        return;
-    }
-
-    // Update ticket status to CLOSED
-    await prisma.ticket.update({
-        where: { id: ticket.id },
-        data: { status: 'CLOSED' },
-    });
-
-    await recordFeedback(ticket.id, 'POSITIVE');
-
-    // Log the resolution as a system message
-    await prisma.message.create({
-        data: {
-            ticketId: ticket.id,
-            author: `${interaction.user.tag} (${interaction.user.id})`,
-            content: 'Issue marked as solved by user.',
-            type: 'SYSTEM',
-        },
-    });
-
-    await interaction.reply({
-        content: 'Glad we could help! \uD83C\uDF89',
-        ephemeral: false,
-    });
-
-    console.log(`[Discord Bot] Ticket ${ticket.displayId} closed via "Issue Solved" button`);
-}
-
-async function handleNeedMoreHelp(interaction: ButtonInteraction): Promise<void> {
-    const threadId = getThreadId(interaction);
-    if (!threadId) {
-        await interaction.reply({
-            content: 'This button can only be used inside a support thread.',
-            ephemeral: true,
-        });
-        return;
-    }
-
-    const ticket = await findTicketByThreadId(threadId);
-    if (!ticket) {
-        await interaction.reply({
-            content: 'No ticket found for this thread.',
-            ephemeral: true,
-        });
-        return;
-    }
-
-    // Update ticket to waiting on team
-    await prisma.ticket.update({
-        where: { id: ticket.id },
-        data: { status: 'WAITING_ON_TEAM' },
-    });
-
-    await recordFeedback(ticket.id, 'NEGATIVE');
-
-    // Enqueue an escalation notification
-    await createJob(JobType.ESCALATION, {
-        ticketId: ticket.id,
-        reason: `User requested more help via "Need more help" button in thread ${threadId}`,
-    });
-
-    // Log the escalation
-    await prisma.message.create({
-        data: {
-            ticketId: ticket.id,
-            author: `${interaction.user.tag} (${interaction.user.id})`,
-            content: 'User requested more help. Escalating to team.',
-            type: 'SYSTEM',
-        },
-    });
-
-    await interaction.reply({
-        content: 'A team member has been notified and will follow up shortly.',
-        ephemeral: false,
-    });
-
-    console.log(`[Discord Bot] Ticket ${ticket.displayId} escalated via "Need more help" button`);
 }
 
 async function handleFeedbackPositive(interaction: ButtonInteraction): Promise<void> {
@@ -242,16 +145,32 @@ async function handleEscalate(interaction: ButtonInteraction): Promise<void> {
         return;
     }
 
-    await prisma.ticket.update({
-        where: { id: ticket.id },
-        data: { status: 'WAITING_ON_TEAM' },
-    });
+    // Idempotency guard: a ticket already waiting on the team has been escalated.
+    // Short-circuit re-clicks and retries so we never enqueue a second job.
+    if (ticket.status === 'WAITING_ON_TEAM') {
+        await interaction.editReply({
+            content: 'This request is already with our team — someone will follow up shortly. 🧑‍💻',
+        });
+        return;
+    }
 
+    // Enqueue the escalation FIRST (the essential side effect), then set the
+    // WAITING_ON_TEAM guard. If a later write fails and the user retries, the
+    // guard above short-circuits — so a mid-handler failure can't enqueue a
+    // duplicate ESCALATION job. Ordering it the other way would instead risk
+    // losing the escalation entirely if the enqueue failed. (Issue #107.)
     await createJob(JobType.ESCALATION, {
         ticketId: ticket.id,
         reason: `User requested a human via "Talk to Human" button in Discord thread ${threadId}`,
     });
 
+    await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: { status: 'WAITING_ON_TEAM' },
+    });
+
+    // Cosmetic timeline note — written last; a failure here is covered by the
+    // guard on retry and never causes a duplicate job.
     await prisma.message.create({
         data: {
             ticketId: ticket.id,
