@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Outpost consists of three services (web dashboard, Discord bot, GitHub app) sharing a single PostgreSQL database with pgvector.
+Outpost consists of seven services (web dashboard, Discord bot, GitHub app, Slack bot, Teams bot, Linear sync, worker) sharing a single PostgreSQL database with pgvector.
 
 ## Prerequisites
 
@@ -17,22 +17,32 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
 2. Create a new project on [Railway](https://railway.app)
 3. Add a **PostgreSQL** service (Railway has native Postgres with pgvector support)
 4. Enable pgvector: connect to the database and run `CREATE EXTENSION IF NOT EXISTS vector;`
-5. Add three services from the repo, each pointing to its Dockerfile:
-   - **outpost-web** — `apps/web/Dockerfile` (web service, port 3000, health check `/api/health`)
-   - **outpost-discord-bot** — `apps/discord-bot/Dockerfile` (background worker)
-   - **outpost-github-app** — `apps/github-app/Dockerfile` (web service, port 3200, needs public URL for webhooks)
+5. Add seven services from the repo, each pointing to its Dockerfile and `railway.toml` (set each service's Config file path to `apps/<app>/railway.toml`, Root Directory empty — build context must be repo root):
+    - **outpost-web** — `apps/web/Dockerfile` (web service, port 3000, health check `/api/health`)
+    - **outpost-discord-bot** — `apps/discord-bot/Dockerfile` (background worker, no public URL needed — gateway connects outbound)
+    - **outpost-github-app** — `apps/github-app/Dockerfile` (web service, port 3200, needs public URL for webhooks)
+    - **outpost-slack-bot** — `apps/slack-bot/Dockerfile` (background worker, Socket Mode — no public URL needed)
+    - **outpost-teams-bot** — `apps/teams-bot/Dockerfile` (web service, needs public URL for the Bot Framework messaging endpoint)
+    - **outpost-linear-sync** — `apps/linear-sync/Dockerfile` (web service, needs public URL for Linear webhooks)
+    - **outpost-worker** — `apps/worker/Dockerfile` (background job processor — Postgres queue + scheduler, no public URL needed)
 6. Share `DATABASE_URL` across all services using Railway's variable references (`${{Postgres.DATABASE_URL}}`)
-7. Fill in the remaining secret environment variables (`DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, etc.)
-8. Configure custom domains for the web dashboard and GitHub App webhook endpoint
+7. Fill in the remaining secret environment variables (`DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, etc. — see Environment Variables below)
+8. Configure custom domains for the web dashboard, GitHub App webhook endpoint, Teams bot messaging endpoint, and Linear sync webhook endpoint
 
 ### What gets deployed
 
-| Service              | Type       | Port | Health Check       |
-|----------------------|------------|------|--------------------|
-| outpost-web          | Web        | 3000 | GET /api/health    |
-| outpost-discord-bot  | Worker     | 3001 | GET /health        |
-| outpost-github-app   | Web        | 3200 | GET /health        |
-| outpost-db           | PostgreSQL | --   | --                 |
+| Service             | Type       | Port (default)            | Health Check    |
+| ------------------- | ---------- | ------------------------- | --------------- |
+| outpost-web         | Web        | 3000                      | GET /api/health |
+| outpost-discord-bot | Worker     | 3001                      | GET /health     |
+| outpost-github-app  | Web        | 3200                      | GET /health     |
+| outpost-slack-bot   | Worker     | 3002                      | GET /health     |
+| outpost-teams-bot   | Web        | 3978 (bot), 3003 (health) | GET /health     |
+| outpost-linear-sync | Web        | 3004                      | GET /health     |
+| outpost-worker      | Worker     | 3003                      | GET /health     |
+| outpost-db          | PostgreSQL | --                        | --              |
+
+Ports are the code's defaults (`process.env.PORT`/`HEALTH_PORT` fallback) — Railway may assign different values via its own `PORT` env var per service.
 
 ## Environment Variables
 
@@ -41,8 +51,11 @@ Copy `.env.example` and fill in all values. Key groups:
 - **Database**: `DATABASE_URL`
 - **Auth**: `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
 - **AI**: `ANTHROPIC_API_KEY`, `PATHFINDER_URL`
-- **Discord**: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `GUILD_ID`
-- **GitHub App**: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_INSTALLATION_ID`, `GITHUB_WEBHOOK_SECRET`
+- **Discord**: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `GUILD_ID`, `MONITORED_CHANNEL_IDS`
+- **GitHub App**: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_INSTALLATION_ID`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TEAM_LOGINS` (optional)
+- **Slack**: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, `MONITORED_CHANNEL_IDS`, `TEAM_MEMBER_IDS` (optional)
+- **Teams**: `TEAMS_APP_ID`, `TEAMS_APP_PASSWORD`, `TEAMS_TENANT_ID` (optional, blank for multi-tenant), `MONITORED_CHANNEL_IDS`
+- **Linear sync**: `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `LINEAR_TEAM_ID`
 - **Monitoring**: `SENTRY_DSN` (optional), `LOG_LEVEL`
 
 ## GitHub App Setup
@@ -50,12 +63,12 @@ Copy `.env.example` and fill in all values. Key groups:
 Outpost's GitHub integration (`apps/github-app`) responds to issues and discussions the same way the Discord bot responds in threads. Creating the App is a one-time setup per GitHub org/repo.
 
 1. **Create the App.** GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
-   - Webhook URL: `https://<your-github-app-deployment>/api/webhooks/github` — needs a public URL (the deployed `outpost-github-app` Railway service, or a tunnel like ngrok for local dev on port 3200).
-   - Webhook secret: generate a random string and save it — this becomes `GITHUB_WEBHOOK_SECRET`.
-   - Permissions: **Issues: Read & write**, **Discussions: Read & write**.
-   - Subscribe to events: **Issues**, **Issue comment**, **Discussions**.
+    - Webhook URL: `https://<your-github-app-deployment>/api/webhooks/github` — needs a public URL (the deployed `outpost-github-app` Railway service, or a tunnel like ngrok for local dev on port 3200).
+    - Webhook secret: generate a random string and save it — this becomes `GITHUB_WEBHOOK_SECRET`.
+    - Permissions: **Issues: Read & write**, **Discussions: Read & write**.
+    - Subscribe to events: **Issues**, **Issue comment**, **Discussions**.
 
-   GitHub has no webhook event for comment reactions, so 👍/👎 feedback is picked up by a 24-hour poll job instead (`GITHUB_REACTION_POLL`) — no extra event subscription is needed for that.
+    GitHub has no webhook event for comment reactions, so 👍/👎 feedback is picked up by a 24-hour poll job instead (`GITHUB_REACTION_POLL`) — no extra event subscription is needed for that.
 
 2. **Generate credentials.** On the App's settings page, generate a private key (downloads a `.pem` file) — its full contents become `GITHUB_PRIVATE_KEY`. Note the **App ID** shown on the same page — that's `GITHUB_APP_ID`.
 
@@ -63,20 +76,20 @@ Outpost's GitHub integration (`apps/github-app`) responds to issues and discussi
 
 4. **Set environment variables.** Both `apps/github-app` (the webhook receiver) and the worker/web services (via `packages/outpost/shared`'s platform adapter registry) read:
 
-   ```
-   GITHUB_APP_ID=<app id>
-   GITHUB_PRIVATE_KEY=<full .pem contents>
-   GITHUB_INSTALLATION_ID=<installation id>
-   GITHUB_WEBHOOK_SECRET=<webhook secret>
-   ```
+    ```
+    GITHUB_APP_ID=<app id>
+    GITHUB_PRIVATE_KEY=<full .pem contents>
+    GITHUB_INSTALLATION_ID=<installation id>
+    GITHUB_WEBHOOK_SECRET=<webhook secret>
+    ```
 
-   Optional: `GITHUB_TEAM_LOGINS` (comma-separated GitHub logins treated as internal team members, used by triage logic).
+    Optional: `GITHUB_TEAM_LOGINS` (comma-separated GitHub logins treated as internal team members, used by triage logic).
 
 5. **Deploy.** `outpost-github-app` is already defined as a Railway service (see the Quick Start section above) — point its Config file path at `apps/github-app/railway.toml`, leave Root Directory empty, add the env vars, deploy. Health check hits `GET /health`.
 
 6. **Verify.** Open an issue on the installed repo. The agent should reply with an AI-generated answer plus a "Was this helpful? 👍/👎" prompt. React to it, then either wait for the next 24h poll or trigger `GITHUB_REACTION_POLL` manually to confirm the reaction lands as `feedback` on the `Message` row.
 
-   Note: discussion-comment reactions aren't polled today — `GitHubAdapter.postDiscussionComment` returns a GraphQL node ID, not the numeric REST comment ID the reactions endpoint needs. Issue feedback works end-to-end; discussion feedback is a known follow-up.
+    Note: discussion-comment reactions aren't polled today — `GitHubAdapter.postDiscussionComment` returns a GraphQL node ID, not the numeric REST comment ID the reactions endpoint needs. Issue feedback works end-to-end; discussion feedback is a known follow-up.
 
 ## Docker Builds
 
@@ -91,9 +104,22 @@ docker build -f apps/discord-bot/Dockerfile -t outpost-discord-bot .
 
 # Build GitHub app
 docker build -f apps/github-app/Dockerfile -t outpost-github-app .
+
+# Build Slack bot
+docker build -f apps/slack-bot/Dockerfile -t outpost-slack-bot .
+
+# Build Teams bot
+docker build -f apps/teams-bot/Dockerfile -t outpost-teams-bot .
+
+# Build Linear sync
+docker build -f apps/linear-sync/Dockerfile -t outpost-linear-sync .
+
+# Build worker
+docker build -f apps/worker/Dockerfile -t outpost-worker .
 ```
 
 All images:
+
 - Use multi-stage builds (prune -> install -> run)
 - Run as non-root user (`outpost`, uid 1001)
 - Include Docker HEALTHCHECK instructions
@@ -132,15 +158,19 @@ The web app includes a Sentry stub (`apps/web/src/lib/sentry.ts`). Set `SENTRY_D
 
 ## Health Checks
 
-All three services expose health endpoints returning JSON:
+All seven services expose health endpoints returning JSON:
 
 ```json
-{"status": "ok", "service": "web", "version": "0.1.0", "uptime": 3600}
+{ "status": "ok", "service": "web", "version": "0.1.0", "uptime": 3600 }
 ```
 
 - Web: `GET /api/health` (port 3000)
 - Discord bot: `GET /health` (port 3001)
 - GitHub app: `GET /health` (port 3200)
+- Slack bot: `GET /health` (port 3002)
+- Teams bot: `GET /health` (port 3003)
+- Linear sync: `GET /health` (port 3004)
+- Worker: `GET /health` (port 3003)
 
 ## Database Setup
 
