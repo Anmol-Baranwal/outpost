@@ -171,6 +171,8 @@ export interface PipelineOptions {
     conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
     /** Maximum output tokens */
     maxTokens?: number;
+    /** Bounded confidence adjustment from aggregate 👍/👎 feedback (default 0). */
+    confidenceCalibration?: number;
 }
 
 export interface FormattedResponse {
