@@ -54,8 +54,10 @@ ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
+# Use 127.0.0.1, not localhost: the standalone server binds IPv4 (0.0.0.0) and
+# `localhost` can resolve to IPv6 ::1 inside the container, which is refused.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:3000/api/health || exit 1
+    CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
 
 COPY --from=installer --chown=outpost:outpost /app/apps/web/start.sh ./apps/web/start.sh
 
