@@ -77,7 +77,10 @@ export class SlackAdapter implements PlatformAdapter {
             return {
                 platformId: platformUserId,
                 username: (user?.name as string) ?? platformUserId,
-                displayName: (profile?.display_name as string) ?? (profile?.real_name as string) ?? undefined,
+                displayName:
+                    (profile?.display_name as string) ??
+                    (profile?.real_name as string) ??
+                    undefined,
                 email: (profile?.email as string) ?? undefined,
                 avatarUrl: (profile?.image_72 as string) ?? undefined,
             };
@@ -93,9 +96,14 @@ export class SlackAdapter implements PlatformAdapter {
     // ── postResponse ─────────────────────────────────────────────────────
 
     async postResponse(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         if (!ticket.sourceId || !ticket.channel) {
             throw new Error(
                 `Cannot post Slack response — ticket ${ticket.id} missing sourceId or channel`,
@@ -123,12 +131,18 @@ export class SlackAdapter implements PlatformAdapter {
             text: response.text, // Fallback for notifications
             blocks: blocks as any,
         });
+        return undefined;
     }
 
     // ── postSystemMessage ────────────────────────────────────────────────
 
     async postSystemMessage(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         message: string,
     ): Promise<void> {
         if (!ticket.sourceId || !ticket.channel) {

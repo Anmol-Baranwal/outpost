@@ -14,6 +14,7 @@
  *   - HUBSPOT_SYNC:     CRM sync
  *   - TRACKER_SYNC:     Push changes to external trackers
  *   - JOB_CLEANUP:      Periodic cleanup of old jobs and sync events
+ *   - GITHUB_REACTION_POLL: Poll GitHub reactions on AI comments (no webhook exists)
  */
 
 import http from 'node:http';
@@ -30,6 +31,7 @@ import {
     handleHubSpotSync,
     createTrackerSyncHandler,
     handleJobCleanup,
+    handleGithubReactionPoll,
     createJob,
 } from '@copilotkit/outpost/queue';
 import { SyncEngine } from '@copilotkit/outpost/shared';
@@ -54,10 +56,11 @@ const worker = new Worker({
         [JobType.HUBSPOT_SYNC]: 1,
         [JobType.TRACKER_SYNC]: 1,
         [JobType.JOB_CLEANUP]: 1,
+        [JobType.GITHUB_REACTION_POLL]: 1,
     },
     jobTimeouts: {
-        [JobType.AI_RESPONSE]: 120_000,   // 2 minutes — AI pipeline is slow
-        [JobType.HUBSPOT_SYNC]: 300_000,   // 5 minutes — full sync can be large
+        [JobType.AI_RESPONSE]: 120_000, // 2 minutes — AI pipeline is slow
+        [JobType.HUBSPOT_SYNC]: 300_000, // 5 minutes — full sync can be large
         [JobType.ACCOUNT_SCORING]: 300_000, // 5 minutes — many accounts
     },
 });
@@ -72,6 +75,7 @@ worker.on(JobType.ACCOUNT_SCORING, handleAccountScoring);
 worker.on(JobType.HUBSPOT_SYNC, handleHubSpotSync);
 worker.on(JobType.TRACKER_SYNC, handleTrackerSync);
 worker.on(JobType.JOB_CLEANUP, handleJobCleanup);
+worker.on(JobType.GITHUB_REACTION_POLL, handleGithubReactionPoll);
 
 // ─── Start Scheduler ──────────────────────────────────────────────────────
 

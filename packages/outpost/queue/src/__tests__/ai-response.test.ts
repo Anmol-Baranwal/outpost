@@ -17,6 +17,7 @@ const mockPrismaTicket = {
 
 const mockPrismaMessage = {
     create: vi.fn(),
+    update: vi.fn(),
 };
 
 const mockPrismaJob = {
@@ -159,6 +160,7 @@ describe('handleAiResponse', () => {
         vi.clearAllMocks();
         mockPrismaTicket.update.mockResolvedValue({});
         mockPrismaMessage.create.mockResolvedValue({ id: 'msg-new' });
+        mockPrismaMessage.update.mockResolvedValue({});
         mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
         mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
         mockClassifyTicket.mockResolvedValue(sampleClassification);
@@ -295,7 +297,43 @@ describe('handleAiResponse', () => {
                 type: 'BOT',
                 author: 'Outpost AI',
                 isAiGenerated: true,
+                confidenceScore: 0.92,
+                confidenceLevel: 'HIGH',
             },
+        });
+    });
+
+    it('persists confidenceScore and confidenceLevel on the created Message', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockGenerateSupportResponse.mockResolvedValue({
+            ...highConfidenceResult,
+            confidenceScore: 0.75,
+            confidenceLevel: 'HIGH',
+        });
+
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+        expect(mockPrismaMessage.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    confidenceScore: 0.75,
+                    confidenceLevel: 'HIGH',
+                }),
+            }),
+        );
+    });
+
+    it('persists externalCommentId when the adapter returns one', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockPrismaMessage.create.mockResolvedValue({ id: 'msg-new' });
+        mockHasAdapter.mockReturnValue(true);
+        mockPostResponse.mockResolvedValue('999888');
+
+        await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+        expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+            where: { id: 'msg-new' },
+            data: { externalCommentId: '999888' },
         });
     });
 

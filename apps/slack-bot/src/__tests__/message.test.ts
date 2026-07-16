@@ -82,6 +82,9 @@ describe('registerMessageHandler', () => {
 
         // Default: not a team member (InboundHandler checks via prisma)
         vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+        vi.mocked(prisma.user.create).mockResolvedValue({
+            id: 'user-1',
+        } as ReturnType<typeof prisma.user.create> extends Promise<infer T> ? T : never);
     });
 
     it('registers a message event handler', () => {

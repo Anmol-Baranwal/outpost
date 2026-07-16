@@ -45,6 +45,39 @@ Copy `.env.example` and fill in all values. Key groups:
 - **GitHub App**: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_INSTALLATION_ID`, `GITHUB_WEBHOOK_SECRET`
 - **Monitoring**: `SENTRY_DSN` (optional), `LOG_LEVEL`
 
+## GitHub App Setup
+
+Outpost's GitHub integration (`apps/github-app`) responds to issues and discussions the same way the Discord bot responds in threads. Creating the App is a one-time setup per GitHub org/repo.
+
+1. **Create the App.** GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
+   - Webhook URL: `https://<your-github-app-deployment>/api/webhooks/github` — needs a public URL (the deployed `outpost-github-app` Railway service, or a tunnel like ngrok for local dev on port 3200).
+   - Webhook secret: generate a random string and save it — this becomes `GITHUB_WEBHOOK_SECRET`.
+   - Permissions: **Issues: Read & write**, **Discussions: Read & write**.
+   - Subscribe to events: **Issues**, **Issue comment**, **Discussions**.
+
+   GitHub has no webhook event for comment reactions, so 👍/👎 feedback is picked up by a 24-hour poll job instead (`GITHUB_REACTION_POLL`) — no extra event subscription is needed for that.
+
+2. **Generate credentials.** On the App's settings page, generate a private key (downloads a `.pem` file) — its full contents become `GITHUB_PRIVATE_KEY`. Note the **App ID** shown on the same page — that's `GITHUB_APP_ID`.
+
+3. **Install the App.** App settings → Install App → pick the target repo (scope to one repo rather than the whole org for testing). After installing, the URL bar shows an `installation_id` — that's `GITHUB_INSTALLATION_ID`.
+
+4. **Set environment variables.** Both `apps/github-app` (the webhook receiver) and the worker/web services (via `packages/outpost/shared`'s platform adapter registry) read:
+
+   ```
+   GITHUB_APP_ID=<app id>
+   GITHUB_PRIVATE_KEY=<full .pem contents>
+   GITHUB_INSTALLATION_ID=<installation id>
+   GITHUB_WEBHOOK_SECRET=<webhook secret>
+   ```
+
+   Optional: `GITHUB_TEAM_LOGINS` (comma-separated GitHub logins treated as internal team members, used by triage logic).
+
+5. **Deploy.** `outpost-github-app` is already defined as a Railway service (see the Quick Start section above) — point its Config file path at `apps/github-app/railway.toml`, leave Root Directory empty, add the env vars, deploy. Health check hits `GET /health`.
+
+6. **Verify.** Open an issue on the installed repo. The agent should reply with an AI-generated answer plus a "Was this helpful? 👍/👎" prompt. React to it, then either wait for the next 24h poll or trigger `GITHUB_REACTION_POLL` manually to confirm the reaction lands as `feedback` on the `Message` row.
+
+   Note: discussion-comment reactions aren't polled today — `GitHubAdapter.postDiscussionComment` returns a GraphQL node ID, not the numeric REST comment ID the reactions endpoint needs. Issue feedback works end-to-end; discussion feedback is a known follow-up.
+
 ## Docker Builds
 
 Each app has its own Dockerfile using the Turborepo pruning pattern for efficient builds:

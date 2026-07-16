@@ -34,6 +34,8 @@ export interface PrismaLike {
     user: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         findFirst: (args: any) => Promise<{ id: string; email: string | null } | null>;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        create: (args: any) => Promise<{ id: string }>;
     };
     teamMember: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,6 +54,20 @@ export type CreateJobFn = (
     type: string,
     payload: { ticketId: string; threadId?: string; source: string },
 ) => Promise<string>;
+
+/**
+ * Detect a Prisma unique-constraint violation (P2002) without importing the
+ * Prisma runtime here — inbound.ts stays decoupled behind PrismaLike, so we
+ * duck-type the error code.
+ */
+function isUniqueConstraintError(err: unknown): boolean {
+    return (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code?: unknown }).code === 'P2002'
+    );
+}
 
 /**
  * Map TicketSource to PlatformTarget for job payloads.
@@ -128,6 +144,15 @@ export class InboundHandler {
             sourceId = `${message.channelId}:${message.threadId}`;
         }
 
+        // Find-or-create the User row for the message sender so the ticket
+        // can be linked to them (needed for reporter-identity lookups like
+        // the GitHub reaction poll's ticket.user?.externalId check).
+        const userId = await this.findOrCreateUser(
+            message.platformUserId,
+            message.platformUsername,
+            message.source,
+        );
+
         // Create the ticket
         const ticket = await this.prisma.ticket.create({
             data: {
@@ -141,6 +166,7 @@ export class InboundHandler {
                 sourceId,
                 sourceUrl: message.sourceUrl ?? null,
                 channel: message.channelId ?? null,
+                userId,
             },
         });
 
@@ -288,6 +314,60 @@ export class InboundHandler {
             channel: ticket.channel,
             source: ticket.source as TicketSource,
         };
+    }
+
+    /**
+     * Find or create the User row for a platform sender, so the ticket
+     * created from their message can be linked via `ticket.userId`.
+     *
+     * Reuses the exact same lookup pattern `isTeamMember` uses ({ externalId,
+     * source }) so a real team-member User row created elsewhere (with a
+     * real email) is found and reused, never duplicated. If no User exists
+     * yet, creates one with a synthesized placeholder email — GitHub/Discord
+     * webhook payloads don't reliably include a real email for the sender,
+     * but `User.email` is a required unique column.
+     */
+    private async findOrCreateUser(
+        platformUserId: string,
+        platformUsername: string,
+        source: TicketSource,
+    ): Promise<string> {
+        const userSource = source as string;
+
+        const existing = await this.prisma.user.findFirst({
+            where: {
+                externalId: platformUserId,
+                source: userSource,
+            },
+        });
+
+        if (existing) return existing.id;
+
+        const placeholderEmail = `${source.toLowerCase()}-${platformUserId}@reporters.outpost.internal`;
+
+        try {
+            const created = await this.prisma.user.create({
+                data: {
+                    name: platformUsername,
+                    email: placeholderEmail,
+                    externalId: platformUserId,
+                    source: userSource,
+                },
+            });
+            return created.id;
+        } catch (err) {
+            // Concurrent-create race: another inbound message from the same
+            // sender created this User between our findFirst and create, and
+            // hit the unique email constraint first. Re-read and reuse it
+            // rather than throwing — dropping a customer's ticket is worse.
+            if (isUniqueConstraintError(err)) {
+                const raced = await this.prisma.user.findFirst({
+                    where: { externalId: platformUserId, source: userSource },
+                });
+                if (raced) return raced.id;
+            }
+            throw err;
+        }
     }
 
     /**

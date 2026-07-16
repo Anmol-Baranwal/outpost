@@ -16,6 +16,7 @@ export interface TicketMessage {
     content: string;
     type: MessageType;
     isAiGenerated: boolean;
+    confidenceLevel: 'HIGH' | 'MEDIUM' | 'LOW' | null;
     attachments: Array<{ name: string; url: string; size: string }> | null;
     createdAt: string;
 }

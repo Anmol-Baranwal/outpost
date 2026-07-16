@@ -139,13 +139,15 @@ export async function handleAiResponse(
         await context.reportProgress(70);
 
         // 5. Persist the AI-generated response as a Message record
-        await prisma.message.create({
+        const aiMessage = await prisma.message.create({
             data: {
                 ticketId: ticket.id,
                 content: pipelineResult.response,
                 type: 'BOT',
                 author: 'Outpost AI',
                 isAiGenerated: true,
+                confidenceScore: pipelineResult.confidenceScore,
+                confidenceLevel: pipelineResult.confidenceLevel,
             },
         });
 
@@ -199,7 +201,7 @@ export async function handleAiResponse(
 
             if (adapter) {
                 try {
-                    await adapter.postResponse(
+                    const externalCommentId = await adapter.postResponse(
                         {
                             id: ticket.id,
                             sourceId: ticket.sourceId,
@@ -208,6 +210,12 @@ export async function handleAiResponse(
                         },
                         pipelineResult.formatted,
                     );
+                    if (externalCommentId) {
+                        await prisma.message.update({
+                            where: { id: aiMessage.id },
+                            data: { externalCommentId },
+                        });
+                    }
                     console.log(
                         `[AI Response] Posted response to ${ticket.source} for ticket ${ticketId}`,
                     );

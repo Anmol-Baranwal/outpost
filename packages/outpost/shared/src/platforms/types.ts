@@ -110,17 +110,31 @@ export interface PlatformAdapter {
     /**
      * Post a formatted AI response back to the platform thread/issue/conversation.
      * The ticket carries sourceId and channel info needed to route the message.
+     *
+     * Returns the platform-specific ID of the posted message/comment when
+     * available (used to poll for feedback later), or undefined when the
+     * platform doesn't expose one / the adapter doesn't track it.
      */
     postResponse(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         response: FormattedResponse,
-    ): Promise<void>;
+    ): Promise<string | undefined>;
 
     /**
      * Post a system-level message (acknowledgments, status updates, errors).
      */
     postSystemMessage(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         message: string,
     ): Promise<void>;
 }
