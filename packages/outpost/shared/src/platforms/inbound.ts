@@ -56,6 +56,20 @@ export type CreateJobFn = (
 ) => Promise<string>;
 
 /**
+ * Detect a Prisma unique-constraint violation (P2002) without importing the
+ * Prisma runtime here — inbound.ts stays decoupled behind PrismaLike, so we
+ * duck-type the error code.
+ */
+function isUniqueConstraintError(err: unknown): boolean {
+    return (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code?: unknown }).code === 'P2002'
+    );
+}
+
+/**
  * Map TicketSource to PlatformTarget for job payloads.
  */
 function toPlatformTarget(source: TicketSource): string {
@@ -331,16 +345,29 @@ export class InboundHandler {
 
         const placeholderEmail = `${source.toLowerCase()}-${platformUserId}@reporters.outpost.internal`;
 
-        const created = await this.prisma.user.create({
-            data: {
-                name: platformUsername,
-                email: placeholderEmail,
-                externalId: platformUserId,
-                source: userSource,
-            },
-        });
-
-        return created.id;
+        try {
+            const created = await this.prisma.user.create({
+                data: {
+                    name: platformUsername,
+                    email: placeholderEmail,
+                    externalId: platformUserId,
+                    source: userSource,
+                },
+            });
+            return created.id;
+        } catch (err) {
+            // Concurrent-create race: another inbound message from the same
+            // sender created this User between our findFirst and create, and
+            // hit the unique email constraint first. Re-read and reuse it
+            // rather than throwing — dropping a customer's ticket is worse.
+            if (isUniqueConstraintError(err)) {
+                const raced = await this.prisma.user.findFirst({
+                    where: { externalId: platformUserId, source: userSource },
+                });
+                if (raced) return raced.id;
+            }
+            throw err;
+        }
     }
 
     /**

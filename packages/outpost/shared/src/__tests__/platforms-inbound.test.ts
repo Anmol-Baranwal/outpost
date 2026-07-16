@@ -230,6 +230,42 @@ describe('InboundHandler', () => {
             const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
             expect(ticketData.userId).toBe('user-new-1');
         });
+
+        it('recovers from a concurrent-create race: re-reads the User when create hits a unique violation', async () => {
+            // Two first-ever messages from the same sender arrive at once: both
+            // findFirst -> null, both attempt create with the same synthesized
+            // (unique) email. The loser gets P2002; it must re-read and reuse the
+            // winner's row, not throw and drop the ticket.
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>)
+                .mockReset()
+                // 1st: initial lookup -> null. 2nd: recovery re-read after the
+                // race -> the winner's row. (A later call from isTeamMember
+                // falls through to null.)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({ id: 'user-raced-1', email: 'discord-user-123@reporters.outpost.internal' })
+                .mockResolvedValue(null);
+            (prisma.user.create as ReturnType<typeof vi.fn>)
+                .mockReset()
+                .mockRejectedValueOnce({ code: 'P2002' });
+
+            const msg = makeInboundMessage();
+            const result = await handler.handle(msg);
+
+            expect(result.isNewTicket).toBe(true);
+            expect(prisma.user.create).toHaveBeenCalledTimes(1);
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            expect(ticketData.userId).toBe('user-raced-1');
+        });
+
+        it('rethrows a non-unique-violation create error', async () => {
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+            (prisma.user.create as ReturnType<typeof vi.fn>)
+                .mockReset()
+                .mockRejectedValueOnce({ code: 'P1001', message: 'db unreachable' });
+
+            await expect(handler.handle(makeInboundMessage())).rejects.toMatchObject({ code: 'P1001' });
+        });
     });
 
     // ── Reply to existing ticket ─────────────────────────────────────
