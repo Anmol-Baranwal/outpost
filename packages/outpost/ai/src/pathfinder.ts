@@ -4,34 +4,41 @@ import { config } from './config.js';
 /**
  * Pathfinder MCP client for CopilotKit documentation retrieval.
  *
- * Connects to the Pathfinder MCP server at mcp.copilotkit.ai using SSE transport.
- * Manages sessions with 30-min TTL, reconnects on failure, and falls back to
- * plain-text docs search when MCP is unavailable.
+ * Uses the MCP **Streamable HTTP** transport: a single `POST {mcpUrl}/mcp`
+ * endpoint. The session id is returned in the `Mcp-Session-Id` response header
+ * on `initialize` and echoed on every subsequent request.
+ *
+ * NOTE: the server also exposes a legacy SSE endpoint (`GET {mcpUrl}/sse`), but
+ * that is a long-lived `text/event-stream` — reading it to completion blocks
+ * until the request timeout aborts ("This operation was aborted"), so it is NOT
+ * used. Streamable-HTTP replies are finite and close immediately, so reading the
+ * body never hangs.
+ *
+ * Falls back to a plain-text docs search when MCP is unavailable.
  */
 export class PathfinderClient {
-    private mcpUrl: string;
+    private readonly endpoint: string;
     private sessionId: string | null = null;
-    private sessionCreatedAt: number = 0;
-    private connected: boolean = false;
+    private sessionCreatedAt = 0;
     private connecting: Promise<void> | null = null;
+    private nextId = 1;
 
     constructor(mcpUrl?: string) {
-        this.mcpUrl = mcpUrl ?? config.pathfinderMcpUrl;
+        const base = mcpUrl ?? config.pathfinderMcpUrl;
+        this.endpoint = `${base}/mcp`;
     }
 
     /**
-     * Initialize the MCP session. Reuses existing session if still valid.
+     * Initialize the MCP session. Reuses an existing session while it is valid.
      */
     async connect(): Promise<void> {
-        if (this.connected && !this.isSessionExpired()) {
+        if (this.sessionId && !this.isSessionExpired()) {
             return;
         }
-
-        // Deduplicate concurrent connect calls
+        // Deduplicate concurrent connect calls.
         if (this.connecting) {
             return this.connecting;
         }
-
         this.connecting = this.doConnect();
         try {
             await this.connecting;
@@ -41,44 +48,36 @@ export class PathfinderClient {
     }
 
     private async doConnect(): Promise<void> {
-        const controller = new AbortController();
-        const timeout = setTimeout(
-            () => controller.abort(),
-            config.pathfinder.requestTimeoutMs,
-        );
+        const { body, sessionId } = await this.post({
+            jsonrpc: '2.0',
+            id: this.nextId++,
+            method: 'initialize',
+            params: {
+                protocolVersion: '2024-11-05',
+                capabilities: {},
+                clientInfo: { name: 'outpost', version: '1.0.0' },
+            },
+        });
 
+        const parsed = this.parseJsonRpc(body);
+        if (parsed.error) {
+            this.reset();
+            throw new Error(`MCP connection failed: ${parsed.error.message}`);
+        }
+        if (!sessionId) {
+            this.reset();
+            throw new Error('MCP connection failed: server did not return a session id');
+        }
+
+        this.sessionId = sessionId;
+        this.sessionCreatedAt = Date.now();
+
+        // Best-effort "initialized" notification — the session is already usable,
+        // so a failure here is non-fatal.
         try {
-            // Initialize MCP session via SSE endpoint
-            const response = await fetch(`${this.mcpUrl}/sse`, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'text/event-stream',
-                },
-                signal: controller.signal,
-            });
-
-            if (!response.ok) {
-                throw new Error(`MCP connection failed: ${response.status} ${response.statusText}`);
-            }
-
-            // Parse the session endpoint from the SSE stream
-            const text = await response.text();
-            const endpointMatch = text.match(/endpoint[=:]\s*([^\s\n]+)/);
-            if (endpointMatch) {
-                this.sessionId = endpointMatch[1];
-            } else {
-                // Use the base URL as message endpoint
-                this.sessionId = `${this.mcpUrl}/message`;
-            }
-
-            this.sessionCreatedAt = Date.now();
-            this.connected = true;
-        } catch (error) {
-            this.connected = false;
-            this.sessionId = null;
-            throw error;
-        } finally {
-            clearTimeout(timeout);
+            await this.post({ jsonrpc: '2.0', method: 'notifications/initialized' });
+        } catch {
+            // ignore
         }
     }
 
@@ -88,7 +87,77 @@ export class PathfinderClient {
     private isSessionExpired(): boolean {
         if (!this.sessionId) return true;
         const elapsed = Date.now() - this.sessionCreatedAt;
-        return elapsed >= (config.pathfinder.sessionTtlMs - config.pathfinder.refreshBeforeExpiryMs);
+        return elapsed >= config.pathfinder.sessionTtlMs - config.pathfinder.refreshBeforeExpiryMs;
+    }
+
+    /**
+     * POST a JSON-RPC message to the Streamable-HTTP endpoint with a hard
+     * timeout. Returns the raw body text and the `Mcp-Session-Id` response
+     * header (present on `initialize`).
+     */
+    private async post(
+        message: Record<string, unknown>,
+    ): Promise<{ body: string; sessionId: string | null }> {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), config.pathfinder.requestTimeoutMs);
+
+        try {
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+                Accept: 'application/json, text/event-stream',
+            };
+            if (this.sessionId) {
+                headers['Mcp-Session-Id'] = this.sessionId;
+            }
+
+            const response = await fetch(this.endpoint, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(message),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                throw new Error(`MCP request failed: ${response.status} ${response.statusText}`);
+            }
+
+            // Safe to read to completion: Streamable-HTTP replies are finite.
+            const body = await response.text();
+            return { body, sessionId: response.headers.get('mcp-session-id') };
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                throw new Error(
+                    `MCP request timed out after ${config.pathfinder.requestTimeoutMs}ms`,
+                );
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    /**
+     * Parse a JSON-RPC reply body. Streamable HTTP may return either a plain
+     * JSON object or an SSE-framed reply (`data: {...}`) that closes immediately;
+     * handle both.
+     */
+    private parseJsonRpc(body: string): { result?: unknown; error?: { message: string } } {
+        const trimmed = body.trim();
+        if (!trimmed) return {};
+
+        if (!trimmed.startsWith('{')) {
+            const data = trimmed
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.startsWith('data:'))
+                .map((line) => line.slice('data:'.length).trim())
+                .join('');
+            if (data) {
+                return JSON.parse(data) as { result?: unknown; error?: { message: string } };
+            }
+        }
+
+        return JSON.parse(trimmed) as { result?: unknown; error?: { message: string } };
     }
 
     /**
@@ -97,62 +166,46 @@ export class PathfinderClient {
     private async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
         await this.connect();
 
-        const controller = new AbortController();
-        const timeout = setTimeout(
-            () => controller.abort(),
-            config.pathfinder.requestTimeoutMs,
-        );
-
+        let body: string;
         try {
-            const endpoint = this.sessionId ?? `${this.mcpUrl}/message`;
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
+            ({ body } = await this.post({
+                jsonrpc: '2.0',
+                id: this.nextId++,
+                method: 'tools/call',
+                params: {
+                    name: toolName,
+                    arguments: args,
                 },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: Date.now(),
-                    method: 'tools/call',
-                    params: {
-                        name: toolName,
-                        arguments: args,
-                    },
-                }),
-                signal: controller.signal,
-            });
-
-            if (!response.ok) {
-                throw new Error(`MCP tool call failed: ${response.status} ${response.statusText}`);
-            }
-
-            const result = await response.json() as {
-                result?: { content?: Array<{ text?: string }> };
-                error?: { message: string };
-            };
-
-            if (result.error) {
-                throw new Error(`MCP error: ${result.error.message}`);
-            }
-
-            return result.result;
+            }));
         } catch (error) {
-            // On connection failure, mark session as disconnected so next call reconnects
-            if (error instanceof DOMException && error.name === 'AbortError') {
-                this.connected = false;
-                this.sessionId = null;
-                throw new Error(`MCP tool call timed out after ${config.pathfinder.requestTimeoutMs}ms`);
-            }
-            this.connected = false;
-            this.sessionId = null;
+            // Force a fresh session on the next call after any transport failure.
+            this.reset();
             throw error;
-        } finally {
-            clearTimeout(timeout);
         }
+
+        const parsed = this.parseJsonRpc(body);
+        if (parsed.error) {
+            this.reset();
+            throw new Error(`MCP error: ${parsed.error.message}`);
+        }
+        return parsed.result;
     }
 
     /**
-     * Parse MCP tool result into SearchResult array.
+     * Parse an MCP tool result into a SearchResult array.
+     *
+     * The current `copilotkit-docs-mcp` server returns content as text blocks:
+     *
+     *   SNIPPET 1
+     *   TITLE: ...
+     *   SOURCE: ...
+     *   CONTENT:
+     *   ...
+     *   ---
+     *   SNIPPET 2
+     *   ...
+     *
+     * An older format returned a JSON array; both are supported.
      */
     private parseSearchResults(result: unknown): SearchResult[] {
         const typed = result as { content?: Array<{ text?: string }> } | undefined;
@@ -163,6 +216,9 @@ export class PathfinderClient {
             .map((c) => c.text)
             .join('\n');
 
+        if (!text.trim()) return [];
+
+        // Legacy JSON-array format.
         try {
             const parsed = JSON.parse(text);
             if (Array.isArray(parsed)) {
@@ -170,16 +226,47 @@ export class PathfinderClient {
                     title: String(item.title ?? item.name ?? 'Untitled'),
                     content: String(item.content ?? item.snippet ?? item.text ?? ''),
                     score: Number(item.similarity ?? item.score ?? item.relevance ?? 0),
-                    sourceUrl: item.sourceUrl ? String(item.sourceUrl) : (item.url ? String(item.url) : undefined),
+                    sourceUrl: item.sourceUrl
+                        ? String(item.sourceUrl)
+                        : item.url
+                          ? String(item.url)
+                          : undefined,
                     category: item.category ? String(item.category) : undefined,
                 }));
             }
-        } catch (error) {
-            console.warn(`[Pathfinder] Failed to parse search results JSON:`, error);
-            return [];
+        } catch {
+            // Not JSON — fall through to SNIPPET parsing.
         }
 
-        return [];
+        return this.parseSnippets(text);
+    }
+
+    /**
+     * Parse the SNIPPET/TITLE/SOURCE/CONTENT text format. The MCP text format
+     * carries no numeric relevance score, so a descending rank score is
+     * synthesized (results are already server-filtered by min_score) to give
+     * the confidence heuristic a usable signal.
+     */
+    private parseSnippets(text: string): SearchResult[] {
+        const blocks = text
+            .split(/\n-{3,}\n/) // "\n---\n" separators between snippets
+            .map((b) => b.trim())
+            .filter((b) => /TITLE:/i.test(b));
+
+        return blocks.map((block, i) => {
+            const title = block.match(/TITLE:\s*(.+)/i)?.[1]?.trim() ?? 'Documentation';
+            const source = block.match(/SOURCE:\s*(.+)/i)?.[1]?.trim();
+            const contentMatch = block.match(/CONTENT:\s*([\s\S]*)$/i);
+            const content = (contentMatch ? contentMatch[1] : block).trim();
+
+            return {
+                title,
+                content,
+                score: Math.max(0.5, 1 - i * 0.05),
+                sourceUrl: source || undefined,
+                category: undefined,
+            };
+        });
     }
 
     /**
@@ -194,7 +281,9 @@ export class PathfinderClient {
             });
             return this.parseSearchResults(result);
         } catch (error) {
-            console.error(`[Pathfinder] searchDocs failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(
+                `[Pathfinder] searchDocs failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
             return this.fallbackSearch(query.query);
         }
     }
@@ -207,7 +296,9 @@ export class PathfinderClient {
             const result = await this.callTool('explore-docs', { command });
             return this.parseSearchResults(result);
         } catch (error) {
-            console.error(`[Pathfinder] exploreDocs failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(
+                `[Pathfinder] exploreDocs failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
             return [];
         }
     }
@@ -222,7 +313,9 @@ export class PathfinderClient {
             });
             return this.parseSearchResults(result);
         } catch (error) {
-            console.error(`[Pathfinder] queryKnowledgeBase failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(
+                `[Pathfinder] queryKnowledgeBase failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
             return [];
         }
     }
@@ -244,14 +337,18 @@ export class PathfinderClient {
             clearTimeout(timeout);
 
             if (!response.ok) {
-                console.error(`[Pathfinder] Fallback docs fetch returned HTTP ${response.status} ${response.statusText}`);
+                console.error(
+                    `[Pathfinder] Fallback docs fetch returned HTTP ${response.status} ${response.statusText}`,
+                );
                 return [];
             }
 
             const text = await response.text();
             return this.textSearch(text, query);
         } catch (error) {
-            console.error(`[Pathfinder] Fallback search failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(
+                `[Pathfinder] Fallback search failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
             return [];
         }
     }
@@ -290,12 +387,15 @@ export class PathfinderClient {
             .slice(0, config.pathfinder.defaultLimit);
     }
 
+    private reset(): void {
+        this.sessionId = null;
+        this.sessionCreatedAt = 0;
+    }
+
     /**
      * Disconnect and clean up the session.
      */
     disconnect(): void {
-        this.connected = false;
-        this.sessionId = null;
-        this.sessionCreatedAt = 0;
+        this.reset();
     }
 }
