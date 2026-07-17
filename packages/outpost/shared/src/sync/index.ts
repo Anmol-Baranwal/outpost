@@ -8,12 +8,22 @@ export {
     loadStatusMap,
 } from './status-map.js';
 export type { StatusMappingConfig, StatusMapDb } from './status-map.js';
-export { PriorityMap, createLinearPriorityMap, createGitHubPriorityMap } from './priority-map.js';
-export type { PriorityMappingConfig } from './priority-map.js';
+export {
+    PriorityMap,
+    createLinearPriorityMap,
+    createGitHubPriorityMap,
+    loadPriorityMap,
+} from './priority-map.js';
+export type { PriorityMappingConfig, PriorityMapDb } from './priority-map.js';
 export { IdentityMapper } from './identity-map.js';
 export type { IdentityMapperDeps } from './identity-map.js';
-export { LabelMapper, createGitHubLabelMapper, createLinearLabelMapper } from './label-map.js';
-export type { LabelPrefixRule, LabelMapperConfig } from './label-map.js';
+export {
+    LabelMapper,
+    createGitHubLabelMapper,
+    createLinearLabelMapper,
+    loadLabelMapper,
+} from './label-map.js';
+export type { LabelPrefixRule, LabelMapperConfig, LabelMapperDb } from './label-map.js';
 export { LinearAdapter, GitHubAdapter } from './adapters/index.js';
 export type {
     LinearAdapterConfig,

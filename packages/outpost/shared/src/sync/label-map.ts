@@ -133,3 +133,65 @@ export function createLinearLabelMapper(): LabelMapper {
         ],
     });
 }
+
+// ─── Persisted Config Loading ─────────────────────────────────────────────
+
+/** Must match the key used by apps/web/src/app/api/sync/mappings/route.ts. */
+const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
+
+/** Minimal Prisma subset needed to load a persisted mapping config. */
+export interface LabelMapperDb {
+    systemConfig: {
+        findUnique(args: {
+            where: { key: string };
+        }): Promise<{ key: string; value: string } | null>;
+    };
+}
+
+interface PersistedLabelRuleEntry {
+    externalPrefix: string;
+    outpostPrefix: string;
+}
+
+/**
+ * Build a LabelMapper for `plugin`, preferring the persisted SystemConfig
+ * row (written by the /api/sync/mappings dashboard) over the hardcoded
+ * factory defaults. Falls back to the hardcoded default whenever the
+ * config row is missing, malformed, or has no rules for this plugin.
+ *
+ * Mirrors loadStatusMap in status-map.ts. Note the persisted labelRules
+ * carry only prefix rules (externalPrefix/outpostPrefix); the `exclude`
+ * list is not dashboard-editable, so a persisted config produces a mapper
+ * with no exclusions.
+ */
+export async function loadLabelMapper(
+    plugin: 'linear' | 'github',
+    db: LabelMapperDb,
+): Promise<LabelMapper> {
+    const fallback = plugin === 'linear' ? createLinearLabelMapper() : createGitHubLabelMapper();
+
+    const row = await db.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
+    if (!row) return fallback;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(row.value);
+    } catch {
+        return fallback;
+    }
+
+    const entries = (parsed as { labelRules?: Record<string, PersistedLabelRuleEntry[]> })
+        ?.labelRules?.[plugin];
+    if (!Array.isArray(entries) || entries.length === 0) return fallback;
+
+    const rules: LabelPrefixRule[] = [];
+    for (const entry of entries) {
+        if (
+            typeof entry?.externalPrefix === 'string' &&
+            typeof entry?.outpostPrefix === 'string'
+        ) {
+            rules.push({ externalPrefix: entry.externalPrefix, outpostPrefix: entry.outpostPrefix });
+        }
+    }
+    return rules.length > 0 ? new LabelMapper({ rules }) : fallback;
+}
