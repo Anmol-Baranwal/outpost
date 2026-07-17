@@ -319,6 +319,28 @@ describe('GitHubPlatformAdapter', () => {
             const callArgs = vi.mocked(octokit.issues.createComment).mock.calls[0][0];
             expect(callArgs.body).not.toContain('Was this helpful?');
         });
+
+        it('posts to discussions via GraphQL for GITHUB_DISCUSSION tickets', async () => {
+            const ticket = makeTicket({
+                source: TicketSource.GITHUB_DISCUSSION,
+                sourceId: 'CopilotKit/CopilotKit#7',
+                discussionNodeId: 'D_kwDOAbc',
+            });
+
+            vi.mocked(octokit.graphql).mockResolvedValueOnce({
+                addDiscussionComment: { comment: { id: 'sys-comment' } },
+            });
+
+            await adapter.postSystemMessage(ticket, 'Ticket created');
+
+            expect(octokit.graphql).toHaveBeenCalledWith(
+                expect.stringContaining('addDiscussionComment'),
+                expect.objectContaining({
+                    discussionId: 'D_kwDOAbc',
+                    body: 'Ticket created',
+                }),
+            );
+        });
     });
 
     // ── App-credential Octokit construction (no injected instance) ────
@@ -381,28 +403,6 @@ describe('GitHubPlatformAdapter', () => {
             const bare = new GitHubPlatformAdapter({});
             await expect(bare.postResponse(makeTicket(), { text: 'x' })).rejects.toThrow(
                 /incomplete App credentials/,
-            );
-        });
-
-        it('posts to discussions via GraphQL for GITHUB_DISCUSSION tickets', async () => {
-            const ticket = makeTicket({
-                source: TicketSource.GITHUB_DISCUSSION,
-                sourceId: 'CopilotKit/CopilotKit#7',
-                discussionNodeId: 'D_kwDOAbc',
-            });
-
-            vi.mocked(octokit.graphql).mockResolvedValueOnce({
-                addDiscussionComment: { comment: { id: 'sys-comment' } },
-            });
-
-            await adapter.postSystemMessage(ticket, 'Ticket created');
-
-            expect(octokit.graphql).toHaveBeenCalledWith(
-                expect.stringContaining('addDiscussionComment'),
-                expect.objectContaining({
-                    discussionId: 'D_kwDOAbc',
-                    body: 'Ticket created',
-                }),
             );
         });
     });
