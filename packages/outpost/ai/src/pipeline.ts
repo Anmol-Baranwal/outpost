@@ -118,8 +118,8 @@ export class AIPipeline {
         const needsDisclaimer = finalConfidence !== ConfidenceLevel.HIGH;
         const disclaimerText =
             finalConfidence === ConfidenceLevel.LOW
-                ? 'This is an AI-generated response with low confidence. A human agent has been notified and will follow up.'
-                : 'This is an AI-generated response. A human agent will verify shortly.';
+                ? "This is an AI-generated response and may be incomplete. We've escalated this to our engineering team — someone will follow up in this thread shortly."
+                : 'This is an AI-generated response. A member of our team will review and follow up if needed.';
 
         const formatted = this.formatter.format(generatedResponse.text, options.source, {
             addDisclaimer: needsDisclaimer,

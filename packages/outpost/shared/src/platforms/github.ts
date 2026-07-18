@@ -10,6 +10,8 @@
  *   - Routing between REST (issues) and GraphQL (discussions)
  */
 
+import { Octokit } from '@octokit/rest';
+import { createAppAuth } from '@octokit/auth-app';
 import { TicketSource } from '../types.js';
 import type {
     PlatformAdapter,
@@ -67,17 +69,28 @@ export class GitHubAdapter implements PlatformAdapter {
     }
 
     private getOctokit(): GitHubOctokitLike {
-        if (!this.octokit) {
-            const hasAppId = !!this.config.appId;
-            const hasKey = !!this.config.privateKey;
-            const hasInstall = !!this.config.installationId;
-            throw new Error(
-                `[GitHubAdapter] No Octokit instance available. ` +
-                    `Credentials present: appId=${hasAppId}, privateKey=${hasKey}, installationId=${hasInstall}. ` +
-                    `To use App credentials, install @octokit/auth-app and pass an authenticated Octokit instance.`,
-            );
+        if (this.octokit) {
+            return this.octokit;
         }
-        return this.octokit;
+
+        // No instance injected — build an App-authenticated Octokit from the
+        // configured credentials. This is the path the shared registry uses
+        // (e.g. the worker posting AI responses back to GitHub); apps/github-app
+        // injects its own Octokit and never reaches here.
+        const { appId, privateKey, installationId } = this.config;
+        if (appId && privateKey && installationId) {
+            this.octokit = new Octokit({
+                authStrategy: createAppAuth,
+                auth: { appId, privateKey, installationId },
+            }) as unknown as GitHubOctokitLike;
+            return this.octokit;
+        }
+
+        throw new Error(
+            `[GitHubAdapter] No Octokit instance available and incomplete App credentials. ` +
+                `Present: appId=${!!appId}, privateKey=${!!privateKey}, installationId=${!!installationId}. ` +
+                `Provide an Octokit instance or all of GITHUB_APP_ID / GITHUB_PRIVATE_KEY / GITHUB_INSTALLATION_ID.`,
+        );
     }
 
     // ── Inbound Parsing ──────────────────────────────────────────────
