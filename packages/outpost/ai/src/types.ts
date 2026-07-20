@@ -69,6 +69,12 @@ export interface PipelineContext {
     ticketId?: string;
     /** The account domain for targeted search */
     accountDomain?: string;
+    /**
+     * The channel the question was asked in. Used so the generated response
+     * never redirects the user to the channel they're already using
+     * (e.g. "join the Discord" to someone already in Discord).
+     */
+    source?: PlatformTarget;
 }
 
 export interface PathfinderQuery {

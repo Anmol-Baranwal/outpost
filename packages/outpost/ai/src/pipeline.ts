@@ -73,6 +73,7 @@ export class AIPipeline {
         // Step 2: Generate response
         const pipelineContext: PipelineContext = {
             question,
+            source: options.source,
         };
 
         const generatedResponse = await this.generator.generate(
@@ -181,6 +182,7 @@ export class AIPipeline {
 
         const pipelineContext: PipelineContext = {
             question,
+            source: options.source,
         };
 
         yield* this.generator.generateStream(
