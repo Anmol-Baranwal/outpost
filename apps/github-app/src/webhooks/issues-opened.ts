@@ -4,6 +4,8 @@ import { createJob } from '@copilotkit/outpost/queue';
 import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { getOctokit } from '../lib/github-client.js';
+import { isRepoAllowed } from '../lib/repo-allowlist.js';
+import { config } from '../config.js';
 
 export async function handleIssueOpened(
     event: EmitterWebhookEvent<'issues.opened'>,
@@ -14,6 +16,13 @@ export async function handleIssueOpened(
         `[GitHub App] Issue opened: ${repository.full_name}#${issue.number} ` +
         `"${issue.title}" by ${sender.login}`,
     );
+
+    if (!isRepoAllowed(repository.full_name, config.allowedRepos)) {
+        console.log(
+            `[GitHub App] Ignoring issue on non-allowlisted repo ${repository.full_name}`,
+        );
+        return;
+    }
 
     try {
         const adapter = new GitHubPlatformAdapter({ octokit: getOctokit() });

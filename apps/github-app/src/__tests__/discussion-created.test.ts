@@ -58,6 +58,7 @@ vi.mock('../config.js', () => ({
         webhookSecret: 'test-secret',
         port: 3200,
         teamLogins: [],
+        allowedRepos: ['CopilotKit/CopilotKit'],
     },
 }));
 
@@ -183,5 +184,13 @@ describe('handleDiscussionCreated', () => {
         // Should still use InboundHandler (ticket creation happens there)
         expect(InboundHandler).toHaveBeenCalled();
         expect(mockHandle).toHaveBeenCalled();
+    });
+
+    it('ignores discussions on non-allowlisted repos (e.g. CopilotKit/outpost)', async () => {
+        const event = makeEvent({ repository: { full_name: 'CopilotKit/outpost' } });
+        await handleDiscussionCreated(event);
+
+        expect(mockHandle).not.toHaveBeenCalled();
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 });
