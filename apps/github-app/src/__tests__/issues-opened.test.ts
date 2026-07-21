@@ -59,6 +59,7 @@ vi.mock('../config.js', () => ({
         webhookSecret: 'test-secret',
         port: 3200,
         teamLogins: ['teambot'],
+        allowedRepos: ['CopilotKit/CopilotKit'],
     },
 }));
 
@@ -162,5 +163,15 @@ describe('handleIssueOpened', () => {
         // Should not create external link or call InboundHandler
         expect(prisma.ticketExternalLink.create).not.toHaveBeenCalled();
         expect(mockHandle).not.toHaveBeenCalled();
+    });
+
+    it('ignores issues on non-allowlisted repos (e.g. CopilotKit/outpost)', async () => {
+        const event = makeEvent({ repository: { full_name: 'CopilotKit/outpost' } });
+        await handleIssueOpened(event);
+
+        // No ticket created, no acknowledgment posted
+        expect(mockHandle).not.toHaveBeenCalled();
+        expect(prisma.ticketExternalLink.create).not.toHaveBeenCalled();
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 });

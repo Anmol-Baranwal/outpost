@@ -4,6 +4,8 @@ import { createJob } from '@copilotkit/outpost/queue';
 import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import { getOctokit } from '../lib/github-client.js';
 import { findTicketBySourceId, isTeamMember } from '../lib/tickets.js';
+import { isRepoAllowed } from '../lib/repo-allowlist.js';
+import { config } from '../config.js';
 
 export async function handleIssueComment(
     event: EmitterWebhookEvent<'issue_comment.created'>,
@@ -14,6 +16,13 @@ export async function handleIssueComment(
         `[GitHub App] Comment on ${repository.full_name}#${issue.number} ` +
         `by ${sender.login}: ${(comment.body ?? '').slice(0, 100)}`,
     );
+
+    if (!isRepoAllowed(repository.full_name, config.allowedRepos)) {
+        console.log(
+            `[GitHub App] Ignoring comment on non-allowlisted repo ${repository.full_name}`,
+        );
+        return;
+    }
 
     // Skip comments from bots
     if (sender.type === 'Bot') return;

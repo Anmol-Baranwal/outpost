@@ -4,6 +4,8 @@ import { createJob } from '@copilotkit/outpost/queue';
 import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { getOctokit } from '../lib/github-client.js';
+import { isRepoAllowed } from '../lib/repo-allowlist.js';
+import { config } from '../config.js';
 
 export async function handleDiscussionCreated(
     event: EmitterWebhookEvent<'discussion.created'>,
@@ -14,6 +16,13 @@ export async function handleDiscussionCreated(
         `[GitHub App] Discussion created: ${repository.full_name} ` +
         `"${discussion.title}" by ${sender.login}`,
     );
+
+    if (!isRepoAllowed(repository.full_name, config.allowedRepos)) {
+        console.log(
+            `[GitHub App] Ignoring discussion on non-allowlisted repo ${repository.full_name}`,
+        );
+        return;
+    }
 
     try {
         const adapter = new GitHubPlatformAdapter({ octokit: getOctokit() });
