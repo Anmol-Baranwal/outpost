@@ -277,3 +277,48 @@ describe('AIPipeline', () => {
         });
     });
 });
+
+describe('AIPipeline confidence calibration', () => {
+    let pipeline: AIPipeline;
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        pipeline = createPipeline();
+        mockSearchDocs.mockResolvedValue(sampleSearchResults);
+        mockGenerate.mockResolvedValue(sampleGeneratedResponse); // generator score 0.85
+        mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.6, level: ConfidenceLevel.MEDIUM });
+        mockFormat.mockReturnValue({ text: 'Formatted response', truncated: false });
+    });
+
+    it('leaves the score unchanged when calibration is omitted (regression guard)', async () => {
+        const result = await pipeline.generateSupportResponse('q', { source: 'discord' });
+        // min(0.85, 0.6) = 0.6, no calibration
+        expect(result.confidenceScore).toBeCloseTo(0.6, 5);
+    });
+
+    it('adds a positive calibration factor to the combined score', async () => {
+        const result = await pipeline.generateSupportResponse('q', {
+            source: 'discord',
+            confidenceCalibration: 0.15,
+        });
+        expect(result.confidenceScore).toBeCloseTo(0.75, 5);
+    });
+
+    it('clamps the calibrated score to at most 1', async () => {
+        mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.95, level: ConfidenceLevel.HIGH });
+        const result = await pipeline.generateSupportResponse('q', {
+            source: 'discord',
+            confidenceCalibration: 0.2, // min(0.85, 0.95)=0.85 + 0.2 = 1.05 → clamp
+        });
+        expect(result.confidenceScore).toBe(1);
+    });
+
+    it('clamps the calibrated score to at least 0', async () => {
+        mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.05, level: ConfidenceLevel.LOW });
+        const result = await pipeline.generateSupportResponse('q', {
+            source: 'discord',
+            confidenceCalibration: -0.2, // min(0.85, 0.05)=0.05 - 0.2 = -0.15 → clamp
+        });
+        expect(result.confidenceScore).toBe(0);
+    });
+});

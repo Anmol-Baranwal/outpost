@@ -12,6 +12,13 @@ export type { TimestampedMessage, TrendOptions } from './sentiment-trend.js';
 export { config } from './config.js';
 export type { AIConfig } from './config.js';
 export {
+    computeCalibrationFactor,
+    FEEDBACK_MIN_SAMPLE,
+    FEEDBACK_MAX_ADJUSTMENT,
+    FEEDBACK_SENSITIVITY,
+} from './feedback-calibration.js';
+export type { FeedbackTally } from './feedback-calibration.js';
+export {
     FrontDoorCategory,
     FRONT_DOOR_CATEGORIES,
     isFrontDoorEligible,

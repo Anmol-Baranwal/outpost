@@ -101,10 +101,16 @@ export class AIPipeline {
         totalTokenUsage.inputTokens += confidenceAssessment.tokenUsage.inputTokens;
         totalTokenUsage.outputTokens += confidenceAssessment.tokenUsage.outputTokens;
 
-        // Use the more conservative confidence (lower of generator's and scorer's)
-        const finalConfidenceScore = Math.min(
+        // Use the more conservative confidence (lower of generator's and scorer's),
+        // then apply the aggregate-feedback calibration (default 0 = no change).
+        const combinedConfidenceScore = Math.min(
             generatedResponse.confidenceScore,
             confidenceAssessment.score,
+        );
+        const calibration = options.confidenceCalibration ?? 0;
+        const finalConfidenceScore = Math.max(
+            0,
+            Math.min(1, combinedConfidenceScore + calibration),
         );
         const finalConfidence = classifyConfidence(finalConfidenceScore);
 
@@ -112,8 +118,8 @@ export class AIPipeline {
         const needsDisclaimer = finalConfidence !== ConfidenceLevel.HIGH;
         const disclaimerText =
             finalConfidence === ConfidenceLevel.LOW
-                ? 'This is an AI-generated response with low confidence. A human agent has been notified and will follow up.'
-                : 'This is an AI-generated response. A human agent will verify shortly.';
+                ? "This is an AI-generated response and may be incomplete. We've escalated this to our engineering team — someone will follow up in this thread shortly."
+                : 'This is an AI-generated response. A member of our team will review and follow up if needed.';
 
         const formatted = this.formatter.format(generatedResponse.text, options.source, {
             addDisclaimer: needsDisclaimer,

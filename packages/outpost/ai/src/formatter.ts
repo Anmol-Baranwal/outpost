@@ -26,7 +26,7 @@ export class ResponseFormatter {
         options?: { addDisclaimer?: boolean; disclaimerText?: string },
     ): FormattedResponse {
         const disclaimer = options?.addDisclaimer
-            ? `> ⚠️ ${options.disclaimerText ?? 'This is an AI-generated response. A human agent will review shortly.'}\n\n`
+            ? `> ⚠️ ${options.disclaimerText ?? 'This is an AI-generated response. A member of our team will review it shortly.'}\n\n`
             : '';
 
         const fullText = disclaimer + text;
