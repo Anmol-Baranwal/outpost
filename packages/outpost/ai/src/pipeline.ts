@@ -7,6 +7,7 @@ import type {
     SearchResult,
 } from './types.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
+import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import { PathfinderClient } from './pathfinder.js';
 import { ResponseGenerator } from './generator.js';
 import { ConfidenceScorer } from './confidence.js';
@@ -114,12 +115,21 @@ export class AIPipeline {
         );
         const finalConfidence = classifyConfidence(finalConfidenceScore);
 
-        // Step 4: Format for target platform
+        // Step 4: Format for target platform.
+        //
+        // The "we've escalated this" copy must be gated on the SAME condition the
+        // worker uses to actually enqueue the ESCALATION job — score < ESCALATE
+        // (see queue handlers/ai-response.ts) — NOT on the LOW *level* (score <
+        // MEDIUM_THRESHOLD). Otherwise a score in [ESCALATE, MEDIUM_THRESHOLD)
+        // is LOW but never escalated, so the reporter is promised a follow-up
+        // that never comes.
         const needsDisclaimer = finalConfidence !== ConfidenceLevel.HIGH;
-        const disclaimerText =
-            finalConfidence === ConfidenceLevel.LOW
-                ? "This is an AI-generated response and may be incomplete. We've escalated this to our engineering team — someone will follow up in this thread shortly."
-                : 'This is an AI-generated response. A member of our team will review and follow up if needed.';
+        const willEscalate = finalConfidenceScore < AI_CONFIDENCE.ESCALATE;
+        const disclaimerText = willEscalate
+            ? "This is an AI-generated response and may be incomplete. We've escalated this to our engineering team — someone will follow up in this thread shortly."
+            : finalConfidence === ConfidenceLevel.LOW
+              ? 'This is an AI-generated response and may be incomplete. A member of our team will review and follow up if needed.'
+              : 'This is an AI-generated response. A member of our team will review and follow up if needed.';
 
         const formatted = this.formatter.format(generatedResponse.text, options.source, {
             addDisclaimer: needsDisclaimer,
