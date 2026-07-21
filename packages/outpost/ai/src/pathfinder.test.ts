@@ -76,6 +76,34 @@ describe('PathfinderClient', () => {
             expect(initCalls).toHaveLength(1);
         });
 
+        it('does not carry a stale session id when re-initializing after expiry', async () => {
+            let now = 1_000_000;
+            const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+            try {
+                mockConnect('sess-1');
+                await client.connect();
+
+                // Advance past the 25-min refresh window so the session is expired.
+                now += 26 * 60 * 1000;
+
+                mockConnect('sess-2');
+                mockFetch.mockResolvedValueOnce(
+                    mkResp({ body: jsonRpc({ content: [{ text: '[]' }] }, 2) }),
+                );
+                await client.searchDocs({ query: 'x' });
+
+                const initCalls = mockFetch.mock.calls.filter(([, init]) =>
+                    String(init.body).includes('"method":"initialize"'),
+                );
+                expect(initCalls).toHaveLength(2);
+                // The re-init must NOT echo the expired session id — `initialize`
+                // mints a fresh session, and a terminated id may be rejected (404).
+                expect(initCalls[1][1].headers['Mcp-Session-Id']).toBeUndefined();
+            } finally {
+                nowSpy.mockRestore();
+            }
+        });
+
         it('throws when the initialize request is not ok', async () => {
             mockFetch.mockResolvedValueOnce(
                 mkResp({ ok: false, status: 503, statusText: 'Service Unavailable' }),
@@ -130,6 +158,31 @@ describe('PathfinderClient', () => {
             const toolCall = mockFetch.mock.calls[2];
             expect(toolCall[1].headers['Mcp-Session-Id']).toBe('sess-123');
             expect(String(toolCall[1].body)).toContain('"name":"search-docs"');
+        });
+
+        it('preserves snippet content that contains an internal --- horizontal rule', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({
+                    body: jsonRpc(
+                        {
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: 'SNIPPET 1\nTITLE: Config\nSOURCE: https://docs.copilotkit.ai/config\nCONTENT:\nBefore the rule.\n\n---\n\nAfter the rule.',
+                                },
+                            ],
+                        },
+                        2,
+                    ),
+                }),
+            );
+
+            const results = await client.searchDocs({ query: 'config' });
+            expect(results).toHaveLength(1);
+            // Both halves survive — splitting on the "---" rule would drop the second.
+            expect(results[0].content).toContain('Before the rule.');
+            expect(results[0].content).toContain('After the rule.');
         });
 
         it('still parses the legacy JSON-array format', async () => {

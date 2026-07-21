@@ -48,6 +48,13 @@ export class PathfinderClient {
     }
 
     private async doConnect(): Promise<void> {
+        // Clear any stale session before (re-)initializing: `initialize` is what
+        // mints a session, so it must not carry an old `Mcp-Session-Id` (a server
+        // MAY answer a terminated id with 404). Resetting up front also means a
+        // throwing re-init leaves clean state instead of a dead session id that
+        // would fall back forever.
+        this.reset();
+
         const { body, sessionId } = await this.post({
             jsonrpc: '2.0',
             id: this.nextId++,
@@ -248,8 +255,12 @@ export class PathfinderClient {
      * the confidence heuristic a usable signal.
      */
     private parseSnippets(text: string): SearchResult[] {
+        // Split on the structural "SNIPPET <n>" marker rather than the "---"
+        // separator: doc content itself commonly contains a "---" horizontal
+        // rule, and splitting on that would truncate the snippet at the rule.
+        // The "SNIPPET <n>" header never appears inside content.
         const blocks = text
-            .split(/\n-{3,}\n/) // "\n---\n" separators between snippets
+            .split(/^SNIPPET\s+\d+\s*$/im)
             .map((b) => b.trim())
             .filter((b) => /TITLE:/i.test(b));
 
@@ -257,7 +268,10 @@ export class PathfinderClient {
             const title = block.match(/TITLE:\s*(.+)/i)?.[1]?.trim() ?? 'Documentation';
             const source = block.match(/SOURCE:\s*(.+)/i)?.[1]?.trim();
             const contentMatch = block.match(/CONTENT:\s*([\s\S]*)$/i);
-            const content = (contentMatch ? contentMatch[1] : block).trim();
+            const content = (contentMatch ? contentMatch[1] : block)
+                // Strip the trailing "---" separator that precedes the next snippet.
+                .replace(/\n\s*-{3,}\s*$/, '')
+                .trim();
 
             return {
                 title,
