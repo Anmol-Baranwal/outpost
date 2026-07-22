@@ -164,6 +164,36 @@ describe('AIPipeline', () => {
             );
         });
 
+        // Regression for #115: the "we've escalated this" copy must appear iff
+        // the worker would actually enqueue an ESCALATION job (score < ESCALATE
+        // = 0.4), not merely because the level is LOW (score < 0.5).
+        const disclaimerFor = async (score: number): Promise<string> => {
+            mockScore.mockResolvedValue({ ...sampleConfidence, score });
+            await pipeline.generateSupportResponse('q', { source: 'discord' });
+            const opts = mockFormat.mock.calls.at(-1)?.[2] as { disclaimerText: string };
+            return opts.disclaimerText;
+        };
+
+        it('promises escalation only when the score is below the ESCALATE gate (0.4)', async () => {
+            const text = await disclaimerFor(0.3);
+            expect(text).toContain("We've escalated this to our engineering team");
+        });
+
+        it('does NOT promise escalation for the LOW-but-not-escalated band [0.4, 0.5)', async () => {
+            const text = await disclaimerFor(0.45);
+            // Was the bug: 0.45 is LOW but never escalated, so no false promise.
+            expect(text).not.toContain('escalated');
+            expect(text).toContain('may be incomplete');
+            expect(text).toContain('will review and follow up');
+        });
+
+        it('uses the neutral MEDIUM copy for scores in [0.5, 0.8)', async () => {
+            const text = await disclaimerFor(0.6);
+            expect(text).not.toContain('escalated');
+            expect(text).not.toContain('may be incomplete');
+            expect(text).toContain('A member of our team will review');
+        });
+
         it('should handle Pathfinder failure gracefully', async () => {
             mockSearchDocs.mockRejectedValueOnce(new Error('MCP down'));
 
