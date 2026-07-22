@@ -276,6 +276,85 @@ describe('AIPipeline', () => {
         });
     });
 
+    describe('degraded confidence safety cap', () => {
+        it('caps a degraded HIGH score below HIGH so a disclaimer still shows (scorer threw)', async () => {
+            // LLM scorer unavailable → pipeline catch → heuristic fallback, which scores
+            // off Pathfinder's synthetic rank-scores and can look confidently HIGH.
+            mockScore.mockRejectedValueOnce(new Error('scorer down'));
+            mockHeuristicScore.mockReturnValue({
+                level: ConfidenceLevel.HIGH,
+                score: 0.93,
+                reasoning: 'heuristic over synthetic scores',
+                tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                degraded: false,
+            });
+
+            const result = await pipeline.generateSupportResponse('q', { source: 'discord' });
+
+            // Must NOT present as HIGH → disclaimer is kept.
+            expect(result.confidenceLevel).not.toBe(ConfidenceLevel.HIGH);
+            expect(result.confidenceScore).toBeLessThan(0.8);
+            expect(mockFormat).toHaveBeenCalledWith(
+                expect.any(String),
+                'discord',
+                expect.objectContaining({ addDisclaimer: true }),
+            );
+        });
+
+        it('caps when the scorer itself reports degraded=true with a HIGH score', async () => {
+            mockScore.mockResolvedValue({
+                level: ConfidenceLevel.HIGH,
+                score: 0.95,
+                reasoning: 'internal degraded (parse/fallback)',
+                tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                degraded: true,
+            });
+
+            const result = await pipeline.generateSupportResponse('q', { source: 'discord' });
+
+            expect(result.confidenceLevel).not.toBe(ConfidenceLevel.HIGH);
+            expect(result.confidenceScore).toBeLessThan(0.8);
+        });
+
+        it('leaves a degraded + genuinely-low score untouched (still escalates)', async () => {
+            // Scorer returns a low, degraded signal. The cap only lowers HIGH scores —
+            // it must NOT touch a low one, so the < ESCALATE (0.4) escalation still fires.
+            mockScore.mockResolvedValue({
+                level: ConfidenceLevel.LOW,
+                score: 0.2,
+                reasoning: 'degraded + low',
+                tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                degraded: true,
+            });
+
+            const result = await pipeline.generateSupportResponse('q', { source: 'discord' });
+
+            expect(result.confidenceScore).toBeCloseTo(0.2, 5);
+            expect(result.confidenceLevel).toBe(ConfidenceLevel.LOW);
+            expect(result.confidenceScore).toBeLessThan(0.4); // preserved → worker escalates
+        });
+
+        it('does NOT cap a healthy (non-degraded) HIGH score', async () => {
+            mockScore.mockResolvedValue({
+                level: ConfidenceLevel.HIGH,
+                score: 0.9,
+                reasoning: 'healthy',
+                tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                degraded: false,
+            });
+
+            const result = await pipeline.generateSupportResponse('q', { source: 'discord' });
+
+            expect(result.confidenceLevel).toBe(ConfidenceLevel.HIGH);
+            expect(result.confidenceScore).toBeGreaterThanOrEqual(0.8);
+            expect(mockFormat).toHaveBeenCalledWith(
+                expect.any(String),
+                'discord',
+                expect.objectContaining({ addDisclaimer: false }),
+            );
+        });
+    });
+
     describe('classifyTicket', () => {
         it('should classify a ticket', async () => {
             mockClassify.mockResolvedValue({
