@@ -16,6 +16,14 @@ import { ResponseFormatter } from './formatter.js';
 import { validateConfig } from './config.js';
 
 /**
+ * Highest confidence score that still classifies BELOW HIGH. A degraded
+ * confidence signal is clamped to this so it keeps its disclaimer and is never
+ * treated as authoritative. Tied to the classifyConfidence bands — keep it just
+ * under AI_CONFIDENCE.HIGH_THRESHOLD if those bands are ever re-tuned.
+ */
+const DEGRADED_CONFIDENCE_CAP = AI_CONFIDENCE.HIGH_THRESHOLD - 0.01;
+
+/**
  * Main entry point for the Outpost AI pipeline.
  *
  * Orchestrates: Pathfinder retrieval → Claude response generation → confidence
@@ -92,7 +100,10 @@ export class AIPipeline {
                 console.error(
                     `[Pipeline] Confidence scoring failed: ${error instanceof Error ? error.message : String(error)}`,
                 );
-                return this.confidenceScorer.heuristicScore(searchResults);
+                // The LLM scorer is unavailable — the heuristic fallback scores off
+                // Pathfinder's synthetic rank-scores (not real relevance), so it is an
+                // UNCERTAIN signal. Mark it degraded so it can't be trusted as HIGH below.
+                return { ...this.confidenceScorer.heuristicScore(searchResults), degraded: true };
             });
 
         // Aggregate token usage
@@ -110,10 +121,24 @@ export class AIPipeline {
             confidenceAssessment.score,
         );
         const calibration = options.confidenceCalibration ?? 0;
-        const finalConfidenceScore = Math.max(
+        let finalConfidenceScore = Math.max(
             0,
             Math.min(1, combinedConfidenceScore + calibration),
         );
+
+        // Safety cap: a DEGRADED confidence signal (LLM scorer unavailable → heuristic
+        // fallback over Pathfinder's synthetic rank-scores) must never present as HIGH.
+        // HIGH suppresses the disclaimer and is treated as authoritative, so an ungrounded
+        // answer scored high by the heuristic would post with no caveat. Cap to the highest
+        // score that still classifies below HIGH so the response keeps a disclaimer. This
+        // only ever LOWERS the score — a genuinely low degraded signal is left untouched and
+        // still falls through to escalation.
+        if (
+            confidenceAssessment.degraded &&
+            finalConfidenceScore >= AI_CONFIDENCE.HIGH_THRESHOLD
+        ) {
+            finalConfidenceScore = DEGRADED_CONFIDENCE_CAP;
+        }
         const finalConfidence = classifyConfidence(finalConfidenceScore);
 
         // Step 4: Format for target platform.
