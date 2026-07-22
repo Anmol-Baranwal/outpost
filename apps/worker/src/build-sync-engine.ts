@@ -12,14 +12,28 @@
 
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import { loadStatusMap, initializeSyncEngine, type SyncEngine } from '@copilotkit/outpost/shared';
+import {
+    loadStatusMap,
+    loadPriorityMap,
+    loadLabelMapper,
+    initializeSyncEngine,
+    type SyncEngine,
+} from '@copilotkit/outpost/shared';
 
 export async function buildSyncEngine(): Promise<SyncEngine> {
-    const statusMap = await loadStatusMap('linear', prisma as never);
+    // Load all three persisted mapping configs (status / priority / label),
+    // each falling back to its hardcoded default when nothing is persisted.
+    const [statusMap, priorityMap, labelMapper] = await Promise.all([
+        loadStatusMap('linear', prisma as never),
+        loadPriorityMap('linear', prisma as never),
+        loadLabelMapper('linear', prisma as never),
+    ]);
 
     return initializeSyncEngine({
         deps: { prisma: prisma as never, createJob: createJob as never },
         identityDeps: prisma as never,
         statusMapOverride: statusMap,
+        priorityMapOverride: priorityMap,
+        labelMapperOverride: labelMapper,
     });
 }

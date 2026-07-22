@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { initializeSyncEngine } from '../init.js';
 import { StatusMap } from '../status-map.js';
-import { TicketStatus } from '../../types.js';
+import { PriorityMap } from '../priority-map.js';
+import { LabelMapper } from '../label-map.js';
+import { TicketStatus, TicketPriority } from '../../types.js';
 
 function makeIdentityDeps() {
     return {
@@ -65,5 +67,43 @@ describe('initializeSyncEngine', () => {
         // mapStatusToOutpost is the InternalTracker interface method the adapter
         // delegates to its injected StatusMap
         expect(plugin!.mapStatusToOutpost('Custom')).toBe(TicketStatus.WAITING_ON_TEAM);
+    });
+
+    it('uses the provided priorityMapOverride instead of the hardcoded default', () => {
+        const customMap = new PriorityMap({ P0: TicketPriority.CRITICAL });
+
+        const engine = initializeSyncEngine({
+            deps: makeSyncEngineDeps(),
+            identityDeps: makeIdentityDeps(),
+            env: { LINEAR_API_KEY: 'key', LINEAR_TEAM_ID: 'team' },
+            priorityMapOverride: customMap,
+        });
+
+        const plugin = engine.getPlugin('linear');
+        expect(plugin).toBeDefined();
+        // mapPriorityToOutpost delegates to the injected PriorityMap. It lives on
+        // InternalTracker (not the InternalTracker | ExternalTracker union that
+        // getPlugin returns), so narrow before asserting.
+        const tracker = plugin as unknown as {
+            mapPriorityToOutpost(p: string): TicketPriority;
+        };
+        expect(tracker.mapPriorityToOutpost('P0')).toBe(TicketPriority.CRITICAL);
+    });
+
+    it('registers the Linear adapter when a labelMapperOverride is supplied', () => {
+        const customMapper = new LabelMapper({
+            rules: [{ externalPrefix: 'X-', outpostPrefix: '' }],
+        });
+
+        const engine = initializeSyncEngine({
+            deps: makeSyncEngineDeps(),
+            identityDeps: makeIdentityDeps(),
+            env: { LINEAR_API_KEY: 'key', LINEAR_TEAM_ID: 'team' },
+            labelMapperOverride: customMapper,
+        });
+
+        // The label mapper is only exercised via async pushLabels (GraphQL), so
+        // assert the override is accepted and the adapter still registers.
+        expect(engine.getPlugin('linear')).toBeDefined();
     });
 });

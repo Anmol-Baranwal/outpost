@@ -10,8 +10,8 @@ import { SyncEngine } from './engine.js';
 import type { SyncEngineDeps } from './engine.js';
 import { LinearAdapter } from './adapters/linear.js';
 import { createLinearStatusMap, StatusMap } from './status-map.js';
-import { createLinearPriorityMap } from './priority-map.js';
-import { createLinearLabelMapper } from './label-map.js';
+import { createLinearPriorityMap, PriorityMap } from './priority-map.js';
+import { createLinearLabelMapper, LabelMapper } from './label-map.js';
 import { IdentityMapper } from './identity-map.js';
 import type { IdentityMapperDeps } from './identity-map.js';
 
@@ -26,6 +26,10 @@ interface InitOptions {
     env?: Record<string, string | undefined>;
     /** Pre-built StatusMap to use instead of createLinearStatusMap(). */
     statusMapOverride?: StatusMap;
+    /** Pre-built PriorityMap to use instead of createLinearPriorityMap(). */
+    priorityMapOverride?: PriorityMap;
+    /** Pre-built LabelMapper to use instead of createLinearLabelMapper(). */
+    labelMapperOverride?: LabelMapper;
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────
@@ -57,8 +61,8 @@ export function initializeSyncEngine(options: InitOptions): SyncEngine {
                 apiKey: linearApiKey,
                 teamId: linearTeamId,
                 statusMap: options.statusMapOverride ?? createLinearStatusMap(),
-                priorityMap: createLinearPriorityMap(),
-                labelMapper: createLinearLabelMapper(),
+                priorityMap: options.priorityMapOverride ?? createLinearPriorityMap(),
+                labelMapper: options.labelMapperOverride ?? createLinearLabelMapper(),
                 identityMapper,
             });
             engine.registerInternalTracker(adapter);
