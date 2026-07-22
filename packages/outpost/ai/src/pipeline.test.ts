@@ -118,6 +118,16 @@ describe('AIPipeline', () => {
             expect(result.latencyMs).toBeGreaterThanOrEqual(0);
         });
 
+        it('should pass the source channel into the generator context', async () => {
+            await pipeline.generateSupportResponse('test question', { source: 'discord' });
+
+            expect(mockGenerate).toHaveBeenCalledWith(
+                expect.objectContaining({ source: 'discord' }),
+                expect.any(Array),
+                undefined,
+            );
+        });
+
         it('should use the more conservative confidence score', async () => {
             // Generator says 0.85, scorer says 0.6 — should use 0.6
             mockScore.mockResolvedValue({

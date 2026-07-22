@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
+import type { PlatformTarget } from '@copilotkit/outpost/shared';
 import type { GeneratedResponse, PipelineContext, SearchResult, TokenUsage } from './types.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
 import { config } from './config.js';
@@ -18,6 +19,44 @@ Formatting rules:
 - Wrap code in fenced code blocks with language tags
 - Use bold for emphasis on key concepts
 - Keep paragraphs concise — prefer bullets over walls of text`;
+
+/**
+ * Per-channel guidance so the response never redirects the user to the channel
+ * they're already using. Someone asking IN Discord must never be told to "join
+ * the Discord"; someone asking IN a GitHub issue must never be told to "open an
+ * issue" — they already have. Pointing to a *different* channel is still fine.
+ */
+const CHANNEL_GUIDANCE: Record<PlatformTarget, string> = {
+    discord:
+        'This question was asked in the CopilotKit Discord. The user is ALREADY in Discord — never suggest they "join the Discord", never share a Discord invite link, and never tell them to ask in Discord. You may point them to the docs or GitHub if genuinely useful.',
+    github:
+        'This question was asked in a GitHub issue or discussion. The user is ALREADY on GitHub — never suggest they "open an issue", "file a bug report", or "open a GitHub discussion"; they already have. You may point them to the docs or Discord if genuinely useful.',
+    slack:
+        'This question was asked in Slack. The user is ALREADY in Slack — never suggest they reach out or ask again in Slack. You may point them to the docs, Discord, or GitHub if genuinely useful.',
+    teams:
+        'This question was asked in Microsoft Teams. The user is ALREADY in Teams — never suggest they reach out or ask again in Teams. You may point them to the docs, Discord, or GitHub if genuinely useful.',
+    web:
+        'This question was asked through the web support widget. Point the user to the docs, Discord, or GitHub if genuinely useful.',
+};
+
+/**
+ * Build the channel-awareness block for the system prompt. Returns an empty
+ * string when the source is unknown so the prompt is unchanged.
+ *
+ * Exported for unit testing — aimock strips `system` from captured requests,
+ * so this pure function is verified directly.
+ */
+export function buildChannelGuidance(source?: PlatformTarget): string {
+    if (!source) return '';
+    const guidance = CHANNEL_GUIDANCE[source];
+    if (!guidance) return '';
+    return [
+        '',
+        '--- Channel Awareness ---',
+        guidance,
+        'General rule: never redirect the user to the same channel they are already using to ask this question.',
+    ].join('\n');
+}
 
 /**
  * Claude response generator for the AI support pipeline.
@@ -46,7 +85,7 @@ export class ResponseGenerator {
         conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
     ): Promise<GeneratedResponse & { degraded: boolean }> {
         const startTime = Date.now();
-        const systemPrompt = this.buildSystemPrompt(sources);
+        const systemPrompt = this.buildSystemPrompt(sources, pipelineContext.source);
         const messages = this.buildMessages(pipelineContext, conversationHistory);
 
         try {
@@ -107,7 +146,7 @@ export class ResponseGenerator {
         sources: SearchResult[],
         conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
     ): AsyncIterable<string> {
-        const systemPrompt = this.buildSystemPrompt(sources);
+        const systemPrompt = this.buildSystemPrompt(sources, pipelineContext.source);
         const messages = this.buildMessages(pipelineContext, conversationHistory);
 
         try {
@@ -132,7 +171,7 @@ export class ResponseGenerator {
         }
     }
 
-    private buildSystemPrompt(sources: SearchResult[]): string {
+    private buildSystemPrompt(sources: SearchResult[], source?: PlatformTarget): string {
         const sourceContext = sources
             .map((s, i) => {
                 const urlLine = s.sourceUrl ? `\nURL: ${s.sourceUrl}` : '';
@@ -142,6 +181,7 @@ export class ResponseGenerator {
 
         return [
             SYSTEM_PROMPT_PREFIX,
+            buildChannelGuidance(source),
             '',
             '--- Documentation Context ---',
             sourceContext || '(No relevant documentation found — answer from general CopilotKit knowledge if possible, otherwise say you need to escalate)',

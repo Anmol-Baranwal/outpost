@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { LLMock } from '@copilotkit/aimock';
-import { ResponseGenerator } from './generator.js';
+import { ResponseGenerator, buildChannelGuidance } from './generator.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
 
@@ -155,6 +155,41 @@ describe('ResponseGenerator', () => {
             expect(assistantMessages.some(m =>
                 typeof m.content === 'string' && m.content.includes('You use useCopilotAction...')
             )).toBe(true);
+        });
+    });
+
+    describe('buildChannelGuidance', () => {
+        it('tells the model not to suggest joining Discord when asked from Discord', () => {
+            const guidance = buildChannelGuidance('discord');
+            expect(guidance).toContain('Channel Awareness');
+            expect(guidance).toContain('ALREADY in Discord');
+            expect(guidance).toContain('never suggest they "join the Discord"');
+            expect(guidance).toContain('never share a Discord invite link');
+        });
+
+        it('tells the model not to suggest opening an issue when asked from GitHub', () => {
+            const guidance = buildChannelGuidance('github');
+            expect(guidance).toContain('Channel Awareness');
+            expect(guidance).toContain('ALREADY on GitHub');
+            expect(guidance).toContain('never suggest they "open an issue"');
+        });
+
+        it('covers Slack and Teams channels', () => {
+            expect(buildChannelGuidance('slack')).toContain('ALREADY in Slack');
+            expect(buildChannelGuidance('teams')).toContain('ALREADY in Teams');
+        });
+
+        it('returns an empty string when the source is unknown', () => {
+            expect(buildChannelGuidance()).toBe('');
+            expect(buildChannelGuidance(undefined)).toBe('');
+        });
+
+        it('always includes the general do-not-redirect rule for known channels', () => {
+            for (const source of ['discord', 'github', 'slack', 'teams', 'web'] as const) {
+                expect(buildChannelGuidance(source)).toContain(
+                    'never redirect the user to the same channel',
+                );
+            }
         });
     });
 
