@@ -127,7 +127,7 @@ All images:
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and push to main:
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and push to `main` and `production` — so both the staging line and every production promote are validated:
 
 1. Install dependencies (`pnpm install --frozen-lockfile`)
 2. Generate Prisma client
