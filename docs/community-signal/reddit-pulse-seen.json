@@ -1,5 +1,5 @@
 {
-  "_comment": "Reddit Pulse dedup ledger. Each weekly run looks back 90 days but skips any post id already listed here, so a thread is reported once. Add the run's surfaced + noise ids under a dated entry. Prune ids whose created date is older than 90 days from today (they can never reappear in the window anyway).",
+  "_comment": "DEDUP DATABASE for Reddit Pulse — operational state, NOT the report and NOT the Composio/Reddit connection. The Weekly Community Signal report lives ONLY in Notion; this file is the one allowed data artifact in the repo. It records Reddit post IDs already surfaced in past reports so the rolling 90-day Reddit Pulse never re-reports the same post. Each weekly run: read this file, skip any id listed, then append the run's surfaced + noise ids under a new dated entry; prune ids older than 90 days (they can't reappear in the window). NOTE: connecting to Composio/Reddit is separate and lives in .env (COMPOSIO_API_KEY, write-scoped) + a live connected_account_id fetched at runtime — none of that is stored here.",
   "runs": [
     {
       "run_date": "2026-06-19",
@@ -78,6 +78,22 @@
         "1uyw70p",
         "1uwjl9x",
         "1ux8507"
+      ]
+    },
+    {
+      "run_date": "2026-07-24",
+      "window": "2026-04-25..2026-07-24",
+      "seen_ids": [
+        "1uy96fy", "1uyoahi", "1uyoxt6", "1uyrx7s", "1uz94e7",
+        "1v2tif9", "1v3bda8", "1v3cuaq", "1v3dixf", "1v3hism",
+        "1v3itoj", "1v3v4g6", "1v3v50w", "1v3vkm7", "1v3yhdh",
+        "1v3yy29", "1v44fci", "1v45xq9", "1v47cou", "1v4ajgy",
+        "1v4crst", "1v4ebjo", "1v4kh48", "1v4l8na", "1v4mods",
+        "1v4oarx", "1v4q5nq", "1v4w1kt", "1v4wi3y", "1v4zpxt",
+        "1v53hk1", "1v54xl5", "1v58gll", "1v59yej", "1v5a92k",
+        "1v5el2x", "1v5eny9", "1v5eos9", "1v5itwd", "1v5j4eb",
+        "1v5jv69", "1v5jvx1", "1v5jwce", "1v5jwx2", "1v5jxei",
+        "1v5k28y", "1v5krfv"
       ]
     }
   ]

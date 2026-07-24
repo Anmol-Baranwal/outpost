@@ -18,7 +18,10 @@ For each GitHub username below, run:
   gh api users/<login> --jq '{login, name, company, bio, blog, twitter_username}'
 
 Return a compact one-line-per-user table:
-  login | name | company | bio | blog | twitter
+  login | name | company | profile_url | company_url | bio | blog | twitter
+
+  - profile_url = `https://github.com/<login>` (always — used to link the handle on every card).
+  - company_url = the company's website for enterprise reporters (e.g. Amazon → https://www.amazon.com, Nvidia → https://www.nvidia.com); blank for indie. Used to link the 🏢 Company badge. Don't guess a URL — leave blank if unsure.
 
 Then two bulleted lists:
 - Enterprise reporters (company field populated, OR bio/blog clearly identifies an employer — mark inferred ones as "(inferred)")
@@ -32,7 +35,8 @@ Run them in parallel via xargs or a small loop. Under 350 words total.
 
 ## Classification rules
 
-- **Direct enterprise:** `company` field populated → use that as canonical affiliation.
+- **Direct enterprise (confirmed):** `company` field populated AND corroborated by the bio/blog/a verifiable identity → use that as canonical affiliation, mark `confirmed`.
+- **Self-declared only (UNCONFIRMED):** the `company` field names an employer but nothing else corroborates it — no bio mention, no verifiable name/LinkedIn, throwaway-looking account. Still surface it, but mark it **`unconfirmed (self-declared)`** so the report can flag "⚠️ Company unconfirmed" in 🏢 Enterprise. Never present it as fact. (Precedent: `GeauxEric` → `company: Nvidia`, no verifiable identity → unconfirmed.)
 - **Inferred enterprise:** `company` empty, but bio or blog clearly identifies an employer (e.g. "Engineer @AcmeCorp", LinkedIn profile naming a current role) → label as `<Company> (inferred)`. Still treat as enterprise signal.
 - **Indie / no affiliation:** no company, no employer clues. Default classification.
 - **404 / nonexistent user:** note explicitly. Sometimes handles get renamed; check if the issue still resolves.
