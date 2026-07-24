@@ -54,17 +54,20 @@ Ordering matters, because Railway's deploy triggers wait for a CI check suite an
 `main` currently carries commits that have not yet been in production.
 
 1. Create the `staging` branch from `main` so staging keeps testing the same content. **(done)**
-2. CI runs on `main`, `staging`, and — during the transition only — `production`, so no
-   trigger is left waiting on a check suite that never runs. **(done)**
-3. Repoint the staging environment's 4 deploy triggers from `main` to `staging`.
-4. Repoint the production environment's 4 deploy triggers from `production` to `main`.
-   This deploys everything on `main` that has not yet been promoted, so treat it as a
-   release: confirm the diff first.
-5. Delete the `production` branch and drop it from the CI trigger list.
+2. CI runs on `main` and `staging`, so no deploy trigger is left waiting on a check
+   suite that never arrives. **(done)**
+3. Repoint the staging environment's 4 deploy triggers from `main` to `staging`. **(done)**
+4. Repoint the production environment's 4 deploy triggers from `production` to `main`. **(done)**
+   Staging had to move first: with both environments pointed at `main`, a single push
+   would have deployed staging and production at once, leaving no soak window.
+5. Delete the `production` branch (was `1fd883e`, fully contained in `main`) and drop it
+   from the CI trigger list. **(CI trigger done; branch deletion pending)**
 6. Protect `main` as the production branch (see follow-ups).
 
-Steps 3–5 are Railway dashboard / API changes and are tracked separately from this
-repo change.
+Verified after cutover: production deploys from `main` with `SHADOW_MODE=false`,
+staging deploys from `staging` with `SHADOW_MODE=true`, and all eight triggers still
+wait for CI. Repointing a trigger does not retroactively redeploy — production picks up
+`main` on the next push to it.
 
 ## The auto-responder problem and its fix
 
