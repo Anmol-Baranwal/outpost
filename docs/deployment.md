@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Outpost consists of seven services (web dashboard, Discord bot, GitHub app, Slack bot, Teams bot, Linear sync, worker) sharing a single PostgreSQL database with pgvector.
+Outpost consists of seven services (web dashboard, Discord bot, GitHub app, Slack bot, Teams bot, Linear sync, worker) sharing a single PostgreSQL database with pgvector. Each deployment environment (staging, production) has its own separate database — see [Environments](#environments-staging--production).
 
 ## Prerequisites
 
@@ -147,6 +147,23 @@ Railway hosts two environments in the `outpost` project, each with its **own** P
 | Database | own Postgres (isolated) | own Postgres |
 
 Four services carry deploy triggers in both environments: `outpost-web`, `outpost-github-app`, `outpost-discord-bot`, `outpost-worker`. The remaining three (`outpost-slack-bot`, `outpost-teams-bot`, `outpost-linear-sync`) are optional integrations — deployed manually / left offline until their credentials are configured.
+
+Railway's deploy triggers have "wait for CI" enabled, so a push only deploys after the CI check suite passes on that commit — for both branches.
+
+### Shadow mode (staging safety)
+
+Staging runs the agent with `SHADOW_MODE=true` on `outpost-worker`. The AI response
+pipeline runs in full, but instead of posting to the source platform it persists the
+response as a shadow `Message` row (`author: outpost-shadow`, `attachments.shadowMode: true`)
+carrying the text it would have posted, plus confidence and latency. Inspect those rows
+to verify agent behavior without replying to real users.
+
+`SHADOW_MODE` gates the `AI_RESPONSE` handler — the path every auto-response to a
+user takes. **It does not gate the `ONBOARDING_DIGEST` job**, which posts a daily
+digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` (raw REST, bypassing the
+platform adapters). That variable is currently unset in both environments, so the
+digest falls back to a console log and nothing is posted — but if you ever set it in
+staging, point it at a test channel, because shadow mode will not hold it back.
 
 ### Promotion workflow
 

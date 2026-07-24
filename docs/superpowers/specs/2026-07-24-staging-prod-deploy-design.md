@@ -50,7 +50,20 @@ posted to any platform. One flag, all surfaces.
 
 The bot services (discord-bot etc.) only *enqueue* jobs; they do not post AI
 responses. Escalation notifications write DB rows only — no external post. So
-`SHADOW_MODE` on the worker is the complete kill-switch.
+`SHADOW_MODE` on the worker covers every auto-response to a user.
+
+**Known gap — `ONBOARDING_DIGEST` is not shadow-gated.** That scheduled job (every
+24h, `packages/outpost/queue/src/handlers/onboarding-digest.ts`) posts a digest
+directly to Discord over raw REST using `DISCORD_DIGEST_CHANNEL_ID`, bypassing both
+the platform adapters and the `SHADOW_MODE` check. It is inert today because the
+variable is unset in both environments (falls back to a console log), but staging
+would post to whatever channel it is given. Fix options: gate the handler on
+`SHADOW_MODE`, or point staging at a test channel. Tracked as a follow-up.
+
+Note also that `postAiResponse` helpers exist in `apps/slack-bot`, `apps/teams-bot`,
+and `apps/github-app` but have no non-test callers — the live path is the worker's
+adapter call. Worth deleting or wiring deliberately so they don't become a second
+ungated post path later.
 
 ### Defect found and fixed
 
