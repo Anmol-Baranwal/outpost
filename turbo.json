@@ -10,7 +10,12 @@
             "persistent": true
         },
         "lint": {
-            "dependsOn": ["^build"]
+            "dependsOn": ["^build"],
+            // ESLint 9 defaults to flat config; this repo still uses .eslintrc.cjs.
+            // turbo sanitizes the environment, so the opt-out has to be declared
+            // here or `turbo run lint` fails with "couldn't find eslint.config.js"
+            // even when the variable is set in the parent shell.
+            "env": ["ESLINT_USE_FLAT_CONFIG"]
         },
         "test": {
             "dependsOn": ["^build"]

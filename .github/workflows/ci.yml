@@ -58,8 +58,14 @@ jobs:
             - name: Build
               run: pnpm build
 
-            # Lint skipped: ESLint 9 requires flat config but repo uses legacy .eslintrc.cjs.
-            # TODO: Migrate to eslint.config.js and re-enable.
+            # ESLint 9 defaults to flat config while this repo still uses
+            # .eslintrc.cjs, so the job sets ESLINT_USE_FLAT_CONFIG=false (above) and
+            # turbo.json declares it under the lint task's `env` — turbo sanitizes the
+            # environment, so without that declaration this fails with "couldn't find
+            # eslint.config.js". Migrating to eslint.config.js is still worth doing:
+            # eslintrc support is deprecated in 9 and removed in 10.
+            - name: Lint
+              run: pnpm lint
 
             - name: Typecheck
               run: pnpm typecheck

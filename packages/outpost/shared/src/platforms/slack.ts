@@ -6,6 +6,7 @@
  */
 
 import { WebClient } from '@slack/web-api';
+import type { KnownBlock } from '@slack/web-api';
 import { TicketSource } from '../types.js';
 import type { PlatformAdapter, InboundMessage, PlatformUser, FormattedResponse } from './types.js';
 
@@ -114,7 +115,7 @@ export class SlackAdapter implements PlatformAdapter {
         const threadTs = extractThreadTs(ticket.sourceId);
 
         // Build Block Kit blocks for richer formatting
-        const blocks: Array<Record<string, unknown>> = [];
+        const blocks: KnownBlock[] = [];
 
         // Main response body
         blocks.push({
@@ -129,7 +130,7 @@ export class SlackAdapter implements PlatformAdapter {
             channel: ticket.channel,
             thread_ts: threadTs,
             text: response.text, // Fallback for notifications
-            blocks: blocks as any,
+            blocks,
         });
         return undefined;
     }

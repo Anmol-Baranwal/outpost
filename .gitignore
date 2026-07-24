@@ -7,10 +7,20 @@ dist/
 out/
 
 # Environment
+# Deliberately broad: these files hold live Discord/Slack/Anthropic credentials, and
+# a stray `git add .` is the only thing standing between them and a commit. Add new
+# allowances explicitly rather than loosening the patterns.
 .env
+.env.*
 .env.local
 .env.*.local
+.env.bak*
+*.env.bak*
 !.env.example
+!.env.*.example
+
+# Pulled deployment config (may contain resolved secrets)
+.railway-config-pull-*/
 
 # Prisma
 packages/outpost/db/src/generated/

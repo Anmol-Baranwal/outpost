@@ -232,9 +232,28 @@ After provisioning PostgreSQL (Railway supports pgvector via `CREATE EXTENSION`)
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-Then run migrations:
+The schema is managed by **versioned Prisma migrations** (`packages/outpost/db/prisma/migrations/`),
+and `apps/web/start.sh` runs `prisma migrate deploy` on every container start. So a
+deployed environment migrates itself — there is no manual step for staging or production.
+
+To apply migrations by hand (e.g. against a fresh local database):
 
 ```bash
 pnpm db:generate
-pnpm db:push
+pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
 ```
+
+> **Do not run `pnpm db:push` against staging or production.** `prisma db push` syncs the
+> schema without recording a migration, which puts the database out of step with the
+> migration history and makes the next `migrate deploy` fail or clobber changes. It is for
+> throwaway local databases and prototyping only.
+
+To create a new migration during development, use
+`prisma migrate dev --name <description>` and commit the generated directory.
+
+### Backups
+
+Railway's managed Postgres handles storage-level durability, but there is **no documented
+application-level backup/restore procedure yet** — no scheduled `pg_dump`, and no rehearsed
+restore. Treat that as an open gap before relying on this database for anything you cannot
+reconstruct.
