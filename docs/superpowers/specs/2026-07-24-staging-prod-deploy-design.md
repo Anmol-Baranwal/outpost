@@ -1,38 +1,70 @@
 # Staging + Production Deployment Model — Design
 
-**Date:** 2026-07-24
-**Status:** Approved (branches + shadow-mode safety); branch protection deferred
+**Date:** 2026-07-24 (revised after review by Jordan Ritter)
+**Status:** Repo changes done; Railway trigger cutover pending
 **Owner:** Nathan
 
 ## Goal
 
-Run a proper staging environment as the testing branch, keep the model simple and
-fast, and make it safe to test the auto-responding agent in staging without it
-replying to real users in production communities.
+Run a proper staging environment for testing, keep the model simple and fast, and make
+it safe to test the auto-responding agent in staging without it replying to real users
+in production communities.
 
-## Deployment model (keep — it is already the simple one)
+## Deployment model
 
 Two Railway environments in the `outpost` project, each with its **own** Postgres
 (verified isolated — different DB credentials, staging never touches prod data).
 
+`main` is the **known-good release line** — it is what production runs. Development
+work lives on branches and merges into `staging` for integration testing. Nothing
+reaches `main` until it has soaked on staging.
+
 ```
-merge PR → main → auto-deploys STAGING → test
-promote:  git push origin main:production → auto-deploys PRODUCTION
+feature branch → PR → staging → auto-deploys STAGING → verify
+release:        merge staging → main → auto-deploys PRODUCTION
 ```
 
 | | staging | production |
 | --- | --- | --- |
-| Deploys from | `main` (CI-gated) | `production` branch (CI-gated) |
+| Deploys from | `staging` branch (CI-gated) | `main` (CI-gated) |
 | Web URL | outpost-web-staging.up.railway.app | outpost.copilotkit.ai |
 | Database | own Postgres | own Postgres |
 | Triggered services | web, github-app, discord-bot, worker | same 4 |
 | `SHADOW_MODE` (worker) | **true** | false |
+| Role | integration / soak | known good |
 
 Other three services (slack-bot, teams-bot, linear-sync) are optional integrations,
 left offline until their credentials are configured.
 
-No release tags, no promote pipeline for now. Promotion stays `git push
-origin main:production` — fast, one command, from tested commits.
+No release tags, no promote pipeline for now — the release is a `staging` → `main`
+merge, which keeps `main`'s history as the record of what has been in production.
+Rollback is a revert on `main`.
+
+### Why this orientation
+
+The first version of this design had it inverted: `main` deployed staging and a
+separate `production` branch deployed prod. Jordan flagged it in review — by
+convention `main` is the known-good branch and everything else is work in progress,
+so the original scheme read backwards to anyone joining the repo and made `main`
+the least trustworthy branch. This revision matches the standard.
+
+### Cutover (from the inverted scheme)
+
+Ordering matters, because Railway's deploy triggers wait for a CI check suite and
+`main` currently carries commits that have not yet been in production.
+
+1. Create the `staging` branch from `main` so staging keeps testing the same content. **(done)**
+2. CI runs on `main`, `staging`, and — during the transition only — `production`, so no
+   trigger is left waiting on a check suite that never runs. **(done)**
+3. Repoint the staging environment's 4 deploy triggers from `main` to `staging`.
+4. Repoint the production environment's 4 deploy triggers from `production` to `main`.
+   This deploys everything on `main` that has not yet been promoted, so treat it as a
+   release: confirm the diff first.
+5. Delete the `production` branch and drop it from the CI trigger list.
+6. Protect `main` as the production branch (see follow-ups).
+
+Steps 3–5 are Railway dashboard / API changes and are tracked separately from this
+repo change.
 
 ## The auto-responder problem and its fix
 
@@ -92,15 +124,24 @@ recur.
   server / test GitHub App install so it never connects to prod communities. Then
   `SHADOW_MODE=false` in staging becomes safe for end-to-end post testing in a
   sandbox. (Belt-and-suspenders; shadow mode already makes staging safe today.)
-- **Branch protection** — protect `main` (PR + review + CI, no force-push) and
-  `production` (CI check, no force-push/delete, restricted push). Approved earlier;
-  deferred to move fast.
+- **Branch protection** — `main` is now the production branch, so it needs the
+  strictest rules: PR + review + CI required, no force-push, no deletion. `staging`
+  wants CI required and force-push/deletion blocked. A review requirement already
+  exists on `main`; the rest is unverified from non-admin access. Owner: Jordan.
 - **Secret scanning** — Gitleaks in CI + GitHub Push Protection. Deferred.
 
 ## Repo changes in this pass
 
-- `docs/deployment.md` — CI/CD section rewritten to the two-env staging→production
-  model + promotion command + DB isolation + service split.
-- `.env.example` — SHADOW_MODE documented (worker-only gate, staging=true).
+- `docs/deployment.md` — CI/CD + environments sections written to the corrected model
+  (`staging` → staging env, `main` → production), release workflow, DB isolation,
+  service split, shadow-mode section, `HEALTH_PORT` collision note.
+- `.env.example` — `SHADOW_MODE` documented (gate lives in the worker, staging=true);
+  `HEALTH_PORT` documented as shared by worker + teams-bot.
+- `.github/workflows/ci.yml` — CI runs on `main`, `staging`, and (transitionally)
+  `production`.
+- `packages/outpost/queue/src/handlers/onboarding-digest.ts` — gated on `SHADOW_MODE`,
+  with tests.
+- `staging` branch created from `main`.
 - This spec.
-- Railway (live, not repo): staging worker `SHADOW_MODE=true`.
+- Railway (live, not repo): staging worker `SHADOW_MODE=true`; prod `GUILD_ID`
+  corrected to the official CopilotKit server.

@@ -129,7 +129,7 @@ All images:
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and push to `main` and `production` — so both the staging line and every production promote are validated:
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and push to `main` and `staging` — so both the integration line and every production release are validated:
 
 1. Install dependencies (`pnpm install --frozen-lockfile`)
 2. Generate Prisma client
@@ -142,11 +142,14 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 
 Railway hosts two environments in the `outpost` project, each with its **own** PostgreSQL instance (staging never touches production data):
 
+`main` is the known-good release line: it is what production runs. Development work — features, fixes, chores — happens on branches, which merge into `staging` for integration testing. Nothing reaches `main` until it has soaked on staging.
+
 | | staging | production |
 | --- | --- | --- |
-| Deploys from | `main` (CI-gated) | `production` branch (CI-gated) |
+| Deploys from | `staging` branch (CI-gated) | `main` (CI-gated) |
 | Web URL | `outpost-web-staging.up.railway.app` | `outpost.copilotkit.ai` |
 | Database | own Postgres (isolated) | own Postgres |
+| Role | integration / soak | known good |
 
 Four services carry deploy triggers in both environments: `outpost-web`, `outpost-github-app`, `outpost-discord-bot`, `outpost-worker`. The remaining three (`outpost-slack-bot`, `outpost-teams-bot`, `outpost-linear-sync`) are optional integrations — deployed manually / left offline until their credentials are configured.
 
@@ -171,11 +174,21 @@ staging will deliver to real users regardless of the flag.
 ### Promotion workflow
 
 ```
-merge PR → main → CI → auto-deploys to STAGING → verify
-promote:  git push origin main:production → CI → auto-deploys to PRODUCTION
+feature branch → PR → staging → CI → auto-deploys to STAGING → verify
+release:        merge staging → main → CI → auto-deploys to PRODUCTION
 ```
 
-On push to `main`, Railway auto-deploys staging via its GitHub integration. Production is deliberately gated: it only moves when you fast-forward the `production` branch to the commit you've validated on staging (`git push origin main:production`). No deploy hooks needed on either side.
+Open pull requests against `staging`. On merge, Railway auto-deploys the staging
+environment via its GitHub integration, where the change soaks in shadow mode.
+
+Releasing is a deliberate act: merge `staging` into `main` (a PR from `staging` to
+`main` is the auditable way to do it), and Railway deploys production from `main`.
+Because `main` only ever receives changes that have already run on staging, it stays
+"known good" — and its history is the record of what has been in production. No deploy
+hooks needed on either side.
+
+To roll production back, revert the offending commit on `main`; the next deploy picks
+it up.
 
 ## Monitoring
 

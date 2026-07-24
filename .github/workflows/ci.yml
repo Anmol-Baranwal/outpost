@@ -1,10 +1,15 @@
 name: CI
 
 on:
+    # `main` is the known-good release line (deploys production) and `staging` is the
+    # integration line (deploys staging). `production` is the legacy release branch,
+    # kept here until the Railway cutover is complete — Railway's deploy triggers wait
+    # for a CI check suite, so removing a branch before its trigger is repointed would
+    # leave a deploy waiting on a check that never runs.
     pull_request:
-        branches: [main, production]
+        branches: [main, staging, production]
     push:
-        branches: [main, production]
+        branches: [main, staging, production]
 
 permissions:
     contents: read
