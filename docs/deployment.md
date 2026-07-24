@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Outpost consists of seven services (web dashboard, Discord bot, GitHub app, Slack bot, Teams bot, Linear sync, worker) sharing a single PostgreSQL database with pgvector.
+Outpost consists of seven services (web dashboard, Discord bot, GitHub app, Slack bot, Teams bot, Linear sync, worker) sharing a single PostgreSQL database with pgvector. Each deployment environment (staging, production) has its own separate database — see [Environments](#environments-staging--production).
 
 ## Prerequisites
 
@@ -39,10 +39,12 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
 | outpost-slack-bot   | Worker     | 3002                      | GET /health     |
 | outpost-teams-bot   | Web        | 3978 (bot), 3003 (health) | GET /health     |
 | outpost-linear-sync | Web        | 3004                      | GET /health     |
-| outpost-worker      | Worker     | 3003                      | GET /health     |
+| outpost-worker      | Worker     | 3003 (3005 locally)       | GET /health     |
 | outpost-db          | PostgreSQL | --                        | --              |
 
 Ports are the code's defaults (`process.env.PORT`/`HEALTH_PORT` fallback) — Railway may assign different values via its own `PORT` env var per service.
+
+Note that the worker and the Teams bot both read the same `HEALTH_PORT` variable and both default to `3003`. That is fine on Railway, where each service runs in its own container, but it collides when running them together locally — which is why `.env.example` sets `HEALTH_PORT=3005`.
 
 ## Environment Variables
 
@@ -127,7 +129,7 @@ All images:
 
 ## CI/CD Pipeline
 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and push to main:
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and push to `main` and `staging` — so both the integration line and every production release are validated:
 
 1. Install dependencies (`pnpm install --frozen-lockfile`)
 2. Generate Prisma client
@@ -136,7 +138,57 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 5. Type check
 6. Run tests
 
-On merge to main, Railway auto-deploys via its GitHub integration — no deploy hooks needed.
+## Environments (staging → production)
+
+Railway hosts two environments in the `outpost` project, each with its **own** PostgreSQL instance (staging never touches production data):
+
+`main` is the known-good release line: it is what production runs. Development work — features, fixes, chores — happens on branches, which merge into `staging` for integration testing. Nothing reaches `main` until it has soaked on staging.
+
+| | staging | production |
+| --- | --- | --- |
+| Deploys from | `staging` branch (CI-gated) | `main` (CI-gated) |
+| Web URL | `outpost-web-staging.up.railway.app` | `outpost.copilotkit.ai` |
+| Database | own Postgres (isolated) | own Postgres |
+| Role | integration / soak | known good |
+
+Four services carry deploy triggers in both environments: `outpost-web`, `outpost-github-app`, `outpost-discord-bot`, `outpost-worker`. The remaining three (`outpost-slack-bot`, `outpost-teams-bot`, `outpost-linear-sync`) are optional integrations — deployed manually / left offline until their credentials are configured.
+
+Railway's deploy triggers have "wait for CI" enabled, so a push only deploys after the CI check suite passes on that commit — for both branches.
+
+### Shadow mode (staging safety)
+
+Staging runs the agent with `SHADOW_MODE=true` on `outpost-worker`. The AI response
+pipeline runs in full, but instead of posting to the source platform it persists the
+response as a shadow `Message` row (`author: outpost-shadow`, `attachments.shadowMode: true`)
+carrying the text it would have posted, plus confidence and latency. Inspect those rows
+to verify agent behavior without replying to real users.
+
+`SHADOW_MODE` gates both outbound paths: the `AI_RESPONSE` handler (every auto-response
+to a user, posted via the platform adapters) and the `ONBOARDING_DIGEST` job, which
+posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` using raw REST.
+With shadow mode on, the digest is logged instead of posted.
+
+When adding any new outbound post path, check `SHADOW_MODE` before posting — otherwise
+staging will deliver to real users regardless of the flag.
+
+### Promotion workflow
+
+```
+feature branch → PR → staging → CI → auto-deploys to STAGING → verify
+release:        merge staging → main → CI → auto-deploys to PRODUCTION
+```
+
+Open pull requests against `staging`. On merge, Railway auto-deploys the staging
+environment via its GitHub integration, where the change soaks in shadow mode.
+
+Releasing is a deliberate act: merge `staging` into `main` (a PR from `staging` to
+`main` is the auditable way to do it), and Railway deploys production from `main`.
+Because `main` only ever receives changes that have already run on staging, it stays
+"known good" — and its history is the record of what has been in production. No deploy
+hooks needed on either side.
+
+To roll production back, revert the offending commit on `main`; the next deploy picks
+it up.
 
 ## Monitoring
 
@@ -170,7 +222,7 @@ All seven services expose health endpoints returning JSON:
 - Slack bot: `GET /health` (port 3002)
 - Teams bot: `GET /health` (port 3003)
 - Linear sync: `GET /health` (port 3004)
-- Worker: `GET /health` (port 3003)
+- Worker: `GET /health` (port 3003 by default; `HEALTH_PORT=3005` locally to avoid clashing with the Teams bot)
 
 ## Database Setup
 

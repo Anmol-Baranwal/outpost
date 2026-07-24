@@ -116,7 +116,11 @@ export async function handleOnboardingDigest(
 
     // Deliver the digest
     const channelId = process.env.DISCORD_DIGEST_CHANNEL_ID;
-    if (channelId) {
+    if (process.env.SHADOW_MODE === 'true') {
+        // Shadow mode (staging): log the digest instead of posting it, so a
+        // staging worker never delivers to a real Discord channel.
+        console.log(`[Onboarding Digest] Shadow mode — skipping Discord post:\n${digest}`);
+    } else if (channelId) {
         await postToDiscord(channelId, digest);
     } else {
         // Development fallback when DISCORD_DIGEST_CHANNEL_ID is not set

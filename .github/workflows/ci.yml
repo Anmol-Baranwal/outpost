@@ -1,10 +1,14 @@
 name: CI
 
 on:
+    # `main` is the known-good line and deploys production; `staging` is the
+    # integration line and deploys staging. Railway's deploy triggers wait for a CI
+    # check suite on the pushed commit, so both branches must run CI here — dropping
+    # one would leave its deploys waiting on a check that never arrives.
     pull_request:
-        branches: [main]
+        branches: [main, staging]
     push:
-        branches: [main]
+        branches: [main, staging]
 
 permissions:
     contents: read
