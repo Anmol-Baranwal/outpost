@@ -136,7 +136,26 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 5. Type check
 6. Run tests
 
-On merge to main, Railway auto-deploys via its GitHub integration — no deploy hooks needed.
+## Environments (staging → production)
+
+Railway hosts two environments in the `outpost` project, each with its **own** PostgreSQL instance (staging never touches production data):
+
+| | staging | production |
+| --- | --- | --- |
+| Deploys from | `main` (CI-gated) | `production` branch (CI-gated) |
+| Web URL | `outpost-web-staging.up.railway.app` | `outpost.copilotkit.ai` |
+| Database | own Postgres (isolated) | own Postgres |
+
+Four services carry deploy triggers in both environments: `outpost-web`, `outpost-github-app`, `outpost-discord-bot`, `outpost-worker`. The remaining three (`outpost-slack-bot`, `outpost-teams-bot`, `outpost-linear-sync`) are optional integrations — deployed manually / left offline until their credentials are configured.
+
+### Promotion workflow
+
+```
+merge PR → main → CI → auto-deploys to STAGING → verify
+promote:  git push origin main:production → CI → auto-deploys to PRODUCTION
+```
+
+On push to `main`, Railway auto-deploys staging via its GitHub integration. Production is deliberately gated: it only moves when you fast-forward the `production` branch to the commit you've validated on staging (`git push origin main:production`). No deploy hooks needed on either side.
 
 ## Monitoring
 
