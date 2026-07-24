@@ -39,10 +39,12 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
 | outpost-slack-bot   | Worker     | 3002                      | GET /health     |
 | outpost-teams-bot   | Web        | 3978 (bot), 3003 (health) | GET /health     |
 | outpost-linear-sync | Web        | 3004                      | GET /health     |
-| outpost-worker      | Worker     | 3003                      | GET /health     |
+| outpost-worker      | Worker     | 3003 (3005 locally)       | GET /health     |
 | outpost-db          | PostgreSQL | --                        | --              |
 
 Ports are the code's defaults (`process.env.PORT`/`HEALTH_PORT` fallback) — Railway may assign different values via its own `PORT` env var per service.
+
+Note that the worker and the Teams bot both read the same `HEALTH_PORT` variable and both default to `3003`. That is fine on Railway, where each service runs in its own container, but it collides when running them together locally — which is why `.env.example` sets `HEALTH_PORT=3005`.
 
 ## Environment Variables
 
@@ -158,12 +160,13 @@ response as a shadow `Message` row (`author: outpost-shadow`, `attachments.shado
 carrying the text it would have posted, plus confidence and latency. Inspect those rows
 to verify agent behavior without replying to real users.
 
-`SHADOW_MODE` gates the `AI_RESPONSE` handler — the path every auto-response to a
-user takes. **It does not gate the `ONBOARDING_DIGEST` job**, which posts a daily
-digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` (raw REST, bypassing the
-platform adapters). That variable is currently unset in both environments, so the
-digest falls back to a console log and nothing is posted — but if you ever set it in
-staging, point it at a test channel, because shadow mode will not hold it back.
+`SHADOW_MODE` gates both outbound paths: the `AI_RESPONSE` handler (every auto-response
+to a user, posted via the platform adapters) and the `ONBOARDING_DIGEST` job, which
+posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` using raw REST.
+With shadow mode on, the digest is logged instead of posted.
+
+When adding any new outbound post path, check `SHADOW_MODE` before posting — otherwise
+staging will deliver to real users regardless of the flag.
 
 ### Promotion workflow
 
@@ -206,7 +209,7 @@ All seven services expose health endpoints returning JSON:
 - Slack bot: `GET /health` (port 3002)
 - Teams bot: `GET /health` (port 3003)
 - Linear sync: `GET /health` (port 3004)
-- Worker: `GET /health` (port 3003)
+- Worker: `GET /health` (port 3003 by default; `HEALTH_PORT=3005` locally to avoid clashing with the Teams bot)
 
 ## Database Setup
 
