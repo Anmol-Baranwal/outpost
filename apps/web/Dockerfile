@@ -24,6 +24,18 @@ RUN pnpm install --frozen-lockfile
 COPY --from=pruner /app/out/full/ .
 # turbo prune omits the root tsconfig.json that packages/outpost/tsconfig.base.json extends
 COPY --from=pruner /app/tsconfig.json ./tsconfig.json
+
+# NEXT_PUBLIC_* values are inlined into the client bundle at build time, not read at
+# runtime — so they must exist during `next build` or Next bakes in `undefined`, and
+# setting them on the running service afterwards has no effect. Railway supplies service
+# variables to Dockerfile builds as build args, so each one needs an ARG here; the ARG
+# alone is not enough because Next reads process.env, hence the matching ENV. Both must
+# appear ABOVE the build step to have any effect.
+ARG NEXT_PUBLIC_AUTH_PROVIDER=credentials
+ARG NEXT_PUBLIC_SENTRY_DSN=
+ENV NEXT_PUBLIC_AUTH_PROVIDER=$NEXT_PUBLIC_AUTH_PROVIDER
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+
 RUN pnpm turbo run build --filter=@copilotkit/outpost-web
 
 # ── Stage 3: production image ────────────────────────────────────────────────

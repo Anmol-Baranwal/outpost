@@ -3,7 +3,14 @@
     "tasks": {
         "build": {
             "dependsOn": ["^build"],
-            "outputs": ["dist/**", "**/dist/**", ".next/**"]
+            "outputs": ["dist/**", "**/dist/**", ".next/**"],
+            // turbo runs in strict env mode, so a task sees only the variables declared
+            // here. NEXT_PUBLIC_* are inlined into the client bundle by `next build`, so
+            // if they are missing at build time Next bakes in `undefined` and no runtime
+            // configuration can recover them. Declaring them also puts them in the cache
+            // key, so changing a value rebuilds instead of reusing a bundle built with
+            // the old one.
+            "env": ["NEXT_PUBLIC_*", "NODE_ENV"]
         },
         "dev": {
             "cache": false,
