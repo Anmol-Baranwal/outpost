@@ -10,10 +10,11 @@ out/
 # Deliberately broad: these files hold live Discord/Slack/Anthropic credentials, and
 # a stray `git add .` is the only thing standing between them and a commit. Add new
 # allowances explicitly rather than loosening the patterns.
-# `.env.*` already covers .env.local, .env.bak.<ts>, and friends — keep it that way
-# instead of accumulating narrower duplicates.
+# `.env.*` covers .env.local and .env.bak.<ts>; `*.env` is a separate shape entirely
+# (staging.env, prod.env) that the dot-prefixed patterns do not match.
 .env
 .env.*
+*.env
 !.env.example
 !.env.*.example
 
@@ -26,7 +27,10 @@ out/
 
 # Agent tool settings — holds SLACK_WEBHOOK_URL_1 and similar. Do not rely on a
 # personal global gitignore for this: it protects only the machine that has it.
-.claude/settings.local.json
+# Unanchored and suffix-tolerant so nested worktrees and editor .bak/.orig copies are
+# covered too — a leaked backup leaks the same secret as the original.
+**/settings.local.json
+**/settings.local.json.*
 
 # Pulled deployment config (may contain resolved secrets)
 .railway-config-pull-*/

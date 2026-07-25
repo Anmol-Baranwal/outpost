@@ -44,16 +44,20 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
 
 Ports are the code's defaults (`process.env.PORT`/`HEALTH_PORT` fallback) — Railway may assign different values via its own `PORT` env var per service.
 
-The worker and the Teams bot both read `HEALTH_PORT`, and both fall back to `3003` when
-nothing sets it — which is why `.env.example` sets `HEALTH_PORT=3005`, so the two do not
-collide when run together locally. Two details matter in a deployed environment:
+The worker and the Teams bot read the **same** `HEALTH_PORT` variable and both fall back to
+`3003`. What keeps them apart in a deployed environment is each image pinning its own value:
+`apps/worker/Dockerfile` sets `ENV HEALTH_PORT=3005` (exposing and probing 3005), while
+`apps/teams-bot/Dockerfile` sets `ENV HEALTH_PORT=3003`.
 
-- `apps/worker/Dockerfile` already sets `ENV HEALTH_PORT=3005` and both exposes and probes
-  `3005`, so the worker image serves health on **3005**, not on the bare code default.
-- The worker resolves its port as `PORT ?? HEALTH_PORT ?? 3003` (`apps/worker/src/index.ts`),
-  so a platform-injected `PORT` **overrides** `HEALTH_PORT`. Setting `HEALTH_PORT` alone will
-  not move the worker's health port if `PORT` is also present. The Teams bot reads only
-  `HEALTH_PORT`.
+Because the variable is shared, a single `HEALTH_PORT` in a local `.env` moves **both**
+services to that port rather than separating them — running the two together locally needs a
+per-process override, not one shared value. (`.env.example`'s `HEALTH_PORT=3005` therefore
+suits running the worker alone; it does not by itself resolve a worker + teams-bot clash.)
+
+One further asymmetry: the worker resolves `PORT ?? HEALTH_PORT ?? 3003`
+(`apps/worker/src/index.ts`), so a platform-injected `PORT` **overrides** `HEALTH_PORT` — and
+since its Dockerfile probes 3005 unconditionally, an injected `PORT` moves the listener while
+the health check keeps checking 3005. The Teams bot reads only `HEALTH_PORT`.
 
 ## Environment Variables
 
@@ -142,10 +146,16 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 
 1. Install dependencies (`pnpm install --frozen-lockfile`)
 2. Generate Prisma client
-3. Build all packages
-4. Lint
-5. Type check
-6. Run tests
+3. Verify the Prisma schema and that a migration directory exists
+4. Build all packages
+5. Lint
+6. Type check
+7. Run tests
+
+Lint blocks on ESLint **errors**; warnings are reported without failing the run (37 exist
+today, all `no-unused-vars` / `consistent-type-imports`). Bounding warnings to zero means
+clearing those first — worth doing, but deliberately not bundled into the change that turned
+the step on.
 
 ## Environments (staging → production)
 
@@ -172,10 +182,18 @@ response as a shadow `Message` row (`author: outpost-shadow`, `attachments.shado
 carrying the text it would have posted, plus confidence and latency. Inspect those rows
 to verify agent behavior without replying to real users.
 
-`SHADOW_MODE` gates both outbound paths: the `AI_RESPONSE` handler (every auto-response
-to a user, posted via the platform adapters) and the `ONBOARDING_DIGEST` job, which
-posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` using raw REST.
-With shadow mode on, the digest is logged instead of posted.
+`SHADOW_MODE` is read by **more than one service**, and each one gates a different point
+in the flow. Set it consistently across an environment rather than on a single service:
+
+| Service | What the flag changes |
+| --- | --- |
+| `outpost-discord-bot` | At ingest. `thread-create.ts` and `message-create.ts` call `isShadowMode()` and divert to `handleShadowThreadCreate` / `handleShadowMessage`, recording the ticket and a shadow response silently instead of running the normal visible flow (`src/lib/shadow-mode.ts`). |
+| `outpost-worker` | At post-back. The `AI_RESPONSE` handler checks the flag immediately before `adapter.postResponse` and persists the response as a shadow `Message` row instead of posting (`queue/src/handlers/ai-response.ts`). Also gates `ONBOARDING_DIGEST`, which posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` over raw REST. |
+
+For Discord either gate alone is enough to stop a post, so they are belt-and-braces. The
+worker's gate is the one that covers **every** platform (GitHub, Slack, Teams) plus the
+digest job, because that is where the adapter call lives — so a staging environment must
+have it set on `outpost-worker`, not only on a bot.
 
 When adding any new outbound post path, check `SHADOW_MODE` before posting — otherwise
 staging will deliver to real users regardless of the flag.

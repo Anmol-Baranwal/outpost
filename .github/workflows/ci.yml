@@ -22,8 +22,6 @@ jobs:
         name: Lint, Typecheck & Test
         runs-on: ubuntu-latest
         timeout-minutes: 15
-        env:
-            ESLINT_USE_FLAT_CONFIG: 'false'
 
         steps:
             - name: Checkout
@@ -58,12 +56,9 @@ jobs:
             - name: Build
               run: pnpm build
 
-            # ESLint 9 defaults to flat config while this repo still uses
-            # .eslintrc.cjs, so the job sets ESLINT_USE_FLAT_CONFIG=false (above) and
-            # turbo.json declares it under the lint task's `env` — turbo sanitizes the
-            # environment, so without that declaration this fails with "couldn't find
-            # eslint.config.js". Migrating to eslint.config.js is still worth doing:
-            # eslintrc support is deprecated in 9 and removed in 10.
+            # Config lives in eslint.config.cjs (ESLint 9 flat config), so this needs no
+            # environment coaxing and behaves the same here, in a package directory, and
+            # in an editor's ESLint integration.
             - name: Lint
               run: pnpm lint
 
