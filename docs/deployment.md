@@ -62,7 +62,12 @@ running one service at a time, and running several together needs a per-process 
 One further asymmetry: the worker resolves `PORT ?? HEALTH_PORT ?? 3003`
 (`apps/worker/src/index.ts`), so a platform-injected `PORT` **overrides** `HEALTH_PORT` — and
 since its Dockerfile probes 3005 unconditionally, an injected `PORT` moves the listener while
-the health check keeps checking 3005. The Teams bot reads only `HEALTH_PORT`.
+the health check keeps checking 3005.
+
+Several services use `PORT` and `HEALTH_PORT` for **different** listeners rather than as
+alternatives — the Teams bot serves health on `HEALTH_PORT` (3003) and the Bot Framework
+endpoint on `PORT` (3978), and Linear sync reads both as well. Only the worker treats them as
+a fallback chain.
 
 ## Environment Variables
 
