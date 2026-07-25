@@ -1,5 +1,8 @@
 {
     "$schema": "https://turbo.build/schema.json",
+    // Root config files are cache inputs: without them a change to .eslintrc.cjs or
+    // tsconfig.json leaves turbo serving a cached pass from before the rule change.
+    "globalDependencies": [".eslintrc.cjs", "tsconfig.json", "vitest.config.ts", ".prettierrc"],
     "tasks": {
         "build": {
             "dependsOn": ["^build"],

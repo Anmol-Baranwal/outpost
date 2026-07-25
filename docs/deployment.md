@@ -39,12 +39,21 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
 | outpost-slack-bot   | Worker     | 3002                      | GET /health     |
 | outpost-teams-bot   | Web        | 3978 (bot), 3003 (health) | GET /health     |
 | outpost-linear-sync | Web        | 3004                      | GET /health     |
-| outpost-worker      | Worker     | 3003 (3005 locally)       | GET /health     |
+| outpost-worker      | Worker     | 3005 (image default)      | GET /health     |
 | outpost-db          | PostgreSQL | --                        | --              |
 
 Ports are the code's defaults (`process.env.PORT`/`HEALTH_PORT` fallback) — Railway may assign different values via its own `PORT` env var per service.
 
-Note that the worker and the Teams bot both read the same `HEALTH_PORT` variable and both default to `3003`. That is fine on Railway, where each service runs in its own container, but it collides when running them together locally — which is why `.env.example` sets `HEALTH_PORT=3005`.
+The worker and the Teams bot both read `HEALTH_PORT`, and both fall back to `3003` when
+nothing sets it — which is why `.env.example` sets `HEALTH_PORT=3005`, so the two do not
+collide when run together locally. Two details matter in a deployed environment:
+
+- `apps/worker/Dockerfile` already sets `ENV HEALTH_PORT=3005` and both exposes and probes
+  `3005`, so the worker image serves health on **3005**, not on the bare code default.
+- The worker resolves its port as `PORT ?? HEALTH_PORT ?? 3003` (`apps/worker/src/index.ts`),
+  so a platform-injected `PORT` **overrides** `HEALTH_PORT`. Setting `HEALTH_PORT` alone will
+  not move the worker's health port if `PORT` is also present. The Teams bot reads only
+  `HEALTH_PORT`.
 
 ## Environment Variables
 
@@ -222,7 +231,7 @@ All seven services expose health endpoints returning JSON:
 - Slack bot: `GET /health` (port 3002)
 - Teams bot: `GET /health` (port 3003)
 - Linear sync: `GET /health` (port 3004)
-- Worker: `GET /health` (port 3003 by default; `HEALTH_PORT=3005` locally to avoid clashing with the Teams bot)
+- Worker: `GET /health` (port 3005 — set by `ENV HEALTH_PORT=3005` in its Dockerfile; a platform-injected `PORT` takes precedence over `HEALTH_PORT`)
 
 ## Database Setup
 
@@ -232,9 +241,17 @@ After provisioning PostgreSQL (Railway supports pgvector via `CREATE EXTENSION`)
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-The schema is managed by **versioned Prisma migrations** (`packages/outpost/db/prisma/migrations/`),
-and `apps/web/start.sh` runs `prisma migrate deploy` on every container start. So a
-deployed environment migrates itself — there is no manual step for staging or production.
+The schema is managed by **versioned Prisma migrations** (`packages/outpost/db/prisma/migrations/`).
+Both `apps/web/start.sh` and `apps/worker/start.sh` run `prisma migrate deploy` on every
+container start, so a deployed environment migrates itself — there is no manual step for
+staging or production.
+
+Because two services migrate, a deploy that restarts web and worker together has **two
+concurrent migrators** against one database. Prisma takes an advisory lock, so the second
+waits rather than corrupting state, but it can fail its startup if the first migration
+outlasts the lock timeout — a restart clears it. Worth knowing before adding a third
+migrating service, and worth consolidating onto a single migrate step (or a release-phase
+job) if migrations grow long.
 
 To apply migrations by hand (e.g. against a fresh local database):
 

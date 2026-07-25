@@ -10,14 +10,23 @@ out/
 # Deliberately broad: these files hold live Discord/Slack/Anthropic credentials, and
 # a stray `git add .` is the only thing standing between them and a commit. Add new
 # allowances explicitly rather than loosening the patterns.
+# `.env.*` already covers .env.local, .env.bak.<ts>, and friends — keep it that way
+# instead of accumulating narrower duplicates.
 .env
 .env.*
-.env.local
-.env.*.local
-.env.bak*
-*.env.bak*
 !.env.example
 !.env.*.example
+
+# Credentials and keys. GITHUB_PRIVATE_KEY arrives as a downloaded .pem, which is
+# otherwise an ordinary untracked file one `git add .` away from being committed.
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Agent tool settings — holds SLACK_WEBHOOK_URL_1 and similar. Do not rely on a
+# personal global gitignore for this: it protects only the machine that has it.
+.claude/settings.local.json
 
 # Pulled deployment config (may contain resolved secrets)
 .railway-config-pull-*/
