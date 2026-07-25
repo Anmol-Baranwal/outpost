@@ -31,10 +31,16 @@ COPY --from=pruner /app/tsconfig.json ./tsconfig.json
 # variables to Dockerfile builds as build args, so each one needs an ARG here; the ARG
 # alone is not enough because Next reads process.env, hence the matching ENV. Both must
 # appear ABOVE the build step to have any effect.
-ARG NEXT_PUBLIC_AUTH_PROVIDER=credentials
-ARG NEXT_PUBLIC_SENTRY_DSN=
+#
+# ADDING A NEW NEXT_PUBLIC_* VARIABLE REQUIRES ITS OWN ARG + ENV PAIR HERE. turbo.json's
+# wildcard covers turbo's side, but Docker has no wildcard for build args — a variable
+# without a pair below is silently baked in as `undefined`.
+#
+# No default value is given deliberately. An unset build arg makes ENV an empty string,
+# and consumers treat empty as absent (`||`, not `??`) so the application's own default
+# applies. Repeating the default here instead would put it in two places that can drift.
+ARG NEXT_PUBLIC_AUTH_PROVIDER
 ENV NEXT_PUBLIC_AUTH_PROVIDER=$NEXT_PUBLIC_AUTH_PROVIDER
-ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 
 RUN pnpm turbo run build --filter=@copilotkit/outpost-web
 
