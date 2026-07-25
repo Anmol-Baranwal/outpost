@@ -1,16 +1,21 @@
 /**
- * ESLint flat config.
+ * ESLint flat config for every workspace except `apps/web`.
  *
  * ESLint 9 looks for this file by default. Before it existed, linting depended on
- * ESLINT_USE_FLAT_CONFIG=false to opt back into `.eslintrc.cjs` — which only worked
- * where that variable happened to be set, so `pnpm lint` in a package directory, an
- * editor's ESLint integration, and any shell that is not POSIX all failed. Defining
- * the config here removes the variable from every one of those paths, and removes the
- * ESLint 10 deprecation cliff (eslintrc support is dropped there).
+ * ESLINT_USE_FLAT_CONFIG=false to opt back into `.eslintrc.cjs` — which only worked where
+ * that variable happened to be set, so `pnpm lint` inside a package, an editor's ESLint
+ * integration, and any non-POSIX shell all failed. Defining the config here removes the
+ * variable from all of those paths.
  *
- * The rule set is translated from the previous `.eslintrc.cjs` through FlatCompat so
- * behavior is unchanged: same parser, same two extends, same three rule overrides.
- * Verified by comparing problem counts before and after the migration.
+ * Translated from the former root `.eslintrc.cjs` via FlatCompat: same parser, same two
+ * extends, same three rule overrides. The ignore list is NOT a literal copy — see below.
+ *
+ * `apps/web` is deliberately excluded. It keeps its own `.eslintrc.cjs` (Next.js rules,
+ * including react-hooks) and is linted by `next lint` through its own package script. If
+ * this config applied there, it would shadow that eslintrc and ESLint would fail with
+ * "Definition for rule 'react-hooks/exhaustive-deps' was not found", since the Next and
+ * react-hooks plugins are not loaded here. Migrating web is still outstanding: `next lint`
+ * is removed in Next 16, and until then eslintrc lives on in that one package.
  */
 
 const { FlatCompat } = require('@eslint/eslintrc');
@@ -23,8 +28,14 @@ const compat = new FlatCompat({
 
 module.exports = [
     {
-        // Mirrors the old ignorePatterns. Flat config needs `**/` prefixes to match at
-        // any depth — a bare `dist/` would only match the repo root.
+        // The former eslintrc ignored: node_modules/, dist/, .next/, *.js.
+        // Flat config needs `**/` to match at any depth — a bare `dist/` matches only the
+        // repo root. Three entries are additions, not translations:
+        //   - apps/web/**       — owned by next lint + apps/web/.eslintrc.cjs (see above)
+        //   - **/generated/**   — Prisma client output, not hand-written source
+        //   - **/*.cjs, **/*.mjs — config files (this one, postcss.config.cjs); the old
+        //                         config ignored only `*.js`, so these were nominally in
+        //                         scope. Excluding them is a deliberate scope reduction.
         ignores: [
             '**/node_modules/**',
             '**/dist/**',
@@ -33,10 +44,12 @@ module.exports = [
             '**/*.js',
             '**/*.cjs',
             '**/*.mjs',
+            'apps/web/**',
         ],
     },
     ...compat.config({
-        root: true,
+        // NOTE: no `root: true` here — that key is eslintrc-only and FlatCompat drops it
+        // silently. Flat config has no cascade, so there is nothing to root.
         env: {
             node: true,
             es2022: true,

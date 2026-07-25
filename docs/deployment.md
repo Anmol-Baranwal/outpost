@@ -44,15 +44,20 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
 
 Ports are the code's defaults (`process.env.PORT`/`HEALTH_PORT` fallback) — Railway may assign different values via its own `PORT` env var per service.
 
-The worker and the Teams bot read the **same** `HEALTH_PORT` variable and both fall back to
-`3003`. What keeps them apart in a deployed environment is each image pinning its own value:
-`apps/worker/Dockerfile` sets `ENV HEALTH_PORT=3005` (exposing and probing 3005), while
-`apps/teams-bot/Dockerfile` sets `ENV HEALTH_PORT=3003`.
+**Five** services read the same `HEALTH_PORT` variable, each with a different fallback:
 
-Because the variable is shared, a single `HEALTH_PORT` in a local `.env` moves **both**
-services to that port rather than separating them — running the two together locally needs a
-per-process override, not one shared value. (`.env.example`'s `HEALTH_PORT=3005` therefore
-suits running the worker alone; it does not by itself resolve a worker + teams-bot clash.)
+| Service               | Fallback in code | Pinned by its Dockerfile |
+| --------------------- | ---------------- | ------------------------ |
+| `outpost-discord-bot` | 3001             | `ENV HEALTH_PORT=3001`   |
+| `outpost-slack-bot`   | 3002             | `ENV HEALTH_PORT=3002`   |
+| `outpost-teams-bot`   | 3003             | `ENV HEALTH_PORT=3003`   |
+| `outpost-linear-sync` | 3004             | (not pinned)             |
+| `outpost-worker`      | 3003             | `ENV HEALTH_PORT=3005`   |
+
+What separates them in a deployed environment is each image pinning its own value — not the
+variable itself. So a single `HEALTH_PORT` in a shared local `.env` collapses **all five**
+onto that one port rather than separating anything: `.env.example`'s `HEALTH_PORT=3005` suits
+running one service at a time, and running several together needs a per-process override.
 
 One further asymmetry: the worker resolves `PORT ?? HEALTH_PORT ?? 3003`
 (`apps/worker/src/index.ts`), so a platform-injected `PORT` **overrides** `HEALTH_PORT` — and
@@ -152,10 +157,16 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 6. Type check
 7. Run tests
 
-Lint blocks on ESLint **errors**; warnings are reported without failing the run (37 exist
-today, all `no-unused-vars` / `consistent-type-imports`). Bounding warnings to zero means
-clearing those first — worth doing, but deliberately not bundled into the change that turned
-the step on.
+Lint blocks on ESLint **errors**; warnings are reported without failing the run. A backlog of
+warnings exists across several packages (`no-unused-vars` and `consistent-type-imports` in the
+shared packages, plus `react-hooks/exhaustive-deps` and `no-img-element` in `apps/web`) — run
+`pnpm lint` for the current list rather than trusting a number written down here. Bounding
+warnings to zero means clearing that backlog first: worth doing, but deliberately not bundled
+into the change that turned the step on.
+
+`apps/web` is linted by `next lint` against its own `apps/web/.eslintrc.cjs`; every other
+workspace uses the root `eslint.config.cjs`. Migrating web is outstanding — `next lint` is
+removed in Next 16.
 
 ## Environments (staging → production)
 
@@ -163,12 +174,12 @@ Railway hosts two environments in the `outpost` project, each with its **own** P
 
 `main` is the known-good release line: it is what production runs. Development work — features, fixes, chores — happens on branches, which merge into `staging` for integration testing. Nothing reaches `main` until it has soaked on staging.
 
-| | staging | production |
-| --- | --- | --- |
-| Deploys from | `staging` branch (CI-gated) | `main` (CI-gated) |
-| Web URL | `outpost-web-staging.up.railway.app` | `outpost.copilotkit.ai` |
-| Database | own Postgres (isolated) | own Postgres |
-| Role | integration / soak | known good |
+|              | staging                              | production              |
+| ------------ | ------------------------------------ | ----------------------- |
+| Deploys from | `staging` branch (CI-gated)          | `main` (CI-gated)       |
+| Web URL      | `outpost-web-staging.up.railway.app` | `outpost.copilotkit.ai` |
+| Database     | own Postgres (isolated)              | own Postgres            |
+| Role         | integration / soak                   | known good              |
 
 Four services carry deploy triggers in both environments: `outpost-web`, `outpost-github-app`, `outpost-discord-bot`, `outpost-worker`. The remaining three (`outpost-slack-bot`, `outpost-teams-bot`, `outpost-linear-sync`) are optional integrations — deployed manually / left offline until their credentials are configured.
 
@@ -185,10 +196,10 @@ to verify agent behavior without replying to real users.
 `SHADOW_MODE` is read by **more than one service**, and each one gates a different point
 in the flow. Set it consistently across an environment rather than on a single service:
 
-| Service | What the flag changes |
-| --- | --- |
-| `outpost-discord-bot` | At ingest. `thread-create.ts` and `message-create.ts` call `isShadowMode()` and divert to `handleShadowThreadCreate` / `handleShadowMessage`, recording the ticket and a shadow response silently instead of running the normal visible flow (`src/lib/shadow-mode.ts`). |
-| `outpost-worker` | At post-back. The `AI_RESPONSE` handler checks the flag immediately before `adapter.postResponse` and persists the response as a shadow `Message` row instead of posting (`queue/src/handlers/ai-response.ts`). Also gates `ONBOARDING_DIGEST`, which posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` over raw REST. |
+| Service               | What the flag changes                                                                                                                                                                                                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `outpost-discord-bot` | At ingest. `thread-create.ts` and `message-create.ts` call `isShadowMode()` and divert to `handleShadowThreadCreate` / `handleShadowMessage`, recording the ticket and a shadow response silently instead of running the normal visible flow (`src/lib/shadow-mode.ts`).                                                                      |
+| `outpost-worker`      | At post-back. The `AI_RESPONSE` handler checks the flag immediately before `adapter.postResponse` and persists the response as a shadow `Message` row instead of posting (`queue/src/handlers/ai-response.ts`). Also gates `ONBOARDING_DIGEST`, which posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` over raw REST. |
 
 For Discord either gate alone is enough to stop a post, so they are belt-and-braces. The
 worker's gate is the one that covers **every** platform (GitHub, Slack, Teams) plus the
