@@ -141,18 +141,11 @@ describe('handleDiscussionCreated', () => {
         });
     });
 
-    it('posts acknowledgment via adapter.postSystemMessage with discussion node_id', async () => {
+    it('does not post a ticket-created acknowledgment comment on the discussion', async () => {
         const event = makeEvent();
         await handleDiscussionCreated(event);
 
-        expect(mockPostSystemMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                id: 'ticket-disc-id',
-                discussionNodeId: 'D_kwDOTest1234',
-                source: 'GITHUB_DISCUSSION',
-            }),
-            expect.stringContaining('TKT-DS01'),
-        );
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 
     it('handles discussions with no body gracefully', async () => {
