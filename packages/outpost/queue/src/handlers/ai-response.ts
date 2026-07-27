@@ -173,9 +173,22 @@ export async function handleAiResponse(
             },
         });
 
-        // 5b. Post the response back to the source platform
+        // 5b. Post the response back to the source platform.
+        //
+        // A suppressed response is one the groundedness check found unsupportable —
+        // it confirms a bug, asserts a root cause, or names identifiers absent from
+        // every retrieved source. Confidence alone never gated the post (it only
+        // picks the disclaimer and fires escalation), so a low score would not have
+        // stopped a fabrication from reaching a public thread. This does. The draft
+        // is still persisted above and lands on the ticket as suggestedResponse, so
+        // a human can edit and send it.
         const ticketSource = ticket.source as TicketSource;
-        if (process.env.SHADOW_MODE === 'true') {
+        if (pipelineResult.suppressed) {
+            console.warn(
+                `[AI Response] Withholding response for ticket ${ticketId} — ` +
+                    `${pipelineResult.groundedness.reasons.join('; ')}. Escalating to a human.`,
+            );
+        } else if (process.env.SHADOW_MODE === 'true') {
             try {
                 await prisma.message.create({
                     data: {
@@ -244,12 +257,16 @@ export async function handleAiResponse(
 
         await context.reportProgress(85);
 
-        // 6. If confidence is below the escalation threshold, enqueue ESCALATION
-        if (pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE) {
+        // 6. Enqueue ESCALATION when confidence is below threshold, or when the
+        // response was withheld — nothing reached the reporter in that case, so a
+        // human has to pick it up regardless of what the score says.
+        if (pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE || pipelineResult.suppressed) {
             try {
                 await createJob(JobType.ESCALATION, {
                     ticketId: ticket.id,
-                    reason: `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`,
+                    reason: pipelineResult.suppressed
+                        ? `AI response withheld (${pipelineResult.groundedness.reasons.join('; ')}) — needs a human answer`
+                        : `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`,
                 });
             } catch (error) {
                 console.error(
@@ -266,7 +283,8 @@ export async function handleAiResponse(
 
     console.log(
         `[AI Response] Ticket ${ticketId}: confidence=${pipelineResult.confidenceLevel} ` +
-            `(${(pipelineResult.confidenceScore * 100).toFixed(0)}%), latency=${pipelineResult.latencyMs}ms`,
+            `(${(pipelineResult.confidenceScore * 100).toFixed(0)}%), latency=${pipelineResult.latencyMs}ms` +
+            `${pipelineResult.suppressed ? ', response withheld' : ''}`,
     );
 
     return {
@@ -276,7 +294,10 @@ export async function handleAiResponse(
             confidenceLevel: pipelineResult.confidenceLevel,
             confidenceScore: pipelineResult.confidenceScore,
             latencyMs: pipelineResult.latencyMs,
-            escalated: pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE,
+            escalated:
+                pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE ||
+                pipelineResult.suppressed,
+            suppressed: pipelineResult.suppressed,
         },
     };
 }

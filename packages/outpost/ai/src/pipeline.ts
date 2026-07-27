@@ -7,6 +7,7 @@ import type {
     SearchResult,
 } from './types.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
+import { assessGroundedness } from './groundedness.js';
 import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import { PathfinderClient } from './pathfinder.js';
 import { ResponseGenerator } from './generator.js';
@@ -26,6 +27,12 @@ import { validateConfig } from './config.js';
  * under AI_CONFIDENCE.HIGH_THRESHOLD if those bands are ever re-tuned.
  */
 const DEGRADED_CONFIDENCE_CAP = AI_CONFIDENCE.HIGH_THRESHOLD - 0.01;
+
+/**
+ * Highest score a suppressed (unpublishable) response may carry. Sits just below
+ * the escalation gate so a withheld answer always reads as needing a human.
+ */
+const SUPPRESSED_CONFIDENCE_CAP = AI_CONFIDENCE.ESCALATE - 0.01;
 
 /**
  * Main entry point for the Outpost AI pipeline.
@@ -130,6 +137,27 @@ export class AIPipeline {
             Math.min(1, combinedConfidenceScore + calibration),
         );
 
+        // Groundedness is deducted AFTER calibration so aggregate 👍/👎 feedback can
+        // never offset a fabrication: feedback tunes how we weigh a well-formed
+        // answer, it does not license an unsupported claim.
+        const groundedness = assessGroundedness(generatedResponse.text, searchResults);
+        if (groundedness.penalty > 0) {
+            finalConfidenceScore = Math.max(0, finalConfidenceScore - groundedness.penalty);
+            console.warn(
+                `[Pipeline] Groundedness penalty ${groundedness.penalty.toFixed(2)} — ${groundedness.reasons.join('; ')}`,
+            );
+        }
+
+        // A response we won't publish is not a confident one, whatever the
+        // retrieval scored. Clamp below the escalation gate so every downstream
+        // reader agrees: the disclaimer promises a human, the dashboard buckets it
+        // LOW, and the worker's score-based escalation fires on its own. The
+        // capped penalty alone can't guarantee this — a top score plus positive
+        // calibration lands exactly ON the gate, which does not escalate.
+        if (groundedness.suppress) {
+            finalConfidenceScore = Math.min(finalConfidenceScore, SUPPRESSED_CONFIDENCE_CAP);
+        }
+
         // Safety cap: a DEGRADED confidence signal (LLM scorer unavailable → heuristic
         // fallback over Pathfinder's synthetic rank-scores) must never present as HIGH.
         // HIGH suppresses the disclaimer and is treated as authoritative, so an ungrounded
@@ -169,6 +197,12 @@ export class AIPipeline {
 
         const latencyMs = Date.now() - startTime;
 
+        if (groundedness.suppress) {
+            console.warn(
+                `[Pipeline] Response withheld from public post — ${groundedness.reasons.join('; ')}`,
+            );
+        }
+
         return {
             response: generatedResponse.text,
             formatted,
@@ -177,6 +211,8 @@ export class AIPipeline {
             searchResults,
             tokenUsage: totalTokenUsage,
             latencyMs,
+            groundedness,
+            suppressed: groundedness.suppress,
         };
     }
 

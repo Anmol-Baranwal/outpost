@@ -3,6 +3,7 @@ import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import type { PlatformTarget } from '@copilotkit/outpost/shared';
 import type { GeneratedResponse, PipelineContext, SearchResult, TokenUsage } from './types.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
+import { assessGroundedness } from './groundedness.js';
 import { config } from './config.js';
 
 /**
@@ -229,14 +230,20 @@ export class ResponseGenerator {
         return messages;
     }
 
-    private assessConfidence(sources: SearchResult[], _response: string): number {
+    private assessConfidence(sources: SearchResult[], response: string): number {
         if (sources.length === 0) return 0.2;
 
         const avgRelevance = this.avgScore(sources);
         const sourceCountBonus = Math.min(sources.length * 0.05, 0.15);
 
         // Base confidence on source quality + count
-        return Math.min(avgRelevance + sourceCountBonus, 1.0);
+        const retrievalScore = Math.min(avgRelevance + sourceCountBonus, 1.0);
+
+        // Retrieval quality alone says nothing about whether the answer stayed
+        // inside those sources. Deduct for claims the response is not entitled
+        // to make, so a fabrication can't inherit a good docs match's score.
+        const { penalty } = assessGroundedness(response, sources);
+        return Math.max(0, retrievalScore - penalty);
     }
 
     private avgScore(sources: SearchResult[]): number {

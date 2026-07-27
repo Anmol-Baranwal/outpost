@@ -137,6 +137,32 @@ const highConfidenceResult = {
     searchResults: [{ title: 'Getting Started', content: '...', score: 0.95 }],
     tokenUsage: { inputTokens: 100, outputTokens: 200 },
     latencyMs: 1500,
+    groundedness: {
+        penalty: 0,
+        unverifiedClaims: [],
+        unsourcedIdentifiers: [],
+        hedgeCount: 0,
+        suppress: false,
+        reasons: [],
+    },
+    suppressed: false,
+};
+
+/** A response the groundedness check refuses to publish (see #6167). */
+const suppressedResult = {
+    ...highConfidenceResult,
+    response: '## Bug Confirmed: Cursor Jump\n\nOverride `.copilotKitInputControls`.',
+    confidenceLevel: 'LOW',
+    confidenceScore: 0.32,
+    groundedness: {
+        penalty: 0.5,
+        unverifiedClaims: ['"bug confirmed"'],
+        unsourcedIdentifiers: ['copilotKitInputControls'],
+        hedgeCount: 0,
+        suppress: true,
+        reasons: ['unverifiable claims: "bug confirmed"'],
+    },
+    suppressed: true,
 };
 
 const mediumConfidenceResult = {
@@ -281,6 +307,72 @@ describe('handleAiResponse', () => {
                 reason: expect.stringContaining('Low AI confidence'),
             }),
         );
+    });
+
+    // A suppressed response is one the groundedness check found unsupportable.
+    // Confidence never gated the post-back, so these three behaviors are the
+    // whole point: nothing reaches the reporter, a human is pulled in, and the
+    // draft survives on the ticket for that human to edit.
+    describe('suppressed (ungrounded) responses', () => {
+        beforeEach(() => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(suppressedResult);
+            mockHasAdapter.mockReturnValue(true);
+        });
+
+        it('never posts to the source platform', async () => {
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.suppressed).toBe(true);
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('escalates to a human even though the score is above ESCALATE', async () => {
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // 0.32 would escalate on score alone, so prove it escalates on
+            // suppression by raising the score above the gate.
+            mockPrismaJob.create.mockClear();
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...suppressedResult,
+                confidenceScore: 0.95,
+                confidenceLevel: 'HIGH',
+            });
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(result.data?.escalated).toBe(true);
+            expect(mockPrismaJob.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({ type: 'ESCALATION' }),
+                }),
+            );
+            const escalationCall = mockPrismaJob.create.mock.calls[0][0];
+            expect(escalationCall.data.payload.reason).toContain('withheld');
+        });
+
+        it('still persists the draft so a human can edit and send it', async () => {
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({ type: 'BOT', isAiGenerated: true }),
+                }),
+            );
+            expect(mockPrismaTicket.update).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        suggestedResponse: expect.any(String),
+                    }),
+                }),
+            );
+        });
     });
 
     it('does not escalate when confidence is above ESCALATE threshold', async () => {

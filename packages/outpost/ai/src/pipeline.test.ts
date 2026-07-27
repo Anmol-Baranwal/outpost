@@ -15,6 +15,7 @@ vi.mock('./config.js', () => ({
     validateConfig: vi.fn(),
 }));
 
+import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import { AIPipeline } from './pipeline.js';
 import { ConfidenceLevel, TicketPriority, TicketType } from './types.js';
 import type { SearchResult, GeneratedResponse } from './types.js';
@@ -213,6 +214,64 @@ describe('AIPipeline', () => {
                 expect(text).toContain('This is an AI-generated response.');
             },
         );
+
+        // The scores above measure retrieval quality; these measure whether the
+        // answer stayed inside what was retrieved. Without this, a fabrication
+        // inherits the score of a good docs match (how #6167 got posted).
+        describe('groundedness', () => {
+            it('leaves a grounded response unpenalized and publishable', async () => {
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.groundedness.penalty).toBe(0);
+                expect(result.suppressed).toBe(false);
+                expect(result.confidenceScore).toBe(0.85);
+            });
+
+            it('deducts the penalty from the final score', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: 'Override `.copilotKitInputControls` to fix it.',
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                // 0.85 (min of generator/scorer) − 0.15 for one invented identifier
+                expect(result.confidenceScore).toBeCloseTo(0.7, 5);
+                expect(result.groundedness.unsourcedIdentifiers).toEqual([
+                    'copilotKitInputControls',
+                ]);
+            });
+
+            it('marks a response that confirms a bug as suppressed', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(true);
+                expect(result.groundedness.suppress).toBe(true);
+                expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
+            });
+
+            // Positive feedback tunes how we weigh well-formed answers. It must not
+            // buy back a fabrication, so the penalty lands after calibration.
+            it('cannot be offset by positive feedback calibration', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: 'Bug Confirmed. Root cause is a re-render. The fix is trivial.',
+                });
+
+                const withBoost = await pipeline.generateSupportResponse('q', {
+                    source: 'github',
+                    confidenceCalibration: 0.15,
+                });
+
+                expect(withBoost.suppressed).toBe(true);
+                expect(withBoost.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
+            });
+        });
 
         it('should handle Pathfinder failure gracefully', async () => {
             mockSearchDocs.mockRejectedValueOnce(new Error('MCP down'));

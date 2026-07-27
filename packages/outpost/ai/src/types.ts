@@ -4,6 +4,9 @@
 
 import { AI_CONFIDENCE, TicketPriority, TicketType } from '@copilotkit/outpost/shared';
 import type { PlatformTarget } from '@copilotkit/outpost/shared';
+// Type-only import — erased at build time, so the types.ts ↔ groundedness.ts
+// cycle never exists at runtime.
+import type { GroundednessAssessment } from './groundedness.js';
 export { TicketPriority, TicketType } from '@copilotkit/outpost/shared';
 export type { PlatformTarget } from '@copilotkit/outpost/shared';
 
@@ -207,4 +210,12 @@ export interface PipelineResult {
     tokenUsage: TokenUsage;
     /** End-to-end latency in milliseconds */
     latencyMs: number;
+    /** Deterministic check of the response against its sources. */
+    groundedness: GroundednessAssessment;
+    /**
+     * True when the response makes a claim we can't stand behind and must not be
+     * posted to the public thread. Callers escalate to a human instead. Mirrors
+     * `groundedness.suppress` — kept at the top level because it gates a post.
+     */
+    suppressed: boolean;
 }
