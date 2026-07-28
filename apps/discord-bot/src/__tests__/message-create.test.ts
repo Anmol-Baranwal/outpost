@@ -35,6 +35,7 @@ vi.mock('discord.js', async (importOriginal) => {
 import { handleMessageCreate } from '../events/message-create.js';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
+import { isShadowMode, handleShadowMessage } from '../lib/shadow-mode.js';
 
 const TICKET = {
     id: 'ticket-1',
@@ -68,6 +69,7 @@ function makeMessage(overrides: Record<string, unknown> = {}) {
 
 describe('handleMessageCreate', () => {
     beforeEach(() => {
+        vi.mocked(isShadowMode).mockReturnValue(false);
         // findTicketByThreadId returns the existing ticket
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never);
         vi.mocked(prisma.message.create).mockResolvedValue({
@@ -162,6 +164,42 @@ describe('handleMessageCreate', () => {
             where: { id: 'ticket-1' },
             data: { status: 'OPEN' },
         });
+    });
+
+    // Regression: Discord dispatches BOTH ThreadCreate and MessageCreate for a
+    // new forum post. handleThreadCreate already ingests the starter message,
+    // so handling it again here enqueued a SECOND AI_RESPONSE job for the same
+    // ticket — the same question retrieved and answered twice, ~0.2s apart.
+    // A thread's starter message shares the thread's own ID.
+    it('ignores the thread starter message already ingested by ThreadCreate', async () => {
+        const starter = makeMessage({ id: 'thread-123' });
+
+        await handleMessageCreate(starter);
+
+        expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+        expect(prisma.message.create).not.toHaveBeenCalled();
+        expect(createJob).not.toHaveBeenCalled();
+    });
+
+    it('ignores the thread starter message in shadow mode too', async () => {
+        vi.mocked(isShadowMode).mockReturnValue(true);
+        const starter = makeMessage({ id: 'thread-123' });
+
+        await handleMessageCreate(starter);
+
+        expect(handleShadowMessage).not.toHaveBeenCalled();
+        expect(createJob).not.toHaveBeenCalled();
+    });
+
+    it('still processes genuine replies in the same thread', async () => {
+        const reply = makeMessage({ id: 'msg-777' });
+
+        await handleMessageCreate(reply);
+
+        expect(createJob).toHaveBeenCalledWith(
+            'AI_RESPONSE',
+            expect.objectContaining({ ticketId: 'ticket-1' }),
+        );
     });
 
     it('uses DiscordAdapter.parseInboundEvent to normalize message events', async () => {
