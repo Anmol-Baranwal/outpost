@@ -25,13 +25,22 @@ The main page is the **CopilotKit** report. It opens with the `## 📦 CopilotKi
 
 Covering the **most recent complete Friday→Friday week** (Friday end-date inclusive) for Discord + GitHub. (Reddit Pulse uses a rolling 90-day window — see step 6.) State the window before pulling data.
 
+## The orchestrator verifies every subagent's work (supervisor rule)
+
+**The orchestrator is accountable for everything published — a subagent's return is INPUT, not truth.** Every subagent (Discord pull, GitHub pull, deep-read, release-scan, enrich-reporter, enrich-prospect, Reddit Pulse, product-surface, link-review, report-sources) can be wrong, stale, or incomplete. Before using any return:
+
+- **Spot-check its claims against source** — issue/PR numbers + state + dates (`gh`), versions (release-scan), company affiliation (bio, not just the `company` field), links resolve, product-surface quotes appear on the live page. If a claim can't be traced to a source, don't publish it.
+- **Reconcile contradictions between subagents** — if two returns disagree (e.g. deep-read says OPEN but release-scan says shipped), run it down before writing.
+- **The two formal gates are still mandatory:** the **link-review pass (step 14)** re-verifies every link + product-surface claim, and the **report-sources pass (14b)** defends every placement against evidence and **feeds corrections back into the report** (fix the report first, then the defense reflects it). Loop each until clean.
+- **Re-spawn or correct** when a return looks off, rather than passing it through. Precedents this cycle: the Fri→Fri window was set to the wrong week and caught mid-run; enrich flagged a stale ("ex-") employer; the release cross-check caught issues already fixed in a shipped release. None of those should reach the published page.
+
 ## Orchestrator flow
 
 0. **Fresh pull first — before anything else.** `git pull` the repo so you're running the LATEST skills/rules (they're the source of truth and change often — a stale checkout runs an old spec). And pull **fresh** source data for the window from Discord / GitHub / Reddit every run — never reuse a prior run's pull, a cache, or last week's numbers.
 
 1. **Determine the window.** Today's date → most recent complete Fri→Fri. State it.
 
-1b. **Spawn Subagent H — product-surface scan** (see `product-surface-scan` skill). Spawn it **at report start, in parallel with A/B/G**. It fetches CopilotKit's product / pricing / Premium pages and returns: the authoritative **commercial-surface list** (drives the 🏢 Enterprise "Surfaces this week" table), the **free-vs-paid classifier** (used to decide whether each issue belongs in 🏢 Enterprise — a commercial surface — vs Pain/Demand), a **diff of what commercial features changed since last week**, and a **cross-page contradiction check** (page-vs-page / page-vs-source conflicts → the ⚠️ Product surface contradictions category). Writes a snapshot to `docs/community-signal/commercial-surfaces.json`. **Enterprise = CopilotKit's commercial product, NOT "CopilotKit used at a big company"** — apply the classifier, don't shelve a free-OSS bug under Enterprise just because the reporter is enterprise.
+1b. **Spawn Subagent H — product-surface scan** (see `product-surface-scan` skill). Spawn it **at report start, in parallel with A/B/G**. It fetches CopilotKit's product / pricing / Premium pages and returns: the authoritative **commercial-surface list** (drives the 🏢 Enterprise "Surfaces this week" table), the **free-vs-paid classifier** (used to decide whether each issue belongs in 🏢 Enterprise — a commercial surface — vs Pain/Demand), a **diff of what commercial features changed since last week**, and a **cross-page contradiction check** (page-vs-page / page-vs-source conflicts → the ⚠️ Product surface contradictions category). It writes nothing to the repo — the week-over-week baseline is last week's report in Notion (see "Report data lives only in Notion" below). **Enterprise = CopilotKit's commercial product, NOT "CopilotKit used at a big company"** — apply the classifier, don't shelve a free-OSS bug under Enterprise just because the reporter is enterprise.
 
 2. **Spawn Subagent A — Discord pull.** Tell it to pull both servers:
    - CopilotKit (`1122926057641742418`): `#💬｜general` (text `1182553320540352563`) + `#🤔｜support` (forum `1313616713647919218`)
@@ -58,12 +67,12 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 
 5b. **Spawn Subagent D2 — Deep-enrich prospects** (see `enrich-prospect` skill). AFTER D classifies the enterprise list, take the **prospect shortlist** (recognizable enterprise / well-funded scale-ups, e.g. Jasper AI / commercetools tier) and deep-enrich each: LinkedIn profile (employer verified against the GitHub company — keep searching if mismatched), company website, company size (ARR / latest funding round / employee count). Returns one structured block per prospect for the 🎯 Prospective enterprise customers subsection. Run on the shortlist ONLY, not every reporter.
 
-6. **Subagent E — Reddit Pulse pull** (per-community, rolling 90-day window). Data source = the **`composio`** MCP server (Composio tool router, OAuth). See "Reddit Pulse section" for the full spec; the mechanics:
-   - **Connection check.** Reddit needs an ACTIVE Composio connection. If `COMPOSIO_SEARCH_TOOLS` reports `has_active_connection: false` for `reddit`, call `COMPOSIO_MANAGE_CONNECTIONS` (toolkit `reddit`, action `add`), surface the returned auth link to Nathan, then `COMPOSIO_WAIT_FOR_CONNECTIONS`. If `composio` isn't connected at all → render "source not configured" and move on.
-   - **Discover tools once:** `COMPOSIO_SEARCH_TOOLS` (keep the returned `session_id`, reuse it on every later Composio call).
+6. **Subagent E — Reddit Pulse pull** (per-community, rolling 90-day window). Data source = **Composio REST + a write-scoped API key** (NOT the `composio` MCP — its OAuth identity can't see the dashboard connection; and a default read-only API key 403s on `tool_execution`). See "Reddit Pulse section" for the full spec; the mechanics:
+   - **Auth.** Need a Composio API key with the `Tools` resource = **Write**, set as `COMPOSIO_API_KEY` in repo-root `.env`. All calls use header `x-api-key: $COMPOSIO_API_KEY`.
+   - **Get the connected account.** `GET https://backend.composio.dev/api/v3/connected_accounts?toolkit_slugs=reddit` → pick the `ACTIVE` account's `id` (`ca_…`; it changes whenever the auth config is recreated). If none is ACTIVE → render "source not configured" and move on. (Prior blockers, now avoided: the MCP entity mismatch + a default read-only key.)
    - **Window:** rolling **last 90 days**. Compute cutoff = now − 90d (epoch seconds); filter posts by `created_utc >= cutoff` client-side (Reddit search has no native date filter).
    - **Dedup ledger:** load `docs/community-signal/reddit-pulse-seen.json`. Skip any post `id` already listed. After the run, append ALL surfaced + dropped-as-noise ids under a new dated entry (so noise can't resurface), and prune ids whose post date is >90d old (they can't reappear in the window).
-   - **Execute via `COMPOSIO_MULTI_EXECUTE_TOOL`** (batch independent calls in parallel; large responses save to the Composio sandbox — parse with `COMPOSIO_REMOTE_WORKBENCH`). Tools:
+   - **Execute via REST:** `POST https://backend.composio.dev/api/v3/tools/execute/<TOOL_SLUG>` with body `{"connected_account_id":"ca_…","arguments":{…}}`. Response posts nest under `.data.search_results.data.children[].data` (parse defensively — a `posts[]` array may also appear). Tools:
      - `REDDIT_SEARCH_ACROSS_SUBREDDITS` — one call per `REDDIT_BRAND_TERMS` entry (default `CopilotKit`, `AG-UI`, `ag-ui`), `restrict_sr=false`, `sort` new + relevance.
      - `REDDIT_RETRIEVE_REDDIT_POST` — per `REDDIT_WATCHLIST` subreddit (default LocalLLaMA, LangChain, AI_Agents, nextjs, SaaS, LLMDevs) for landscape/competitor chatter.
      - `REDDIT_RETRIEVE_POST_COMMENTS` — for high-signal / debatable threads; pass the **bare base36 article id** (no `t3_`). Top comments are the sentiment.
@@ -242,8 +251,8 @@ Every reported item — in 🔝 Top issues, 🔥 Demand, 💢 Pain, and 📚 Doc
   | Line | Label | Content |
   |---|---|---|
   | 1 | **What it is:** | One plain-English line — what the thing actually is, said the way a person would out loud. NOT agent/meta (never "Landed Top issue #1, score 13, mirrored into Enterprise" — placement is obvious from where the card sits). ~8–18 words. Surface experimental/deprecated/pre-release maturity here in plain words if it applies. |
-  | 2 | **Source:** | The platform + the linked number/thread: `GitHub [#NNNN](url)` or `Discord [thread](url)`. (Mandatory source link.) |
-  | 3 | **Reported by:** | The reporter's handle, linked, + `🏢 Company` badge if enterprise. |
+  | 2 | **Source:** | The platform + the linked number/thread + **when it was opened**: `GitHub [#NNNN](url) · opened YYYY-MM-DD` or `Discord [thread](url) · opened YYYY-MM-DD`. (Mandatory source link; the created date is absolute ISO, from `gh issue view <n> --json createdAt` / the thread's first message. On a multi-issue card, list each date, e.g. `· opened 2026-03-23 / 2026-07-21`.) |
+  | 3 | **Reported by:** | The reporter's handle **linked to their GitHub profile** — `[``login``](https://github.com/login)` — plus a **linked** `🏢 [Company](company-url)` badge if enterprise. Both the profile URL and the company URL come from `enrich-reporter`; never leave the handle or company as plain text. Multiple reporters → link each. |
   | 4 | **Description:** | The longer, very-readable explanation — 1–3 human sentences, no wall of text, no jargon dump. This is where detail lives (not the one-liner). |
   | 5 | **CPK version:** | Just the version number — `v1.61.0`, `@copilotkitnext/core 1.54.0`, `unknown`, or `n/a — AG-UI`. **Number only** — the deprecated/experimental note goes in *What it is* / *Description* / *Fix plan*, not here. |
   | 6 | **Impact:** | Human-readable — who it hits and how bad, in plain terms. (Demand: this is "why it matters".) |
@@ -362,8 +371,8 @@ Rules:
 - **Every post is a source link** to its Reddit permalink. **Sentiment comes from reading the post + top comments** (`REDDIT_RETRIEVE_POST_COMMENTS`), not the title.
 - **Cross-posts** of the same story merge into one bullet (note the copies + use max engagement).
 - **Noise** (spam, false-positive keyword hits) is dropped from the section but still recorded in the ledger so it can't resurface.
-- **Source-gated:** if the `composio` MCP / Reddit connection isn't available, render "🟠 Reddit Pulse — source not configured this week." and move on — never block the report on it.
-- **Data source:** the **`composio`** MCP server (Composio tool router, OAuth — Composio's egress reaches Reddit where this machine's IP is 403-blocked). Connection managed via `COMPOSIO_MANAGE_CONNECTIONS` / `COMPOSIO_WAIT_FOR_CONNECTIONS`; tools discovered via `COMPOSIO_SEARCH_TOOLS` and run via `COMPOSIO_MULTI_EXECUTE_TOOL` (`REDDIT_SEARCH_ACROSS_SUBREDDITS`, `REDDIT_RETRIEVE_REDDIT_POST`, `REDDIT_RETRIEVE_POST_COMMENTS`). Scope vars `REDDIT_BRAND_TERMS` + `REDDIT_WATCHLIST` in the repo-root `.env`.
+- **Source-gated:** if there's no write-scoped `COMPOSIO_API_KEY` or no ACTIVE Reddit connected account, render "🟠 Reddit Pulse — source not configured this week." and move on — never block the report on it.
+- **Data source:** **Composio REST** (Composio's egress reaches Reddit where this machine's IP is 403-blocked on anonymous reads) — NOT the `composio` MCP (its OAuth identity can't see the dashboard connection) and NOT a default read-only API key (`tool_execution` 403). Use a **write-scoped** Composio API key (`Tools` resource = Write) in `COMPOSIO_API_KEY` (repo-root `.env`); `POST /api/v3/tools/execute/<TOOL>` with the ACTIVE Reddit `connected_account_id` from `GET /api/v3/connected_accounts?toolkit_slugs=reddit`. Tools: `REDDIT_SEARCH_ACROSS_SUBREDDITS`, `REDDIT_RETRIEVE_REDDIT_POST`, `REDDIT_RETRIEVE_POST_COMMENTS`. Scope vars `REDDIT_BRAND_TERMS` + `REDDIT_WATCHLIST` in the repo-root `.env`.
 
 ### Reddit Pulse scoring algorithm
 
@@ -406,7 +415,8 @@ Four subsections, in order:
 **Companies building on us this week** — the signal is **a company currently using/building on us**, surfaced through someone who *currently* works there.
 - **Verify the current employer** with `gh api users/<login>` AND read the bio — the `company` field is often stale. If the bio says "ex-", "previously", "prior experience: …", they do NOT count. (Precedent: a reporter showed `company: Apple` but bio said "Prior experience: Apple" — ex-Apple, dropped.)
 - **Ex-employers and "notable individuals" don't count** — track them as community reporters, not enterprise.
-- Per-company bullet: who, where they currently work, what they filed, and the strength of signal.
+- **Flag unconfirmed employers explicitly.** If the company can't be independently confirmed — only the self-declared GitHub `company` field, no bio / LinkedIn / other corroboration, or the identity itself can't be pinned — append a **⚠️ Company unconfirmed — <why>** note to that bullet (and mirror it in the 🎯 prospect block). Never present an unverified employer as fact; a reader/sales must see the confidence. (Precedent: `GeauxEric` listed `company: Nvidia` on GitHub with no verifiable name/LinkedIn → bullet marked "Company unconfirmed — self-declared, single-IC.")
+- Per-company bullet: who, where they currently work (confirmed or flagged unconfirmed), what they filed, and the strength of signal.
 - When correcting a prior week's overcount, say so in a short `<details>` so the trend stays honest.
 
 **Enterprise-offering reactions** — explicitly report community reaction to the enterprise surfaces, especially **Slack / Teams integrations** and **threads / persistence**. **If there was no reaction, say so** — silence is itself a signal.
@@ -422,7 +432,7 @@ A standing subsection naming **community members who look like enterprise prospe
   ### 🎯 Prospective enterprise customers {toggle="true"}
   	- **Company:** [<Company>](<company website url>)
   		**Name:** [<Full Name>](<LinkedIn url>)          ← or "<Full Name> — LinkedIn not confirmed"
-  		**Issue:** [<GitHub issue title>](<issue url>)   ← use **Source:** [<thread/post>](<url>) for Discord/Reddit
+  		**Issue:** [<GitHub issue title>](<issue url>) · opened YYYY-MM-DD   ← use **Source:** [<thread/post>](<url>) · opened YYYY-MM-DD for Discord/Reddit
   		**Company Details:** <ARR / latest funding round only / employee count — most-recent only, or "size unknown">
   		**Passed to (sales):** _<blank — Nathan fills>_
   ```
@@ -455,7 +465,7 @@ The action checklist. **Draw the items from the `report-sources` evidence pass**
 - **Every named entity in 🔄 Patterns is hyperlinked** — no bare `#NNNN`, handles, or feature names in Patterns prose.
 - Forum thread URL: `https://discord.com/channels/<guild_id>/<thread_id>` (parent forum channel ID NOT in URL).
 - Text channel: link to channel + include date.
-- GitHub: `[#NNNN](issue-url)` + backtick handle; no profile link unless they have no filed issue.
+- GitHub reporters: **link the handle to its GitHub profile** — `[``login``](https://github.com/login)` — and **link the `🏢 Company` badge to the company site** when enterprise (`🏢 [Amazon](https://www.amazon.com)`). Both URLs come from `enrich-reporter` (profile_url + company_url). The issue number itself is linked on the Source line. No plain-text handles or company names on any card.
 - Append `🏢 <Company>` badge inline next to enterprise users' handles. Indie / solo get no badge.
 - Identity collisions: merge same person across handles silently in the count; note inline if useful.
 - Same-author duplicate-filing: one reporter, one signal.
@@ -478,7 +488,7 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 
 ## Conventions
 
-- **Dated report lists go oldest → newest.** Front-door entries, reporter rosters, Resolved rows, Reddit Pulse threads.
+- **Report data lives ONLY in Notion — never in the codebase.** The report and everything derived from it (surface snapshots, issue lists, scored rankings, prospect data, weekly numbers) get published to the Notion pages and nowhere else. **Do not persist report content or per-run snapshots as files in the repo** (no `commercial-surfaces.json`-style ledgers). When a step needs last week's numbers to diff against, read the **prior report in Notion** — that is the baseline. The single allowed data artifact in the repo is `docs/community-signal/reddit-pulse-seen.json`, and only because it is operational **dedup state** (a list of already-seen Reddit post IDs), not report content — its header comment says so. If a future step wants to "save" anything else, the answer is: put it in the Notion report.
 - **Report list bullets = one sentence.** Deep technical detail lives in 🔄 Patterns or the linked issue.
 - Don't post to Discord / Reddit — read only.
 - Don't ping users by handle in Notion; summarize impact instead.
