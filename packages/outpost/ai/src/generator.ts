@@ -127,9 +127,12 @@ export class ResponseGenerator {
                 outputTokens: message.usage.output_tokens,
             };
 
-            const confidenceScore = this.assessConfidence(sources, responseText);
+            const confidenceScore = this.assessConfidence(sources);
             const confidenceLevel = classifyConfidence(confidenceScore);
             const latencyMs = Date.now() - startTime;
+            // Assessed here (the response and its sources are both in hand) and
+            // applied by the pipeline — exactly once.
+            const groundedness = assessGroundedness(responseText, sources);
 
             return {
                 text: responseText,
@@ -140,6 +143,7 @@ export class ResponseGenerator {
                 reasoning: `Based on ${sources.length} source(s) with avg relevance ${this.avgScore(sources).toFixed(2)}`,
                 tokenUsage,
                 latencyMs,
+                groundedness,
                 degraded: false,
             };
         } catch (error) {
@@ -155,6 +159,8 @@ export class ResponseGenerator {
                 reasoning: `Generation failed: ${error instanceof Error ? error.message : String(error)}`,
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
                 latencyMs,
+                // The fallback copy is ours, not the model's — nothing to assess.
+                groundedness: assessGroundedness('', sources),
                 degraded: true,
             };
         }
@@ -230,20 +236,23 @@ export class ResponseGenerator {
         return messages;
     }
 
-    private assessConfidence(sources: SearchResult[], response: string): number {
+    /**
+     * Score retrieval quality: how good the sources are, not what the response did
+     * with them.
+     *
+     * Deliberately does NOT deduct the groundedness penalty. This score feeds the
+     * pipeline's `min(generator, scorer)`, and the pipeline deducts afterwards — so
+     * subtracting here too charged the same penalty twice whenever this score was
+     * the lower of the two. The groundedness assessment travels alongside on
+     * `GeneratedResponse.groundedness` for the pipeline to apply once.
+     */
+    private assessConfidence(sources: SearchResult[]): number {
         if (sources.length === 0) return 0.2;
 
         const avgRelevance = this.avgScore(sources);
         const sourceCountBonus = Math.min(sources.length * 0.05, 0.15);
 
-        // Base confidence on source quality + count
-        const retrievalScore = Math.min(avgRelevance + sourceCountBonus, 1.0);
-
-        // Retrieval quality alone says nothing about whether the answer stayed
-        // inside those sources. Deduct for claims the response is not entitled
-        // to make, so a fabrication can't inherit a good docs match's score.
-        const { penalty } = assessGroundedness(response, sources);
-        return Math.max(0, retrievalScore - penalty);
+        return Math.min(avgRelevance + sourceCountBonus, 1.0);
     }
 
     private avgScore(sources: SearchResult[]): number {

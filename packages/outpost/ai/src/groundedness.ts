@@ -34,6 +34,33 @@ const UNVERIFIED_CLAIM_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
     },
 ];
 
+/**
+ * Negation and uncertainty markers that flip a claim pattern's meaning.
+ *
+ * The patterns above match assertions, but the same words appear in exactly the
+ * responses the prompt asks for: "this is **not** a known issue", "I **can't**
+ * determine what the root cause is without reproducing it", "I **don't** know what
+ * the fix is". Suppression is user-visible (the reporter gets the no-answer reply
+ * instead of a real one), so a false positive costs more than a missed one.
+ *
+ * Anchored with `[^.!?]{0,N}$` so the marker has to sit in the SAME sentence as the
+ * claim — "That's confirmed. I have not tested it." must still count as a claim.
+ */
+const NEGATION_LOOKBEHIND =
+    /\b(?:not|never|cannot|can't|can not|won't|couldn't|don't|doesn't|didn't|unable|without|unclear|unsure|unconfirmed|no|nor|if|whether|maybe|possibly|suspect|guess)\b[^.!?]{0,80}$/i;
+
+/** How far back to look for a negation marker preceding a claim. */
+const NEGATION_WINDOW = 100;
+
+/**
+ * True when a claim match at `index` is negated or hedged by preceding text in the
+ * same sentence.
+ */
+function isNegated(response: string, index: number): boolean {
+    const before = response.slice(Math.max(0, index - NEGATION_WINDOW), index);
+    return NEGATION_LOOKBEHIND.test(before);
+}
+
 /** Hedge markers. A couple is honest; a pile means the answer is guesswork. */
 const HEDGE_PATTERNS: RegExp[] = [
     /\blikely\b/gi,
@@ -52,7 +79,10 @@ const HEDGE_PATTERNS: RegExp[] = [
  * it. `@copilotkit/*` package specifiers are excluded: those are stable public
  * knowledge and routinely correct even when absent from the retrieved page.
  */
-const CSS_CLASS_PATTERN = /\.(copilotKit[A-Za-z0-9_-]*)/g;
+// Case-insensitive: an invented `.copilotkit-input` or `.CopilotKitInput` is just
+// as ungrounded as `.copilotKitInput`, and the `/copilotkit/i` guard below already
+// treats the name case-insensitively.
+const CSS_CLASS_PATTERN = /\.(copilotkit[A-Za-z0-9_-]*)/gi;
 const BACKTICKED_PATTERN = /`([^`\n]{1,80})`/g;
 
 /** Hedges allowed before the density penalty starts. */
@@ -136,12 +166,21 @@ export function assessGroundedness(
 
     if (!response) return empty;
 
-    const unverifiedClaims = UNVERIFIED_CLAIM_PATTERNS.filter(({ pattern }) =>
-        pattern.test(response),
-    ).map(({ label }) => label);
+    // A pattern counts only where it is actually asserted. Every occurrence is
+    // checked, so one negated mention doesn't excuse an assertive one elsewhere.
+    const unverifiedClaims = UNVERIFIED_CLAIM_PATTERNS.filter(({ pattern }) => {
+        const global = new RegExp(pattern.source, 'gi');
+        return [...response.matchAll(global)].some((m) => !isNegated(response, m.index ?? 0));
+    }).map(({ label }) => label);
 
     // Sources are searched as one haystack: an identifier documented on any
     // retrieved page counts as grounded, regardless of which one.
+    //
+    // Substring, not exact-token: an invented `copilotKitTextarea` counts as
+    // grounded if a source mentions `copilotKitTextareaWrapper`. Deliberate — the
+    // error goes toward NOT suppressing, and suppression is the user-visible
+    // outcome. Tighten to word boundaries only if fabrications start slipping
+    // through this way.
     const haystack = sources
         .map((s) => `${s.title ?? ''}\n${s.content ?? ''}`)
         .join('\n')

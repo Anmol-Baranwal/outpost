@@ -103,6 +103,55 @@ describe('assessGroundedness', () => {
         expect(result.suppress).toBe(true);
     });
 
+    // Suppression is user-visible — the reporter gets the no-answer reply instead
+    // of a real one — so a false positive costs more than a missed one. These are
+    // all well-behaved responses of exactly the kind the prompt asks for.
+    describe('negated claims', () => {
+        it.each([
+            'This is not a known issue as far as the docs show.',
+            "I can't determine what the root cause is without reproducing it.",
+            "I don't know what the fix is — engineering will need to confirm.",
+            'I have not reproduced this myself.',
+            "We haven't tested this against your version.",
+            "It's unclear whether this is a real bug or expected behavior.",
+            'No bug confirmed here — the docs describe this as intended.',
+        ])('does not suppress %j', (response) => {
+            const result = assessGroundedness(response, CHAT_DOCS);
+            expect(result.unverifiedClaims).toEqual([]);
+            expect(result.suppress).toBe(false);
+        });
+
+        it('still catches an assertion in a later sentence', () => {
+            // The negation belongs to the first sentence only.
+            const result = assessGroundedness(
+                "I have not reproduced this. Root cause is a re-render on every keystroke.",
+                CHAT_DOCS,
+            );
+            expect(result.unverifiedClaims).toContain('asserts a root cause');
+            expect(result.suppress).toBe(true);
+        });
+
+        it('still catches an assertive occurrence when another is negated', () => {
+            const result = assessGroundedness(
+                "It's unclear whether the root cause is the layout. Bug confirmed regardless.",
+                CHAT_DOCS,
+            );
+            expect(result.unverifiedClaims).toContain('"bug confirmed"');
+            expect(result.suppress).toBe(true);
+        });
+    });
+
+    it('flags invented class names regardless of case', () => {
+        for (const response of [
+            'Override `.copilotkit-input-controls` to fix it.',
+            'Override `.CopilotKitInputControls` to fix it.',
+        ]) {
+            const result = assessGroundedness(response, CHAT_DOCS);
+            expect(result.unsourcedIdentifiers).toHaveLength(1);
+            expect(result.penalty).toBeGreaterThan(0);
+        }
+    });
+
     it('penalizes an identifier absent from every source', () => {
         const result = assessGroundedness(
             'Override `.copilotKitInputControls` to force compact mode.',

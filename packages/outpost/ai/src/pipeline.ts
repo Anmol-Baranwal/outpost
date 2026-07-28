@@ -140,7 +140,16 @@ export class AIPipeline {
         // Groundedness is deducted AFTER calibration so aggregate 👍/👎 feedback can
         // never offset a fabrication: feedback tunes how we weigh a well-formed
         // answer, it does not license an unsupported claim.
-        const groundedness = assessGroundedness(generatedResponse.text, searchResults);
+        //
+        // This is the ONLY place the penalty is applied. The generator assesses
+        // groundedness (it has the response and its sources in hand) and passes the
+        // result through untouched — it must not deduct from its own
+        // `confidenceScore`, because that score feeds the `min()` above and the
+        // penalty would land twice. Recomputed here only if a caller injected a
+        // generator that doesn't supply one.
+        const groundedness =
+            generatedResponse.groundedness ??
+            assessGroundedness(generatedResponse.text, searchResults);
         if (groundedness.penalty > 0) {
             finalConfidenceScore = Math.max(0, finalConfidenceScore - groundedness.penalty);
             console.warn(

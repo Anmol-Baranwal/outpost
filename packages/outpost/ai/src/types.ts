@@ -56,6 +56,14 @@ export interface GeneratedResponse {
     tokenUsage?: TokenUsage;
     /** End-to-end latency in milliseconds */
     latencyMs?: number;
+    /**
+     * Groundedness of `text` against `sources`, assessed once here and consumed by
+     * the pipeline. The generator does NOT apply the penalty to `confidenceScore`:
+     * the pipeline is the single place that deducts, after feedback calibration.
+     * Subtracting in both places double-counted it, since `confidenceScore` feeds
+     * the pipeline's `min()` before its own deduction.
+     */
+    groundedness?: GroundednessAssessment;
 }
 
 export interface TokenUsage {
