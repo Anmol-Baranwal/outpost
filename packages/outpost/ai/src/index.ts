@@ -4,6 +4,8 @@ export { ConfidenceScorer } from './confidence.js';
 export type { ConfidenceAssessment } from './confidence.js';
 export { TicketClassifier } from './classifier.js';
 export { ResponseFormatter } from './formatter.js';
+export { SearchQueryBuilder, heuristicSearchQuery } from './query.js';
+export type { SearchQuery } from './query.js';
 export { AIPipeline } from './pipeline.js';
 export { analyzeSentiment } from './sentiment.js';
 export { scoreEngagement } from './engagement.js';
