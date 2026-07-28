@@ -6,6 +6,7 @@ export {
     assessGroundedness,
     extractCopilotKitIdentifiers,
     MAX_GROUNDEDNESS_PENALTY,
+    SUPPRESS_AT_UNSOURCED_IDENTIFIERS,
 } from './groundedness.js';
 export type { GroundednessAssessment } from './groundedness.js';
 export { TicketClassifier } from './classifier.js';
