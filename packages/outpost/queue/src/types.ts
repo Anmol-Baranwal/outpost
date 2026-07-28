@@ -44,9 +44,8 @@ export interface TicketClassifyPayload {
     ticketId: string;
 }
 
-export interface SlaCheckPayload {
-    // No payload needed — runs against all open tickets
-}
+/** No payload needed — runs against all open tickets. */
+export type SlaCheckPayload = Record<string, never>;
 
 export interface EscalationPayload {
     ticketId: string;
@@ -79,13 +78,11 @@ export interface TrackerSyncPayload {
     changeData: Record<string, unknown>;
 }
 
-export interface JobCleanupPayload {
-    // No payload needed — runs on a fixed schedule
-}
+/** No payload needed — runs on a fixed schedule. */
+export type JobCleanupPayload = Record<string, never>;
 
-export interface GithubReactionPollPayload {
-    // No payload needed — runs against all pending-feedback AI messages
-}
+/** No payload needed — runs against all pending-feedback AI messages. */
+export type GithubReactionPollPayload = Record<string, never>;
 
 /** Map from JobType to its specific payload shape */
 export interface JobPayload {

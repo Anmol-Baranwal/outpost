@@ -42,6 +42,8 @@ This nested layout replaced the older flat single-line Top-issues bullet + the *
 
 - **Title line** `*Weekly Community Signal* 📣` is the first line, then a blank line, then the TL;DR.
 - **Plain-English TL;DR line** leads — written for a non-engineer reader (marketing, leadership). One sentence: the headline takeaway. Don't pack metrics — bullets handle that. (The dash style is `*TL;DR —* <text>`, not `*TL;DR — <text>*`.)
+- **Center it on leadership** — the business-relevant read: production/user impact, fix status ("fix in review"), and enterprise/GTM signal (who's building on us). Not implementation detail. A leader should be able to skim this one line and know what matters this week.
+- **No hype — plain and factual.** State what happened; let the reader judge its size. Ban dramatization: no "loud on signal," "broke the front door," "the week's worst bugs," "showed up in force," "silently" as a scare word, etc. Same neutral register as the Loom briefing — describe the items plainly (e.g. "Light week for volume. Worth knowing: a cross-origin auth bug blocks the default useAgent connection; a few bugs fail without surfacing an error; engineers from Microsoft, SAP, AWS, and Nvidia filed issues."). If a phrase sounds like marketing copy, rewrite it flat.
 - **Top issues are nested per community** — `• 🔝 *Top issues — CopilotKit:*` then each top issue as a `    ◦` sub-bullet, then the same for AG-UI. Short labels (~2–4 words), mirroring that page's Top-issue cards. This replaced the flat one-line version.
 - **Issues raised** = total combining GitHub + Discord. Don't separate Discord by channel.
 - **Resolved** = items in `### ✅ Resolved this week`, with a parenthetical short list.

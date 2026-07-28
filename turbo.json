@@ -1,9 +1,33 @@
 {
     "$schema": "https://turbo.build/schema.json",
+    // Root config files that feed the lint and typecheck tasks are cache inputs:
+    // without them, a change to the ESLint or TS config leaves turbo serving a cached
+    // pass from before the rule change. Deliberately narrow — listing a file no task
+    // consumes (.prettierrc, the root vitest.config.ts) would invalidate every
+    // package's cache on edits that cannot change any task's result.
+    "globalDependencies": [".eslintrc.cjs", "tsconfig.json"],
+    // Pinned rather than relying on turbo 2's default, so the reasoning below cannot be
+    // invalidated by a future change to that default: in strict mode a task sees only the
+    // variables it declares.
+    "envMode": "strict",
     "tasks": {
         "build": {
             "dependsOn": ["^build"],
             "outputs": ["dist/**", "**/dist/**", ".next/**"]
+        },
+        // Scoped to the web package rather than declared on the shared `build` task.
+        // NEXT_PUBLIC_* only affects the Next app, and declaring it on the root task would
+        // hash web-only variables into every package's cache key, busting unrelated caches
+        // whenever one changed.
+        //
+        // These are inlined into the client bundle by `next build`, so if they are absent
+        // at build time Next bakes in `undefined` and no runtime configuration can recover
+        // them. Declaring them here also puts them in the cache key, so a changed value
+        // rebuilds instead of reusing a bundle built with the old one.
+        "@copilotkit/outpost-web#build": {
+            "dependsOn": ["^build"],
+            "outputs": ["dist/**", "**/dist/**", ".next/**"],
+            "env": ["NEXT_PUBLIC_*", "NODE_ENV"]
         },
         "dev": {
             "cache": false,
