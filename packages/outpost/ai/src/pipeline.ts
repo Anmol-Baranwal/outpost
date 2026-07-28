@@ -12,7 +12,11 @@ import { PathfinderClient } from './pathfinder.js';
 import { ResponseGenerator } from './generator.js';
 import { ConfidenceScorer } from './confidence.js';
 import { TicketClassifier } from './classifier.js';
-import { ResponseFormatter } from './formatter.js';
+import {
+    AI_DISCLAIMER_ESCALATED,
+    AI_DISCLAIMER_REVIEWED,
+    ResponseFormatter,
+} from './formatter.js';
 import { validateConfig } from './config.js';
 
 /**
@@ -149,13 +153,14 @@ export class AIPipeline {
         // MEDIUM_THRESHOLD). Otherwise a score in [ESCALATE, MEDIUM_THRESHOLD)
         // is LOW but never escalated, so the reporter is promised a follow-up
         // that never comes.
+        //
+        // Neither variant may hedge about the response's completeness — see the
+        // AI_DISCLAIMER doc comment in formatter.ts.
         const needsDisclaimer = finalConfidence !== ConfidenceLevel.HIGH;
         const willEscalate = finalConfidenceScore < AI_CONFIDENCE.ESCALATE;
         const disclaimerText = willEscalate
-            ? "This is an AI-generated response and may be incomplete. We've escalated this to our engineering team — someone will follow up in this thread shortly."
-            : finalConfidence === ConfidenceLevel.LOW
-              ? 'This is an AI-generated response and may be incomplete. A member of our team will review and follow up if needed.'
-              : 'This is an AI-generated response. A member of our team will review and follow up if needed.';
+            ? AI_DISCLAIMER_ESCALATED
+            : AI_DISCLAIMER_REVIEWED;
 
         const formatted = this.formatter.format(generatedResponse.text, options.source, {
             addDisclaimer: needsDisclaimer,

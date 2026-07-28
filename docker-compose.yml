@@ -38,6 +38,11 @@ services:
         build:
             context: .
             dockerfile: apps/web/Dockerfile
+            # NEXT_PUBLIC_* must be passed as a BUILD arg, not runtime environment — Next
+            # inlines it into the client bundle during `next build`, so the `environment:`
+            # entry below has no effect on what the browser receives.
+            args:
+                NEXT_PUBLIC_AUTH_PROVIDER: ${NEXT_PUBLIC_AUTH_PROVIDER:-credentials}
         container_name: outpost-web
         ports:
             - '3000:3000'

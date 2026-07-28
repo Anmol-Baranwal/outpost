@@ -193,16 +193,26 @@ describe('AIPipeline', () => {
             const text = await disclaimerFor(0.45);
             // Was the bug: 0.45 is LOW but never escalated, so no false promise.
             expect(text).not.toContain('escalated');
-            expect(text).toContain('may be incomplete');
             expect(text).toContain('will review and follow up');
         });
 
         it('uses the neutral MEDIUM copy for scores in [0.5, 0.8)', async () => {
             const text = await disclaimerFor(0.6);
             expect(text).not.toContain('escalated');
-            expect(text).not.toContain('may be incomplete');
             expect(text).toContain('A member of our team will review');
         });
+
+        // No externally-visible disclaimer may hedge about the response's own
+        // completeness — that copy invites the reader to distrust an answer we
+        // chose to post. Confidence is expressed by escalating, not by hedging.
+        it.each([0.1, 0.3, 0.45, 0.6, 0.95])(
+            'never hedges about completeness at score %s',
+            async (score) => {
+                const text = await disclaimerFor(score);
+                expect(text).not.toMatch(/may be incomplete|might be incomplete|may not be accurate/i);
+                expect(text).toContain('This is an AI-generated response.');
+            },
+        );
 
         it('should handle Pathfinder failure gracefully', async () => {
             mockSearchDocs.mockRejectedValueOnce(new Error('MCP down'));

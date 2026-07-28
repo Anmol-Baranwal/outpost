@@ -57,17 +57,9 @@ export async function handleIssueOpened(
             },
         });
 
-        // Post acknowledgment comment on the issue
-        const ticketRef = {
-            id: result.ticketId,
-            sourceId: `${repository.full_name}#${issue.number}`,
-            channel: repository.full_name,
-            source: 'GITHUB_ISSUE' as const,
-        };
-        await adapter.postSystemMessage(
-            ticketRef as Parameters<typeof adapter.postSystemMessage>[0],
-            `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your issue...`,
-        );
+        // Intentionally no "Ticket TKT-\u2026 created" acknowledgment comment. The
+        // ticket id is internal, and the AI response lands in the same thread
+        // moments later \u2014 the ack was pure noise on a public issue.
 
         console.log(
             `[GitHub App] Created ticket ${result.displayId} for issue ${repository.full_name}#${issue.number}`,

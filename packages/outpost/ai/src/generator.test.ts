@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { LLMock } from '@copilotkit/aimock';
-import { ResponseGenerator, buildChannelGuidance } from './generator.js';
+import {
+    GROUNDING_RULES,
+    SYSTEM_PROMPT_PREFIX,
+    ResponseGenerator,
+    buildChannelGuidance,
+} from './generator.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
 
@@ -190,6 +195,49 @@ describe('ResponseGenerator', () => {
                     'never redirect the user to the same channel',
                 );
             }
+        });
+    });
+
+    // Regression for CopilotKit/CopilotKit#6167: the bot posted "Bug Confirmed"
+    // with invented CSS class names for a report it never reproduced. The
+    // generator is a single stateless call over docs search — it has no repo
+    // access and runs no tests — so the prompt has to forbid those claims.
+    describe('GROUNDING_RULES', () => {
+        it('states the model has not read source, reproduced, or tested', () => {
+            expect(GROUNDING_RULES).toContain('have NOT read');
+            expect(GROUNDING_RULES).toContain('reproduced');
+            expect(GROUNDING_RULES).toContain('run any test');
+        });
+
+        it('forbids confirming a bug or asserting a root cause', () => {
+            expect(GROUNDING_RULES).toContain('Never confirm a bug');
+            expect(GROUNDING_RULES).toContain('bug confirmed');
+            expect(GROUNDING_RULES).toContain('root cause is');
+        });
+
+        it('restricts identifiers to ones present in the documentation context', () => {
+            expect(GROUNDING_RULES).toContain('appear verbatim in the Documentation Context');
+            expect(GROUNDING_RULES).toContain('CSS class names');
+        });
+
+        it('requires causal claims to stay marked as hypotheses', () => {
+            expect(GROUNDING_RULES).toContain('hypothesis');
+            expect(GROUNDING_RULES).toContain('never restate it as established fact');
+        });
+
+        it('forbids prescribing fixes to CopilotKit internals', () => {
+            expect(GROUNDING_RULES).toContain('Do not prescribe fixes to CopilotKit');
+        });
+
+        it('prefers escalation over a plausible-sounding guess', () => {
+            expect(GROUNDING_RULES).toContain('escalating to the team');
+        });
+
+        it('is wired into the system prompt and overrides the personality rules', () => {
+            expect(SYSTEM_PROMPT_PREFIX).toContain(GROUNDING_RULES);
+            expect(GROUNDING_RULES).toContain(
+                'override the personality and formatting rules above',
+            );
         });
     });
 
