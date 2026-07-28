@@ -1,5 +1,11 @@
 {
     "$schema": "https://turbo.build/schema.json",
+    // Root config files that feed the lint and typecheck tasks are cache inputs:
+    // without them, a change to the ESLint or TS config leaves turbo serving a cached
+    // pass from before the rule change. Deliberately narrow — listing a file no task
+    // consumes (.prettierrc, the root vitest.config.ts) would invalidate every
+    // package's cache on edits that cannot change any task's result.
+    "globalDependencies": [".eslintrc.cjs", "tsconfig.json"],
     // Pinned rather than relying on turbo 2's default, so the reasoning below cannot be
     // invalidated by a future change to that default: in strict mode a task sees only the
     // variables it declares.

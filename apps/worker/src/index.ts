@@ -35,10 +35,19 @@ import {
     createJob,
 } from '@copilotkit/outpost/queue';
 import { SyncEngine } from '@copilotkit/outpost/shared';
+import type { SyncEngineDeps } from '@copilotkit/outpost/shared';
 
 // ─── Build SyncEngine for TRACKER_SYNC handler ────────────────────────────
 
-const syncEngine = new SyncEngine({ prisma: prisma as any, createJob: createJob as any });
+// SyncEngineDeps describes only the slice of Prisma the engine needs, using loose
+// Record<string, unknown> argument shapes. The real PrismaClient and createJob have
+// narrower signatures, so they are not assignable in the strict direction — the
+// coercion is deliberate. Asserting to the named dep types rather than `any` keeps
+// that intent explicit and makes the cast break loudly if SyncEngineDeps changes.
+const syncEngine = new SyncEngine({
+    prisma: prisma as unknown as SyncEngineDeps['prisma'],
+    createJob: createJob as SyncEngineDeps['createJob'],
+});
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);
 
