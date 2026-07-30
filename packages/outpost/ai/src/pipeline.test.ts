@@ -275,7 +275,12 @@ describe('AIPipeline', () => {
                  */
                 const SENTINEL_ASSESSMENT = {
                     penalty: 0.25,
-                    unverifiedClaims: ['sentinel claim'],
+                    // Deliberately claim-free: a charged claim is clamped below the
+                    // escalation gate, which would mask the penalty arithmetic this
+                    // test exists to observe. The identifier, hedge count and reason
+                    // are still impossible for a recompute of this text, so the
+                    // sentinel keeps its distinguishing power.
+                    unverifiedClaims: [],
                     unsourcedIdentifiers: ['copilotKitSentinel'],
                     hedgeCount: 7,
                     suppress: false,
@@ -296,6 +301,25 @@ describe('AIPipeline', () => {
                     // And it is the value actually APPLIED: 0.85 − 0.25 = 0.60. A
                     // recompute would leave the score at 0.85.
                     expect(result.confidenceScore).toBeCloseTo(0.6, 5);
+                });
+
+                // The supplied assessment also drives the escalation clamp, not just
+                // the arithmetic — a claim the generator charged must reach a human
+                // even though the pipeline never re-derived it.
+                it('clamps below the escalation gate on a supplied charged claim', async () => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        groundedness: {
+                            ...SENTINEL_ASSESSMENT,
+                            unverifiedClaims: ['sentinel claim'],
+                        },
+                    });
+
+                    const result = await pipeline.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
                 });
 
                 it('honours a generator-supplied suppress flag the recompute would not set', async () => {
@@ -457,13 +481,35 @@ describe('AIPipeline', () => {
                     confidenceCalibration: 0.15,
                 });
 
-                // 0.85 + 0.15 calibration = 1.0, minus the capped 0.6 penalty = 0.4.
-                // The boost cannot outrun the deduction, and the answer lands on the
-                // gate rather than above it.
+                // 0.85 + 0.15 calibration = 1.0, minus the capped 0.6 penalty = 0.4 —
+                // which is exactly the gate, and the gate tests `<`. Arithmetic alone
+                // would leave this worst case unescalated, so a charged claim is
+                // clamped below the gate outright.
                 expect(withBoost.groundedness.penalty).toBeCloseTo(0.6, 5);
-                expect(withBoost.confidenceScore).toBeCloseTo(0.4, 5);
-                expect(withBoost.confidenceScore).toBeLessThanOrEqual(AI_CONFIDENCE.ESCALATE);
+                expect(withBoost.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
                 expect(withBoost.confidenceLevel).toBe(ConfidenceLevel.LOW);
+            });
+
+            // The knife-edge above is not a rounding curiosity: it is the ONLY case
+            // where a bot that asserted an unverifiable claim would page nobody.
+            it('escalates a charged claim even at a perfect score with maximum boost', async () => {
+                mockScore.mockResolvedValue({ ...sampleConfidence, score: 1 });
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    confidenceScore: 1,
+                    text: 'Bug Confirmed. Root cause is a re-render. The fix is trivial.',
+                });
+
+                const result = await pipeline.generateSupportResponse('q', {
+                    source: 'github',
+                    confidenceCalibration: 0.2,
+                });
+
+                expect(result.groundedness.unverifiedClaims.length).toBeGreaterThan(0);
+                // Not withheld — claim wording never gates publication...
+                expect(result.suppressed).toBe(false);
+                // ...but it does guarantee a human sees it.
+                expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
             });
 
             // A boost cannot lift a withheld answer over the escalation gate either:

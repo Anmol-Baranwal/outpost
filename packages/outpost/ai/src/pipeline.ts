@@ -187,6 +187,22 @@ export class AIPipeline {
             finalConfidenceScore = Math.min(finalConfidenceScore, SUPPRESSED_CONFIDENCE_CAP);
         }
 
+        // An unverifiable claim always gets a human, whatever the arithmetic says.
+        //
+        // The penalty alone cannot guarantee that. The deduction is capped at
+        // MAX_GROUNDEDNESS_PENALTY (0.6), so a perfect base score plus the maximum
+        // positive feedback calibration lands on exactly 1.0 - 0.6 = ESCALATE, and
+        // the escalation gate tests `< ESCALATE` — the worst-case wording case
+        // would post with a "we'll review it" disclaimer and page nobody.
+        //
+        // Claims are penalty-only for the WITHHOLDING decision (see groundedness.ts
+        // — claim wording is fallible English and must never gate publication), but
+        // they are decisive for the ESCALATION decision: the bot asserted something
+        // it cannot back, so a person looks at it.
+        if (groundedness.unverifiedClaims.length > 0) {
+            finalConfidenceScore = Math.min(finalConfidenceScore, SUPPRESSED_CONFIDENCE_CAP);
+        }
+
         // Safety cap: a DEGRADED confidence signal (LLM scorer unavailable → heuristic
         // fallback over Pathfinder's synthetic rank-scores) must never present as HIGH.
         // HIGH suppresses the disclaimer and is treated as authoritative, so an ungrounded
