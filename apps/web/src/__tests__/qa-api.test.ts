@@ -53,6 +53,24 @@ async function readStream(response: Response): Promise<string> {
     return result;
 }
 
+/**
+ * Reassemble the streamed answer from its token events.
+ *
+ * The route emits 8-character chunks, so asserting on the raw SSE payload cannot
+ * detect leaked text — any word longer than 8 chars is split across events and a
+ * `not.toContain` would pass vacuously. Join the tokens first.
+ */
+function tokenText(streamText: string): string {
+    return streamText
+        .split('\n\n')
+        .map((line) => line.replace(/^data: /, '').trim())
+        .filter((data) => data && data !== '[DONE]')
+        .map((data) => JSON.parse(data) as { type: string; text?: string })
+        .filter((event) => event.type === 'token')
+        .map((event) => event.text ?? '')
+        .join('');
+}
+
 describe('POST /api/qa', () => {
     beforeEach(() => {
         mockGenerateSupportResponse.mockReset();
@@ -84,6 +102,7 @@ describe('POST /api/qa', () => {
     it('calls pipeline and streams response', async () => {
         mockGenerateSupportResponse.mockResolvedValue({
             response: 'CopilotKit is great.',
+            formatted: { text: 'CopilotKit is great.', truncated: false },
             confidenceLevel: 'HIGH',
             confidenceScore: 0.92,
             searchResults: [
@@ -118,6 +137,7 @@ describe('POST /api/qa', () => {
     it('passes conversation history to pipeline', async () => {
         mockGenerateSupportResponse.mockResolvedValue({
             response: 'Follow up answer.',
+            formatted: { text: 'Follow up answer.', truncated: false },
             confidenceLevel: 'MEDIUM',
             confidenceScore: 0.6,
             searchResults: [],
@@ -147,6 +167,7 @@ describe('POST /api/qa', () => {
     it('cleans up pipeline after response', async () => {
         mockGenerateSupportResponse.mockResolvedValue({
             response: 'Test.',
+            formatted: { text: 'Test.', truncated: false },
             confidenceLevel: 'HIGH',
             confidenceScore: 0.9,
             searchResults: [],
@@ -158,6 +179,55 @@ describe('POST /api/qa', () => {
         await readStream(response);
 
         expect(mockDestroy).toHaveBeenCalled();
+    });
+
+    // This route is a CONSUMER of the pipeline, and it inherits the groundedness
+    // gate rather than re-implementing it: it streams `formatted.text`, which the
+    // pipeline has already swapped for safe copy when the draft is suppressed. It
+    // must never stream `response` — that field intentionally still holds the
+    // ungrounded draft so a human handling the escalation can work from it.
+    it('streams the safe published text, never the suppressed draft', async () => {
+        mockGenerateSupportResponse.mockResolvedValue({
+            response: '## Bug Confirmed\n\nOverride `.copilotKitInputControls`.',
+            formatted: {
+                text: "I couldn't find an answer to this, so I've escalated it.",
+                truncated: false,
+            },
+            confidenceLevel: 'LOW',
+            confidenceScore: 0.39,
+            searchResults: [],
+            tokenUsage: { inputTokens: 10, outputTokens: 5 },
+            latencyMs: 100,
+            suppressed: true,
+        });
+
+        const response = await POST(makeRequest({ question: 'is this a bug?' }));
+        const answer = tokenText(await readStream(response));
+
+        expect(answer).toBe("I couldn't find an answer to this, so I've escalated it.");
+        expect(answer).not.toContain('Bug Confirmed');
+        expect(answer).not.toContain('copilotKitInputControls');
+    });
+
+    it('streams the formatted text (footer and all), not the raw draft', async () => {
+        mockGenerateSupportResponse.mockResolvedValue({
+            response: 'Use the `input` prop.',
+            formatted: {
+                text: 'Use the `input` prop.\n\n---\n*Powered by CopilotKit AI*',
+                truncated: false,
+            },
+            confidenceLevel: 'HIGH',
+            confidenceScore: 0.9,
+            searchResults: [],
+            tokenUsage: { inputTokens: 10, outputTokens: 5 },
+            latencyMs: 100,
+            suppressed: false,
+        });
+
+        const response = await POST(makeRequest({ question: 'how?' }));
+        const answer = tokenText(await readStream(response));
+
+        expect(answer).toBe('Use the `input` prop.\n\n---\n*Powered by CopilotKit AI*');
     });
 
     it('handles pipeline errors gracefully', async () => {

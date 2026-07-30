@@ -17,9 +17,13 @@ vi.mock('./config.js', () => ({
     validateConfig: vi.fn(),
 }));
 
-import { AIPipeline } from './pipeline.js';
+import { AIPipeline, SUPPRESSED_RESPONSE_TEXT } from './pipeline.js';
 import { ResponseGenerator } from './generator.js';
-import { ResponseFormatter } from './formatter.js';
+import {
+    AI_DISCLAIMER,
+    AI_DISCLAIMER_ESCALATED,
+    ResponseFormatter,
+} from './formatter.js';
 import { assessGroundedness } from './groundedness.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
@@ -77,6 +81,10 @@ const SCORER_SCORE = 0.95;
 
 /** One invented identifier → penalty 0.15, and NOT suppressed (suppress needs 2). */
 const UNGROUNDED_RESPONSE = 'Override `.copilotKitInputControls` to force compact mode.';
+
+/** Two invented identifiers → suppress. */
+const SUPPRESSED_DRAFT =
+    'Override `.copilotKitInputControls` and `.copilotKitInputControlsExpanded`.';
 
 function createPipeline() {
     return new AIPipeline({
@@ -142,9 +150,8 @@ describe('groundedness penalty is applied exactly once', () => {
     });
 
     it('still clamps a suppressed response below the escalation gate', async () => {
-        // Two invented identifiers → suppress.
         mock.onMessage(/./, {
-            content: 'Override `.copilotKitInputControls` and `.copilotKitInputControlsExpanded`.',
+            content: SUPPRESSED_DRAFT,
             usage: { input_tokens: 100, output_tokens: 50 },
         });
 
@@ -166,5 +173,119 @@ describe('groundedness penalty is applied exactly once', () => {
 
         expect(result.groundedness.penalty).toBe(0);
         expect(result.confidenceScore).toBeCloseTo(SCORER_SCORE, 5);
+    });
+});
+
+/**
+ * Suppression is enforced at the boundary, so it must hold for EVERY platform
+ * target — a per-consumer check could only ever cover the consumers someone
+ * remembered. These run the real formatter, so they assert the bytes that would
+ * actually reach a thread, per platform.
+ */
+describe('suppression is enforced at the pipeline boundary', () => {
+    const PLATFORMS = ['discord', 'github', 'slack', 'teams', 'web'] as const;
+
+    it.each(PLATFORMS)('publishes the replacement, never the draft, on %s', async (source) => {
+        mock.onMessage(/./, {
+            content: SUPPRESSED_DRAFT,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const pipeline = createPipeline();
+        const result = await pipeline.generateSupportResponse('q', { source });
+
+        expect(result.suppressed).toBe(true);
+        expect(result.formatted.text).toContain(SUPPRESSED_RESPONSE_TEXT);
+        expect(result.formatted.text).not.toContain('copilotKitInputControls');
+        // Discord may split into parts — none of them may carry the draft either.
+        for (const part of result.formatted.parts ?? []) {
+            expect(part).not.toContain('copilotKitInputControls');
+        }
+    });
+
+    it('keeps the original draft on result.response for the human escalation', async () => {
+        mock.onMessage(/./, {
+            content: SUPPRESSED_DRAFT,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const pipeline = createPipeline();
+        const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+        expect(result.response).toBe(SUPPRESSED_DRAFT);
+        expect(result.response).not.toContain(SUPPRESSED_RESPONSE_TEXT);
+    });
+
+    it('does not stack the escalated disclaimer on copy that already promises a human', async () => {
+        mock.onMessage(/./, {
+            content: SUPPRESSED_DRAFT,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const pipeline = createPipeline();
+        const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+        expect(result.formatted.text).toContain(AI_DISCLAIMER);
+        expect(result.formatted.text).not.toContain(AI_DISCLAIMER_ESCALATED);
+        expect(result.formatted.text).not.toContain('escalated this to our engineering team');
+    });
+
+    it('publishes the model draft untouched when it is grounded', async () => {
+        const grounded = 'Use the `input` prop on CopilotChat to supply your own input component.';
+        mock.onMessage(/./, {
+            content: grounded,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const pipeline = createPipeline();
+        const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+        expect(result.suppressed).toBe(false);
+        expect(result.formatted.text).toContain(grounded);
+        expect(result.formatted.text).not.toContain(SUPPRESSED_RESPONSE_TEXT);
+    });
+});
+
+/**
+ * The streaming entry point cannot gate incrementally, so it buffers, assesses,
+ * then yields. These pin that contract — the honest version of "the gate exists
+ * on this path too".
+ */
+describe('generateStreamingResponse gate', () => {
+    async function collect(stream: AsyncIterable<string>): Promise<string[]> {
+        const out: string[] = [];
+        for await (const chunk of stream) out.push(chunk);
+        return out;
+    }
+
+    it('yields only the replacement text when the buffered draft is suppressed', async () => {
+        mock.onMessage(/./, {
+            content: SUPPRESSED_DRAFT,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const pipeline = createPipeline();
+        const chunks = await collect(
+            pipeline.generateStreamingResponse('q', { source: 'github' }),
+        );
+
+        expect(chunks).toEqual([SUPPRESSED_RESPONSE_TEXT]);
+        expect(chunks.join('')).not.toContain('copilotKitInputControls');
+    });
+
+    it('yields the grounded draft in full', async () => {
+        const grounded = 'Use the `input` prop on CopilotChat to supply your own input component.';
+        mock.onMessage(/./, {
+            content: grounded,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const pipeline = createPipeline();
+        const chunks = await collect(
+            pipeline.generateStreamingResponse('q', { source: 'github' }),
+        );
+
+        expect(chunks.length).toBeGreaterThan(0);
+        expect(chunks.join('')).toBe(grounded);
     });
 });

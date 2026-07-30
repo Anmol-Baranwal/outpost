@@ -204,9 +204,18 @@ export interface FormattedResponse {
 }
 
 export interface PipelineResult {
-    /** The generated response text */
+    /**
+     * The model's draft, always — including when `suppressed` is true. Internal
+     * only: it is what the human handling an escalation edits from. Never publish
+     * it to a user-facing surface; publish `formatted` instead.
+     */
     response: string;
-    /** Formatted response for the target platform */
+    /**
+     * The text to publish, formatted for the target platform. Safe by
+     * construction: when `suppressed` is true this holds SUPPRESSED_RESPONSE_TEXT
+     * rather than the draft, so a consumer that publishes it unconditionally
+     * cannot leak an ungrounded answer.
+     */
     formatted: FormattedResponse;
     /** Confidence assessment */
     confidenceLevel: ConfidenceLevel;
@@ -221,9 +230,11 @@ export interface PipelineResult {
     /** Deterministic check of the response against its sources. */
     groundedness: GroundednessAssessment;
     /**
-     * True when the response makes a claim we can't stand behind and must not be
-     * posted to the public thread. Callers escalate to a human instead. Mirrors
-     * `groundedness.suppress` — kept at the top level because it gates a post.
+     * True when the draft makes a claim we can't stand behind, so `formatted`
+     * carries the safe replacement instead of `response`. Mirrors
+     * `groundedness.suppress`. This is a SIGNAL, not a gate a consumer must
+     * enforce — the pipeline already withheld the text. Read it to escalate to a
+     * human, to log, or for analytics; you do not need it to post safely.
      */
     suppressed: boolean;
 }

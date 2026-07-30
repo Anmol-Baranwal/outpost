@@ -148,18 +148,30 @@ const highConfidenceResult = {
     suppressed: false,
 };
 
+/** The draft the groundedness check refuses to publish (see #6167). */
+const SUPPRESSED_DRAFT =
+    '## Bug Confirmed: Cursor Jump\n\nOverride `.copilotKitInputControls` and ' +
+    '`.copilotKitInputControlsExpanded`.';
+
 /**
- * A response the groundedness check refuses to publish (see #6167).
- *
- * Withholding is driven solely by identifiers no retrieved source contains, and
- * the bar is two — so this fixture carries the two invented class names #6167
- * shipped. The claim wording rides along as penalty only; it does not withhold.
+ * Stands in for the pipeline's safe replacement copy. The handler is agnostic to
+ * the wording — its contract is "publish `formatted`, whatever it is" — so this
+ * fixture only has to be distinguishable from the draft. The real copy is pinned
+ * by name (SUPPRESSED_RESPONSE_TEXT) in the AI package's pipeline tests.
+ */
+const SAFE_REPLACEMENT_FIXTURE = 'I could not find an answer, so I have escalated this.';
+
+/**
+ * What the pipeline returns for a suppressed draft: `response` keeps the draft for
+ * the human, `formatted` already carries the safe replacement.
  */
 const suppressedResult = {
     ...highConfidenceResult,
-    response:
-        '## Bug Confirmed: Cursor Jump\n\nOverride `.copilotKitInputControls` and ' +
-        '`.copilotKitInputControlsExpanded`.',
+    response: SUPPRESSED_DRAFT,
+    formatted: {
+        text: SAFE_REPLACEMENT_FIXTURE,
+        truncated: false,
+    },
     confidenceLevel: 'LOW',
     confidenceScore: 0.32,
     groundedness: {
@@ -321,9 +333,13 @@ describe('handleAiResponse', () => {
     });
 
     // A suppressed response is one the groundedness check found unsupportable.
-    // Confidence never gated the post-back, so these three behaviors are the
-    // whole point: nothing reaches the reporter, a human is pulled in, and the
-    // draft survives on the ticket for that human to edit.
+    //
+    // The handler does NOT gate on suppression — the pipeline already swapped safe
+    // copy into `formatted`, so the handler posts unconditionally. That is what
+    // these tests pin: the reporter gets the safe replacement and never the draft,
+    // a human is pulled in regardless of score, and the draft survives on the
+    // ticket for that human. A `suppressed` branch here is what previously made
+    // shadow mode drop exactly these records.
     describe('suppressed (ungrounded) responses', () => {
         beforeEach(() => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
@@ -331,7 +347,7 @@ describe('handleAiResponse', () => {
             mockHasAdapter.mockReturnValue(true);
         });
 
-        it('never posts to the source platform', async () => {
+        it('posts the safe replacement, never the draft', async () => {
             const result = await handleAiResponse(
                 { ticketId: 'tkt-1', source: 'discord' },
                 makeContext(),
@@ -339,25 +355,33 @@ describe('handleAiResponse', () => {
 
             expect(result.success).toBe(true);
             expect(result.data?.suppressed).toBe(true);
-            expect(mockPostResponse).not.toHaveBeenCalled();
+            // Posts unconditionally — with the pipeline's safe text.
+            expect(mockPostResponse).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'tkt-1' }),
+                suppressedResult.formatted,
+            );
+            const posted = mockPostResponse.mock.calls[0][1] as { text: string };
+            expect(posted.text).toBe(SAFE_REPLACEMENT_FIXTURE);
+            expect(posted.text).not.toContain('Bug Confirmed');
+            expect(posted.text).not.toContain('copilotKitInputControls');
         });
 
         it('escalates to a human even though the score is above ESCALATE', async () => {
-            const result = await handleAiResponse(
-                { ticketId: 'tkt-1', source: 'discord' },
-                makeContext(),
-            );
-
-            // 0.32 would escalate on score alone, so prove it escalates on
-            // suppression by raising the score above the gate.
-            mockPrismaJob.create.mockClear();
+            // 0.32 would escalate on score alone, so raise the score above the gate
+            // and prove the escalation comes from suppression. Assert on THIS call's
+            // return value — asserting on an earlier result would prove nothing.
             mockGenerateSupportResponse.mockResolvedValue({
                 ...suppressedResult,
                 confidenceScore: 0.95,
                 confidenceLevel: 'HIGH',
             });
-            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data?.confidenceScore).toBe(0.95);
             expect(result.data?.escalated).toBe(true);
             expect(mockPrismaJob.create).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -371,18 +395,51 @@ describe('handleAiResponse', () => {
         it('still persists the draft so a human can edit and send it', async () => {
             await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
+            // The draft — not the replacement — is the BOT message a human works from.
             expect(mockPrismaMessage.create).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    data: expect.objectContaining({ type: 'BOT', isAiGenerated: true }),
-                }),
-            );
-            expect(mockPrismaTicket.update).toHaveBeenCalledWith(
-                expect.objectContaining({
                     data: expect.objectContaining({
-                        suggestedResponse: expect.any(String),
+                        type: 'BOT',
+                        isAiGenerated: true,
+                        content: SUPPRESSED_DRAFT,
                     }),
                 }),
             );
+            // suggestedResponse is what bots pick up, so it holds the safe text.
+            expect(mockPrismaTicket.update).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        suggestedResponse: SAFE_REPLACEMENT_FIXTURE,
+                    }),
+                }),
+            );
+        });
+
+        // The regression this whole branch chain rewrite exists for: the old
+        // `if (suppressed)` arm ran BEFORE the SHADOW_MODE arm, so in shadow mode a
+        // suppressed response produced no shadow record — the responses most worth
+        // studying were the only ones that stopped being logged.
+        it('records a shadow message in shadow mode', async () => {
+            const originalShadow = process.env.SHADOW_MODE;
+            try {
+                process.env.SHADOW_MODE = 'true';
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext(),
+                );
+
+                expect(result.success).toBe(true);
+                expect(mockPostResponse).not.toHaveBeenCalled();
+                const shadowCall = mockPrismaMessage.create.mock.calls.find(
+                    (call: Array<Record<string, Record<string, unknown>>>) =>
+                        call[0].data.author === 'outpost-shadow',
+                );
+                expect(shadowCall).toBeDefined();
+                expect(shadowCall![0].data.content).toBe(SAFE_REPLACEMENT_FIXTURE);
+            } finally {
+                process.env.SHADOW_MODE = originalShadow;
+            }
         });
     });
 

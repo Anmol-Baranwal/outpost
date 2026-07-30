@@ -16,7 +16,7 @@ export {
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
 } from './formatter.js';
-export { AIPipeline } from './pipeline.js';
+export { AIPipeline, SUPPRESSED_RESPONSE_TEXT } from './pipeline.js';
 export { analyzeSentiment } from './sentiment.js';
 export { scoreEngagement } from './engagement.js';
 export { getSentimentTrend } from './sentiment-trend.js';

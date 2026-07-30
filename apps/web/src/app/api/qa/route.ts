@@ -67,8 +67,15 @@ export async function POST(request: Request) {
                         },
                     );
 
-                    // Stream the response text in chunks
-                    const text = result.response;
+                    // Stream the PUBLISHED text, not `result.response`.
+                    //
+                    // `response` is the model's raw draft and is internal — when the
+                    // pipeline's groundedness gate suppresses it, `formatted` carries
+                    // safe replacement copy while `response` still holds the draft
+                    // for a human. Streaming `formatted.text` means this route
+                    // inherits the gate instead of re-implementing it, so it never
+                    // needs to read `suppressed`.
+                    const text = result.formatted.text;
                     const chunkSize = 8;
 
                     for (let i = 0; i < text.length; i += chunkSize) {

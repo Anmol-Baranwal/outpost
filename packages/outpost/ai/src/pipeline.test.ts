@@ -16,7 +16,8 @@ vi.mock('./config.js', () => ({
 }));
 
 import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
-import { AIPipeline } from './pipeline.js';
+import { AIPipeline, SUPPRESSED_RESPONSE_TEXT } from './pipeline.js';
+import { AI_DISCLAIMER } from './formatter.js';
 import { ConfidenceLevel, TicketPriority, TicketType } from './types.js';
 import type { SearchResult, GeneratedResponse } from './types.js';
 import type { ConfidenceAssessment } from './confidence.js';
@@ -244,6 +245,55 @@ describe('AIPipeline', () => {
                 ]);
             });
 
+            // The boundary: the draft must never reach the formatter (and so never
+            // reach `formatted`) when it is suppressed. Every consumer publishes
+            // `formatted`, so the swap here is what makes all of them safe.
+            it('hands the formatter the replacement copy, not the draft', async () => {
+                const draft = 'Override `.copilotKitGhostA` and `.copilotKitGhostB` to fix it.';
+                mockGenerate.mockResolvedValue({ ...sampleGeneratedResponse, text: draft });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(true);
+                expect(mockFormat).toHaveBeenCalledWith(
+                    SUPPRESSED_RESPONSE_TEXT,
+                    'github',
+                    expect.any(Object),
+                );
+                // ...while the draft stays on the result for the human escalation.
+                expect(result.response).toBe(draft);
+            });
+
+            // SUPPRESSED_RESPONSE_TEXT already promises a human follow-up, so the
+            // escalated variant would say it twice.
+            it('pairs the replacement with the plain disclaimer, not the escalated one', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: 'Override `.copilotKitGhostA` and `.copilotKitGhostB` to fix it.',
+                });
+
+                await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(mockFormat).toHaveBeenCalledWith(
+                    SUPPRESSED_RESPONSE_TEXT,
+                    'github',
+                    expect.objectContaining({
+                        addDisclaimer: true,
+                        disclaimerText: AI_DISCLAIMER,
+                    }),
+                );
+            });
+
+            it('leaves the draft as the published text when it is grounded', async () => {
+                await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(mockFormat).toHaveBeenCalledWith(
+                    sampleGeneratedResponse.text,
+                    'github',
+                    expect.any(Object),
+                );
+            });
+
             // Withholding is driven by the objective signal only — identifiers no
             // retrieved source contains. Claim wording is fallible English, so it
             // buys a penalty and an escalation, never a withheld reply.
@@ -467,6 +517,89 @@ describe('AIPipeline', () => {
                 'discord',
                 expect.objectContaining({ addDisclaimer: false }),
             );
+        });
+    });
+
+    // The streaming entry point cannot gate incrementally — you cannot know a draft
+    // invents an identifier until you have read it to the end, and text already on
+    // the wire cannot be recalled. So it buffers, assesses, then yields. These pin
+    // that contract; without it this method is the one ungated path to a thread.
+    describe('generateStreamingResponse', () => {
+        async function* streamOf(...chunks: string[]): AsyncIterable<string> {
+            for (const chunk of chunks) yield chunk;
+        }
+
+        async function collect(stream: AsyncIterable<string>): Promise<string[]> {
+            const out: string[] = [];
+            for await (const chunk of stream) out.push(chunk);
+            return out;
+        }
+
+        it('yields the model chunks unchanged when the draft is grounded', async () => {
+            mockGenerateStream.mockReturnValue(streamOf('Use the ', '`useCopilotAction` ', 'hook.'));
+
+            const chunks = await collect(
+                pipeline.generateStreamingResponse('q', { source: 'web' }),
+            );
+
+            expect(chunks).toEqual(['Use the ', '`useCopilotAction` ', 'hook.']);
+        });
+
+        it('yields ONLY the replacement copy when the buffered draft is suppressed', async () => {
+            mockGenerateStream.mockReturnValue(
+                streamOf('Override `.copilotKitInputControls` ', 'and `.copilotKitInputControlsExpanded`.'),
+            );
+
+            const chunks = await collect(
+                pipeline.generateStreamingResponse('q', { source: 'web' }),
+            );
+
+            expect(chunks).toEqual([SUPPRESSED_RESPONSE_TEXT]);
+            expect(chunks.join('')).not.toContain('copilotKitInputControls');
+        });
+
+        it('assesses the WHOLE draft, not a single chunk (chunk-local text looks fine)', async () => {
+            // Split so no individual chunk carries both invented identifiers — a
+            // per-chunk gate would pass this through.
+            mockGenerateStream.mockReturnValue(
+                streamOf('Override `.copilotKitInputControls`', ' and also', ' `.copilotKitInputControlsExpanded`.'),
+            );
+
+            const chunks = await collect(
+                pipeline.generateStreamingResponse('q', { source: 'web' }),
+            );
+
+            expect(chunks).toEqual([SUPPRESSED_RESPONSE_TEXT]);
+        });
+
+        it('passes the retrieved sources and history through to the generator', async () => {
+            mockGenerateStream.mockReturnValue(streamOf('ok'));
+            const history = [{ role: 'user' as const, content: 'hi' }];
+
+            await collect(
+                pipeline.generateStreamingResponse('q', {
+                    source: 'web',
+                    conversationHistory: history,
+                }),
+            );
+
+            expect(mockGenerateStream).toHaveBeenCalledWith(
+                expect.objectContaining({ question: 'q', source: 'web' }),
+                sampleSearchResults,
+                history,
+            );
+        });
+
+        it('still yields when Pathfinder is down (empty sources)', async () => {
+            mockSearchDocs.mockRejectedValueOnce(new Error('MCP down'));
+            mockGenerateStream.mockReturnValue(streamOf('best effort'));
+
+            const chunks = await collect(
+                pipeline.generateStreamingResponse('q', { source: 'web' }),
+            );
+
+            expect(chunks).toEqual(['best effort']);
+            expect(mockGenerateStream).toHaveBeenCalledWith(expect.any(Object), [], undefined);
         });
     });
 
