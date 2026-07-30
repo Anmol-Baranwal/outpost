@@ -26,6 +26,16 @@ export function classifyConfidence(score: number): ConfidenceLevel {
     return ConfidenceLevel.LOW;
 }
 
+/**
+ * Highest score a suppressed (unpublishable) response may carry. Sits just below
+ * the escalation gate so a withheld answer always reads as needing a human.
+ *
+ * Lives here rather than in pipeline.ts because the generator classifies its own
+ * `confidenceLevel` against the same clamp — two places must agree on what a
+ * withheld response is worth, so they read one constant.
+ */
+export const SUPPRESSED_CONFIDENCE_CAP = AI_CONFIDENCE.ESCALATE - 0.01;
+
 export interface SearchResult {
     /** Title of the matched document or section */
     title: string;
@@ -42,14 +52,24 @@ export interface SearchResult {
 export interface GeneratedResponse {
     /** The generated response text */
     text: string;
-    /** Confidence score from 0 to 1 */
+    /**
+     * Retrieval-quality confidence from 0 to 1 — how good the sources were, NOT
+     * what the response did with them. The groundedness penalty is deliberately
+     * absent: see `groundedness` below.
+     */
     confidenceScore: number;
-    /** Classified confidence level */
+    /**
+     * Confidence in THIS response, classified from `confidenceScore` after the
+     * groundedness penalty is deducted and clamped to SUPPRESSED_CONFIDENCE_CAP
+     * when `groundedness.suppress` is set. It therefore reads lower than
+     * `classifyConfidence(confidenceScore)` for an ungrounded answer, and can never
+     * report HIGH for one the gate would withhold. The deduction is local to the
+     * classification — `confidenceScore` is left retrieval-only so the pipeline's
+     * `min()` still charges the penalty exactly once.
+     */
     confidenceLevel: ConfidenceLevel;
     /** Search results used as context for generation */
     sources: SearchResult[];
-    /** Whether this response should be auto-sent */
-    autoSend: boolean;
     /** Reasoning for the confidence assessment */
     reasoning: string;
     /** Token usage for cost monitoring */

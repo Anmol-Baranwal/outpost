@@ -74,7 +74,6 @@ const sampleGeneratedResponse: GeneratedResponse = {
     confidenceScore: 0.85,
     confidenceLevel: ConfidenceLevel.HIGH,
     sources: sampleSearchResults,
-    autoSend: false,
     reasoning: 'Based on 2 sources',
     tokenUsage: { inputTokens: 500, outputTokens: 100 },
     latencyMs: 2000,

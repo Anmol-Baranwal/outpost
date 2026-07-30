@@ -112,7 +112,6 @@ describe('ResponseGenerator', () => {
             );
 
             expect(result.confidenceLevel).toBe(ConfidenceLevel.LOW);
-            expect(result.autoSend).toBe(false);
         });
 
         it('should return graceful fallback on API error', async () => {
@@ -126,7 +125,6 @@ describe('ResponseGenerator', () => {
             expect(result.text).toContain('unable to generate');
             expect(result.confidenceScore).toBe(0);
             expect(result.confidenceLevel).toBe(ConfidenceLevel.LOW);
-            expect(result.autoSend).toBe(false);
         });
 
         it('should include conversation history for follow-ups', async () => {

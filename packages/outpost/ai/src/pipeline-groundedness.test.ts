@@ -25,7 +25,7 @@ import {
     ResponseFormatter,
 } from './formatter.js';
 import { assessGroundedness } from './groundedness.js';
-import { ConfidenceLevel } from './types.js';
+import { ConfidenceLevel, classifyConfidence } from './types.js';
 import type { SearchResult } from './types.js';
 
 /**
@@ -287,5 +287,81 @@ describe('generateStreamingResponse gate', () => {
 
         expect(chunks.length).toBeGreaterThan(0);
         expect(chunks.join('')).toBe(grounded);
+    });
+});
+
+/**
+ * `GeneratedResponse.confidenceLevel` is a public claim about THIS response, so it
+ * must not read HIGH for text the groundedness gate would withhold. The trap is
+ * that `confidenceScore` is retrieval-only by design (the pipeline owns the single
+ * deduction), and these sources score 0.975 — comfortably HIGH — no matter how
+ * ungrounded the generated text is. The level therefore has to be classified from
+ * the penalised value, without the score itself being touched.
+ */
+describe('generator confidence level respects groundedness', () => {
+    /** Two invented identifiers → suppress, penalty 0.30. */
+    const SUPPRESSIBLE_RESPONSE =
+        'Override `.copilotKitInputControls` and `.copilotKitInputControlsExpanded`.';
+
+    it('does not report HIGH for a suppressible response built on high-quality sources', async () => {
+        mock.onMessage(/./, {
+            content: SUPPRESSIBLE_RESPONSE,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const generator = new ResponseGenerator({ apiKey: 'test-key' });
+        const generated = await generator.generate({ question: 'q' }, SOURCES);
+
+        // The premise: retrieval alone would classify this HIGH.
+        expect(generated.confidenceScore).toBeCloseTo(0.975, 5);
+        expect(classifyConfidence(generated.confidenceScore)).toBe(ConfidenceLevel.HIGH);
+
+        expect(generated.groundedness?.suppress).toBe(true);
+        // A response the gate withholds is never a confident one, and is clamped
+        // below the escalation gate exactly as the pipeline clamps it.
+        expect(generated.confidenceLevel).toBe(ConfidenceLevel.LOW);
+    });
+
+    it('reports the penalised level for an ungrounded but publishable response', async () => {
+        // One invented identifier → penalty 0.15, not suppressed.
+        mock.onMessage(/./, {
+            content: UNGROUNDED_RESPONSE,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const generator = new ResponseGenerator({ apiKey: 'test-key' });
+        const generated = await generator.generate({ question: 'q' }, SOURCES);
+
+        // 0.975 − 0.15 = 0.825, still HIGH — the penalty is charged, not amplified.
+        expect(generated.confidenceScore).toBeCloseTo(0.975, 5);
+        expect(generated.confidenceLevel).toBe(ConfidenceLevel.HIGH);
+    });
+
+    it('keeps HIGH for a grounded response on the same sources', async () => {
+        mock.onMessage(/./, {
+            content: 'Use the `input` prop on CopilotChat to supply your own input component.',
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const generator = new ResponseGenerator({ apiKey: 'test-key' });
+        const generated = await generator.generate({ question: 'q' }, SOURCES);
+
+        expect(generated.groundedness?.penalty).toBe(0);
+        expect(generated.confidenceLevel).toBe(ConfidenceLevel.HIGH);
+    });
+
+    it('no longer exposes an autoSend field for callers to trust', async () => {
+        mock.onMessage(/./, {
+            content: SUPPRESSIBLE_RESPONSE,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const generator = new ResponseGenerator({ apiKey: 'test-key' });
+        const generated = await generator.generate({ question: 'q' }, SOURCES);
+
+        // The field was a public boolean computed from the pre-deduction score, so
+        // it read `true` for exactly this response. It had no reader in the repo;
+        // rather than keep a gate nothing implements, it is gone.
+        expect('autoSend' in generated).toBe(false);
     });
 });

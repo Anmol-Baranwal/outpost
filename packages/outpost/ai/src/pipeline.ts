@@ -6,7 +6,7 @@ import type {
     TokenUsage,
     SearchResult,
 } from './types.js';
-import { ConfidenceLevel, classifyConfidence } from './types.js';
+import { ConfidenceLevel, SUPPRESSED_CONFIDENCE_CAP, classifyConfidence } from './types.js';
 import { assessGroundedness } from './groundedness.js';
 import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import { PathfinderClient } from './pathfinder.js';
@@ -45,12 +45,6 @@ export const SUPPRESSED_RESPONSE_TEXT =
  * under AI_CONFIDENCE.HIGH_THRESHOLD if those bands are ever re-tuned.
  */
 const DEGRADED_CONFIDENCE_CAP = AI_CONFIDENCE.HIGH_THRESHOLD - 0.01;
-
-/**
- * Highest score a suppressed (unpublishable) response may carry. Sits just below
- * the escalation gate so a withheld answer always reads as needing a human.
- */
-const SUPPRESSED_CONFIDENCE_CAP = AI_CONFIDENCE.ESCALATE - 0.01;
 
 /**
  * Main entry point for the Outpost AI pipeline.
