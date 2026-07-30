@@ -31,14 +31,38 @@ describe('extractCopilotKitIdentifiers', () => {
         expect(ids).toContain('copilotKitInputControlsExpanded');
     });
 
-    it('picks up backticked CopilotKit identifiers but not call expressions', () => {
-        // Both tokens carry our name; only the bare identifier is a claim about an
-        // API surface we can check against the sources. `foo()` is prose-with-code,
-        // and the shape guard — not a missing "copilotkit" — is what rejects it.
-        expect(extractCopilotKitIdentifiers('Call `useCopilotKitInternals()` first.')).toEqual([]);
-        expect(extractCopilotKitIdentifiers('Call `useCopilotKitInternals` first.')).toContain(
+    // The identifier signal is now the ONLY thing that can withhold a response, so
+    // a name written as a call, as JSX, or behind a dot has to count the same as the
+    // bare spelling — otherwise a fabrication escapes the gate on syntax alone.
+    it('picks up a backticked identifier written as a call expression', () => {
+        expect(extractCopilotKitIdentifiers('Call `useCopilotKitInternals()` first.')).toEqual([
             'useCopilotKitInternals',
-        );
+        ]);
+        expect(
+            extractCopilotKitIdentifiers('Call `useCopilotKitInternals({ debug: true })` first.'),
+        ).toEqual(['useCopilotKitInternals']);
+    });
+
+    it('picks up a backticked identifier written as JSX', () => {
+        expect(extractCopilotKitIdentifiers('Wrap it in `<CopilotKitGhostPanel />`.')).toEqual([
+            'CopilotKitGhostPanel',
+        ]);
+        expect(extractCopilotKitIdentifiers('Close with `</CopilotKitGhostPanel>`.')).toEqual([
+            'CopilotKitGhostPanel',
+        ]);
+        expect(extractCopilotKitIdentifiers('Open with `<CopilotKitGhostPanel>`.')).toEqual([
+            'CopilotKitGhostPanel',
+        ]);
+    });
+
+    it('picks up the CopilotKit-named segments of a dotted member expression', () => {
+        expect(
+            extractCopilotKitIdentifiers('Read `window.copilotKitInternals` at runtime.'),
+        ).toEqual(['copilotKitInternals']);
+        expect(extractCopilotKitIdentifiers('Read `CopilotKitApi.copilotKitVersion`.')).toEqual([
+            'CopilotKitApi',
+            'copilotKitVersion',
+        ]);
     });
 
     it('ignores generic React vocabulary so real answers are not penalized', () => {
@@ -53,6 +77,13 @@ describe('extractCopilotKitIdentifiers', () => {
             'Install `@copilotkit/react-core` and `@copilotkit/react-ui`.',
         );
         expect(ids).toEqual([]);
+    });
+
+    // A subpath import is still a package specifier, not an API surface claim.
+    it('ignores @copilotkit subpath specifiers', () => {
+        expect(
+            extractCopilotKitIdentifiers('Import from `@copilotkit/react-core/copilotKitGhost`.'),
+        ).toEqual([]);
     });
 
     it('ignores prose and code fences that are not identifiers', () => {
@@ -83,6 +114,34 @@ describe('extractCopilotKitIdentifiers', () => {
         expect(
             extractCopilotKitIdentifiers('See https://docs.copilotkit.ai/reference/chat for docs.'),
         ).toEqual([]);
+        expect(
+            extractCopilotKitIdentifiers('See www.copilotkit.ai/reference/chat for docs.'),
+        ).toEqual([]);
+    });
+
+    // Bare hostnames are how people actually write links in chat, and the host
+    // `docs.copilotkit.ai` used to yield the phantom identifier `copilotkit`.
+    it('never mines identifiers out of a scheme-less hostname', () => {
+        expect(
+            extractCopilotKitIdentifiers('See docs.copilotkit.ai/reference/chat for docs.'),
+        ).toEqual([]);
+        expect(extractCopilotKitIdentifiers('Docs live on copilotkit.ai these days.')).toEqual([]);
+        expect(extractCopilotKitIdentifiers('Try the `docs.copilotkit.ai` mirror.')).toEqual([]);
+    });
+
+    // Host-stripping is anchored on a real TLD precisely so dotted things that are
+    // NOT hostnames survive. Anything swallowed here is an identifier we stop
+    // checking against the sources — the gate would go quiet, not loud.
+    it('does not mistake a dotted CSS selector chain for a hostname', () => {
+        expect(
+            extractCopilotKitIdentifiers('Use `.copilotKitInput.copilotKitInputExpanded` instead.'),
+        ).toEqual(['copilotKitInput', 'copilotKitInputExpanded']);
+    });
+
+    it('does not mistake a version number for a hostname', () => {
+        expect(extractCopilotKitIdentifiers('On 1.2.3, override `.copilotKitGhost`.')).toEqual([
+            'copilotKitGhost',
+        ]);
     });
 });
 
@@ -99,15 +158,18 @@ describe('assessGroundedness', () => {
         expect(result.reasons).toEqual([]);
     });
 
-    it('flags a confirmed-bug claim and suppresses the response', () => {
+    // The decided contract: `suppress` is driven ONLY by identifiers the sources do
+    // not contain. Claim wording is a penalty, never a gate — a misread of English
+    // costs 0.35 of confidence, not the reporter's answer.
+    it('charges a confirmed-bug claim but does not suppress on it', () => {
         const result = assessGroundedness(
             '## Bug Confirmed: Cursor Jump in Expanded Mode\n\nThanks for the repro steps!',
             CHAT_DOCS,
         );
 
         expect(result.unverifiedClaims).toContain('"bug confirmed"');
-        expect(result.penalty).toBeGreaterThan(0);
-        expect(result.suppress).toBe(true);
+        expect(result.penalty).toBeCloseTo(0.35, 5);
+        expect(result.suppress).toBe(false);
     });
 
     it.each([
@@ -117,47 +179,52 @@ describe('assessGroundedness', () => {
         ['The fix is to save and restore the selection.', 'asserts the fix'],
         ['I reproduced this locally on the latest version.', 'claims to have reproduced or tested'],
         ['We ran the tests and they pass.', 'claims to have reproduced or tested'],
-    ])('suppresses %j', (response, expectedLabel) => {
+    ])('charges %j without withholding it', (response, expectedLabel) => {
         const result = assessGroundedness(response, CHAT_DOCS);
         expect(result.unverifiedClaims).toContain(expectedLabel);
-        expect(result.suppress).toBe(true);
+        expect(result.penalty).toBeGreaterThan(0);
+        expect(result.suppress).toBe(false);
     });
 
-    // Suppression is user-visible — the reporter gets the no-answer reply instead
-    // of a real one — so a false positive costs more than a missed one. These are
-    // all well-behaved responses of exactly the kind the prompt asks for.
-    describe('negated claims', () => {
-        it.each([
-            'This is not a known issue as far as the docs show.',
-            "I can't determine what the root cause is without reproducing it.",
-            "I don't know what the fix is — engineering will need to confirm.",
-            'I have not reproduced this myself.',
-            "We haven't tested this against your version.",
-            "It's unclear whether this is a real bug or expected behavior.",
-            'No bug confirmed here — the docs describe this as intended.',
-        ])('does not suppress %j', (response) => {
-            const result = assessGroundedness(response, CHAT_DOCS);
-            expect(result.unverifiedClaims).toEqual([]);
+    // The reported basis has to equal what was actually billed, or the log line
+    // understates the deduction it is supposed to explain.
+    describe('reported reasons match what was charged', () => {
+        it('charges one claim for a sentence that trips several patterns', () => {
+            const result = assessGroundedness('This is a known bug.', CHAT_DOCS);
+
+            expect(result.unverifiedClaims).toHaveLength(1);
+            expect(result.penalty).toBeCloseTo(0.35, 5);
+            expect(result.reasons).toEqual([
+                `unverifiable claims: ${result.unverifiedClaims.join(', ')}`,
+            ]);
+        });
+
+        it('charges one claim for the same wording repeated across sentences', () => {
+            const result = assessGroundedness(
+                'Root cause is a re-render. Root cause is a layout thrash.',
+                CHAT_DOCS,
+            );
+
+            expect(result.unverifiedClaims).toHaveLength(1);
+            expect(result.penalty).toBeCloseTo(0.35, 5);
+        });
+
+        it('reports every distinct claim it charged, and charges every claim it reports', () => {
+            const result = assessGroundedness(
+                'Bug confirmed. Root cause is a re-render. The fix is trivial.',
+                CHAT_DOCS,
+            );
+
+            // Three distinct accusations → three reported labels, and the raw
+            // deduction is the count times the rate (clipped by the ceiling here).
+            expect(result.unverifiedClaims).toHaveLength(3);
+            expect(result.unverifiedClaims.length * 0.35).toBeGreaterThan(MAX_GROUNDEDNESS_PENALTY);
+            expect(result.penalty).toBe(MAX_GROUNDEDNESS_PENALTY);
+            expect(result.reasons[0]).toBe(
+                `unverifiable claims: ${result.unverifiedClaims.join(', ')}`,
+            );
+            // Suppression is unaffected: three claims, no invented identifier.
             expect(result.suppress).toBe(false);
-        });
-
-        it('still catches an assertion in a later sentence', () => {
-            // The negation belongs to the first sentence only.
-            const result = assessGroundedness(
-                'I have not reproduced this. Root cause is a re-render on every keystroke.',
-                CHAT_DOCS,
-            );
-            expect(result.unverifiedClaims).toContain('asserts a root cause');
-            expect(result.suppress).toBe(true);
-        });
-
-        it('still catches an assertive occurrence when another is negated', () => {
-            const result = assessGroundedness(
-                "It's unclear whether the root cause is the layout. Bug confirmed regardless.",
-                CHAT_DOCS,
-            );
-            expect(result.unverifiedClaims).toContain('"bug confirmed"');
-            expect(result.suppress).toBe(true);
         });
     });
 
@@ -256,7 +323,8 @@ describe('assessGroundedness', () => {
         expect(() => assessGroundedness('Anything at all.', partial)).not.toThrow();
     });
 
-    // The exact response from CopilotKit/CopilotKit#6167, condensed.
+    // The exact response from CopilotKit/CopilotKit#6167, condensed. It is withheld
+    // on its two invented class names alone — the claim wording only adds penalty.
     it('would have caught the #6167 response', () => {
         const response = [
             '## Bug Confirmed: Cursor Jump in Expanded Mode',
@@ -272,25 +340,46 @@ describe('assessGroundedness', () => {
 
         const result = assessGroundedness(response, CHAT_DOCS);
 
-        expect(result.suppress).toBe(true);
-        expect(result.unverifiedClaims.length).toBeGreaterThanOrEqual(2);
         expect(result.unsourcedIdentifiers).toEqual([
             'copilotKitInputControls',
             'copilotKitInputControlsExpanded',
         ]);
+        expect(result.unsourcedIdentifiers.length).toBeGreaterThanOrEqual(
+            SUPPRESS_AT_UNSOURCED_IDENTIFIERS,
+        );
+        expect(result.suppress).toBe(true);
+        expect(result.unverifiedClaims.length).toBeGreaterThanOrEqual(2);
         expect(result.penalty).toBe(MAX_GROUNDEDNESS_PENALTY);
+    });
+
+    // Strip the fabricated class names out of #6167 and the same prose is published
+    // with a penalty. That is the decided trade: the claim wording never withholds.
+    it('does not withhold the #6167 prose once the invented class names are gone', () => {
+        const result = assessGroundedness(
+            [
+                '## Bug Confirmed: Cursor Jump in Expanded Mode',
+                'This is a real bug worth fixing in the core.',
+            ].join('\n'),
+            CHAT_DOCS,
+        );
+
+        expect(result.suppress).toBe(false);
+        expect(result.penalty).toBeGreaterThan(0);
     });
 });
 
 /**
  * Corpus organized by RESPONSE SHAPE, not by regex.
  *
- * The unit under test is "given a response that looks like THIS, do we post it?" —
- * so each row names a shape a real answer takes (bare assertion, negated assertion,
- * hedged assertion, markdown bullets, a cited docs URL, a code fence) and pins the
- * publish/withhold decision for it. Rows are shape-complete rather than
- * pattern-complete on purpose: it is the shapes that regress when the matching
- * internals get rewritten.
+ * Two outcomes are now independent and both are pinned per row:
+ *
+ * - `suppress` — does the reporter see this answer? Driven ONLY by identifiers the
+ *   sources do not contain, which is checkable against those sources.
+ * - `claimCharged` — did the claim-phrase penalty fire? Driven by English wording,
+ *   which is fallible, so its only consequence is a lower confidence score.
+ *
+ * Every negation shape that previously misbehaved has a row here, and they all
+ * assert `suppress: false` — no wording, negated or not, can withhold a response.
  */
 interface CorpusRow {
     shape: string;
@@ -298,6 +387,8 @@ interface CorpusRow {
     sources?: SearchResult[];
     /** The decision that matters: does the reporter see this answer? */
     suppress: boolean;
+    /** Independent of `suppress`: was the claim-phrase penalty billed? */
+    claimCharged: boolean;
     /** Pinned only where the arithmetic is the point of the row. */
     penalty?: number;
     unsourcedIdentifiers?: string[];
@@ -323,57 +414,92 @@ const CORPUS: CorpusRow[] = [
     {
         shape: 'bare assertion of a root cause',
         response: 'Root cause is a re-render on every keystroke.',
-        suppress: true,
+        suppress: false,
+        claimCharged: true,
         penalty: 0.35,
     },
+    // ---- negation shapes: all publishable, all still charged -------------------
     {
-        shape: 'assertion cancelled by a negation BEFORE it',
+        shape: 'LEADING negation ("I cannot tell what the root cause is")',
         response: 'I cannot tell what the root cause is from the docs alone.',
         suppress: false,
-        penalty: 0,
+        claimCharged: true,
+        penalty: 0.35,
     },
     {
-        shape: 'assertion cancelled by a negation AFTER it in the same sentence',
+        shape: 'TRAILING negation ("the root cause is not obvious")',
         response: 'The root cause is not obvious from the docs.',
         suppress: false,
-        penalty: 0,
-    },
-    {
-        // Version numbers must not fragment the sentence, or the negation lands in
-        // a different fragment than the claim and a good answer gets withheld.
-        shape: 'negated assertion whose sentence contains a version number',
-        response: "I can't reproduce on 1.2.3, so the root cause is a mystery.",
-        suppress: false,
-        penalty: 0,
-    },
-    {
-        shape: 'assertion cancelled by a trailing uncertainty marker',
-        response: 'What the root cause is remains unclear.',
-        suppress: false,
-        penalty: 0,
-    },
-    {
-        // Hedging does not buy the right to assert. The hedge-density penalty is a
-        // separate, softer signal; it must not double as an assertion escape hatch.
-        shape: 'hedged assertion ("possibly ...")',
-        response: 'Possibly the root cause is a re-render.',
-        suppress: true,
+        claimCharged: true,
         penalty: 0.35,
     },
     {
-        shape: 'assertion in the sentence AFTER a negated one',
+        shape: 'INCIDENTAL in-clause negation, real assertion in the next clause',
+        response: 'I cannot reproduce it, but the root cause is a re-render.',
+        suppress: false,
+        claimCharged: true,
+        penalty: 0.35,
+    },
+    {
+        shape: 'HEDGE-THEN-ASSERT ("Bug confirmed, though I have no repro steps")',
+        response: 'Bug confirmed, though I have no repro steps.',
+        suppress: false,
+        claimCharged: true,
+        penalty: 0.35,
+    },
+    {
+        shape: 'assertion with a trailing "no workaround" clause',
+        response: 'This is a known issue with no workaround.',
+        suppress: false,
+        claimCharged: true,
+        penalty: 0.35,
+    },
+    {
+        shape: '"no doubt" — a negator that is really an intensifier',
+        response: 'There is no doubt this is a real bug.',
+        suppress: false,
+        claimCharged: true,
+        penalty: 0.35,
+    },
+    {
+        // `no-cache` contains a `no` that is not a word of English negation at all.
+        shape: '"no-cache" substring inside an unrelated technical token',
+        response: 'Root cause is the `no-cache` header on the docs route.',
+        suppress: false,
+        claimCharged: true,
+        penalty: 0.35,
+    },
+    {
+        shape: 'sentence-crossing negation, assertion in the following sentence',
         response: 'I have not reproduced this. Root cause is a re-render.',
-        suppress: true,
+        suppress: false,
+        claimCharged: true,
         penalty: 0.35,
     },
     {
-        // A newline ends a thought as firmly as a period does; a negation on the
-        // previous bullet says nothing about this one.
         shape: 'negation and assertion on separate markdown bullets',
         response: '- No workaround exists yet\n- Root cause is a re-render on every keystroke',
-        suppress: true,
+        suppress: false,
+        claimCharged: true,
         penalty: 0.35,
     },
+    {
+        // No claim pattern matches at all here — nothing to charge, nothing to gate.
+        shape: 'honest non-answer that names no claim wording',
+        response: 'I have not reproduced this myself, so engineering should take a look.',
+        suppress: false,
+        claimCharged: false,
+        penalty: 0,
+    },
+    {
+        // Hedging does not buy the right to assert, and it does not excuse it either.
+        shape: 'hedged assertion ("possibly ...")',
+        response: 'Possibly the root cause is a re-render.',
+        suppress: false,
+        claimCharged: true,
+        penalty: 0.35,
+    },
+    // ---- identifier shapes: the only thing that withholds ----------------------
     {
         shape: 'cites a docs URL whose path documents the identifier it names',
         response:
@@ -381,17 +507,30 @@ const CORPUS: CorpusRow[] = [
             'https://docs.copilotkit.ai/reference/components/CopilotKitProvider.',
         sources: [urlSource('https://docs.copilotkit.ai/reference/components/CopilotKitProvider')],
         suppress: false,
+        claimCharged: false,
         penalty: 0,
         unsourcedIdentifiers: [],
     },
     {
         // The prompt asks for docs links, so the hostname appears in most good
         // answers. It must never register as an identifier of its own.
-        shape: 'cites a docs URL absent from the sources',
+        shape: 'cites a docs URL (with scheme) absent from the sources',
         response:
             'Full details live at https://docs.copilotkit.ai/reference/components/chat/CopilotChat.',
         sources: NO_URL_DOCS,
         suppress: false,
+        claimCharged: false,
+        penalty: 0,
+        unsourcedIdentifiers: [],
+    },
+    {
+        // Same link written the way people actually type it. `docs.copilotkit.ai`
+        // used to yield the phantom identifier `copilotkit`.
+        shape: 'cites a docs URL (SCHEME-LESS host) absent from the sources',
+        response: 'Full details live at docs.copilotkit.ai/reference/components/chat/CopilotChat.',
+        sources: NO_URL_DOCS,
+        suppress: false,
+        claimCharged: false,
         penalty: 0,
         unsourcedIdentifiers: [],
     },
@@ -402,6 +541,7 @@ const CORPUS: CorpusRow[] = [
             'See https://docs.copilotkit.ai/reference/copilotKitPhantomHook for ' +
             '`copilotKitPhantomHook`.',
         suppress: false,
+        claimCharged: false,
         penalty: 0.15,
         unsourcedIdentifiers: ['copilotKitPhantomHook'],
     },
@@ -416,33 +556,42 @@ const CORPUS: CorpusRow[] = [
             '```',
         ].join('\n'),
         suppress: true,
+        claimCharged: false,
         unsourcedIdentifiers: ['copilotKitGhostA', 'copilotKitGhostB'],
     },
     {
-        shape: 'one invented identifier written in two casings',
+        shape: 'one invented identifier written in two casings counts once',
         response: 'Override `.copilotKitFoo` and `.CopilotKitFoo` to fix it.',
         suppress: false,
+        claimCharged: false,
         penalty: 0.15,
         unsourcedIdentifiers: ['copilotKitFoo'],
+    },
+    {
+        shape: 'two invented identifiers written as a call and as JSX',
+        response: 'Call `useCopilotKitGhost()` inside `<CopilotKitGhostPanel />`.',
+        suppress: true,
+        claimCharged: false,
+        unsourcedIdentifiers: ['useCopilotKitGhost', 'CopilotKitGhostPanel'],
     },
     {
         // Two claim patterns fire on this one sentence; it is still one claim.
         shape: '"known bug" assertion matching several patterns at once',
         response: 'This is a known bug.',
-        suppress: true,
+        suppress: false,
+        claimCharged: true,
         penalty: 0.35,
     },
     {
-        shape: '"no doubt" used as an intensifier, not a negation',
-        response: 'There is no doubt this is a real bug.',
+        // The #6167 shape: unsupportable prose AND invented names. The names gate it.
+        shape: 'claim wording plus two invented identifiers',
+        response:
+            'Bug confirmed. Override `.copilotKitGhostA` and `.copilotKitGhostB` to work around it.',
         suppress: true,
-        penalty: 0.35,
-    },
-    {
-        shape: '"no question about it" used as an intensifier',
-        response: 'No question about it, bug confirmed.',
-        suppress: true,
-        penalty: 0.35,
+        claimCharged: true,
+        // 0.35 claim + 2 × 0.15 identifiers = 0.65, clipped to the ceiling.
+        penalty: MAX_GROUNDEDNESS_PENALTY,
+        unsourcedIdentifiers: ['copilotKitGhostA', 'copilotKitGhostB'],
     },
     {
         shape: 'grounded answer that asserts nothing it cannot support',
@@ -450,23 +599,46 @@ const CORPUS: CorpusRow[] = [
             'You can replace the chat input with the `input` prop on the `CopilotChat` ' +
             'component. That keeps your own state, so you control the cursor.',
         suppress: false,
+        claimCharged: false,
         penalty: 0,
         unsourcedIdentifiers: [],
     },
 ];
 
 describe('assessGroundedness response-shape corpus', () => {
-    it.each(CORPUS)('$shape', ({ response, sources, suppress, penalty, unsourcedIdentifiers }) => {
-        const result = assessGroundedness(response, sources ?? CHAT_DOCS);
+    it.each(CORPUS)(
+        '$shape',
+        ({ response, sources, suppress, claimCharged, penalty, unsourcedIdentifiers }) => {
+            const result = assessGroundedness(response, sources ?? CHAT_DOCS);
 
-        expect(result.suppress).toBe(suppress);
-        if (penalty !== undefined) expect(result.penalty).toBeCloseTo(penalty, 5);
-        if (unsourcedIdentifiers !== undefined) {
-            expect(result.unsourcedIdentifiers).toEqual(unsourcedIdentifiers);
+            expect(result.suppress).toBe(suppress);
+            expect(result.unverifiedClaims.length > 0).toBe(claimCharged);
+            if (penalty !== undefined) expect(result.penalty).toBeCloseTo(penalty, 5);
+            if (unsourcedIdentifiers !== undefined) {
+                expect(result.unsourcedIdentifiers).toEqual(unsourcedIdentifiers);
+            }
+        },
+    );
+
+    it('never lets claim wording alone withhold a response', () => {
+        const withClaimsOnly = CORPUS.filter((row) => row.claimCharged);
+        expect(withClaimsOnly.length).toBeGreaterThan(0);
+
+        for (const row of withClaimsOnly) {
+            const result = assessGroundedness(row.response, row.sources ?? CHAT_DOCS);
+            if (result.unsourcedIdentifiers.length < SUPPRESS_AT_UNSOURCED_IDENTIFIERS) {
+                expect(result.suppress).toBe(false);
+            }
         }
     });
 
     it('pins the suppression bar to the exported threshold', () => {
+        const oneInvented = assessGroundedness('Override `.copilotKitGhostA`.', CHAT_DOCS);
+        expect(oneInvented.unsourcedIdentifiers).toHaveLength(
+            SUPPRESS_AT_UNSOURCED_IDENTIFIERS - 1,
+        );
+        expect(oneInvented.suppress).toBe(false);
+
         const twoInvented = assessGroundedness(
             'Override `.copilotKitGhostA` and `.copilotKitGhostB`.',
             CHAT_DOCS,

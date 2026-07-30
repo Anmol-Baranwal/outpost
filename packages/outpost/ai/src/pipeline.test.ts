@@ -210,7 +210,9 @@ describe('AIPipeline', () => {
             'never hedges about completeness at score %s',
             async (score) => {
                 const text = await disclaimerFor(score);
-                expect(text).not.toMatch(/may be incomplete|might be incomplete|may not be accurate/i);
+                expect(text).not.toMatch(
+                    /may be incomplete|might be incomplete|may not be accurate/i,
+                );
                 expect(text).toContain('This is an AI-generated response.');
             },
         );
@@ -242,7 +244,10 @@ describe('AIPipeline', () => {
                 ]);
             });
 
-            it('marks a response that confirms a bug as suppressed', async () => {
+            // Withholding is driven by the objective signal only — identifiers no
+            // retrieved source contains. Claim wording is fallible English, so it
+            // buys a penalty and an escalation, never a withheld reply.
+            it('penalizes a bug-confirming response into escalation without withholding it', async () => {
                 mockGenerate.mockResolvedValue({
                     ...sampleGeneratedResponse,
                     text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
@@ -250,6 +255,25 @@ describe('AIPipeline', () => {
 
                 const result = await pipeline.generateSupportResponse('q', { source: 'github' });
 
+                expect(result.groundedness.unverifiedClaims.length).toBeGreaterThan(0);
+                expect(result.suppressed).toBe(false);
+                expect(result.groundedness.suppress).toBe(false);
+                // The reporter still gets a human: the penalty clears the gate on its own.
+                expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
+            });
+
+            it('marks a response naming identifiers absent from the sources as suppressed', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: 'Override `.copilotKitGhostA` and `.copilotKitGhostB` to fix it.',
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.groundedness.unsourcedIdentifiers).toEqual([
+                    'copilotKitGhostA',
+                    'copilotKitGhostB',
+                ]);
                 expect(result.suppressed).toBe(true);
                 expect(result.groundedness.suppress).toBe(true);
                 expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
@@ -261,6 +285,28 @@ describe('AIPipeline', () => {
                 mockGenerate.mockResolvedValue({
                     ...sampleGeneratedResponse,
                     text: 'Bug Confirmed. Root cause is a re-render. The fix is trivial.',
+                });
+
+                const withBoost = await pipeline.generateSupportResponse('q', {
+                    source: 'github',
+                    confidenceCalibration: 0.15,
+                });
+
+                // 0.85 + 0.15 calibration = 1.0, minus the capped 0.6 penalty = 0.4.
+                // The boost cannot outrun the deduction, and the answer lands on the
+                // gate rather than above it.
+                expect(withBoost.groundedness.penalty).toBeCloseTo(0.6, 5);
+                expect(withBoost.confidenceScore).toBeCloseTo(0.4, 5);
+                expect(withBoost.confidenceScore).toBeLessThanOrEqual(AI_CONFIDENCE.ESCALATE);
+                expect(withBoost.confidenceLevel).toBe(ConfidenceLevel.LOW);
+            });
+
+            // A boost cannot lift a withheld answer over the escalation gate either:
+            // the suppression clamp sits below it by construction.
+            it('keeps a suppressed response below the gate even with a positive boost', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: 'Override `.copilotKitGhostA` and `.copilotKitGhostB` to fix it.',
                 });
 
                 const withBoost = await pipeline.generateSupportResponse('q', {
@@ -474,7 +520,11 @@ describe('AIPipeline confidence calibration', () => {
         pipeline = createPipeline();
         mockSearchDocs.mockResolvedValue(sampleSearchResults);
         mockGenerate.mockResolvedValue(sampleGeneratedResponse); // generator score 0.85
-        mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.6, level: ConfidenceLevel.MEDIUM });
+        mockScore.mockResolvedValue({
+            ...sampleConfidence,
+            score: 0.6,
+            level: ConfidenceLevel.MEDIUM,
+        });
         mockFormat.mockReturnValue({ text: 'Formatted response', truncated: false });
     });
 
@@ -493,7 +543,11 @@ describe('AIPipeline confidence calibration', () => {
     });
 
     it('clamps the calibrated score to at most 1', async () => {
-        mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.95, level: ConfidenceLevel.HIGH });
+        mockScore.mockResolvedValue({
+            ...sampleConfidence,
+            score: 0.95,
+            level: ConfidenceLevel.HIGH,
+        });
         const result = await pipeline.generateSupportResponse('q', {
             source: 'discord',
             confidenceCalibration: 0.2, // min(0.85, 0.95)=0.85 + 0.2 = 1.05 → clamp
@@ -502,7 +556,11 @@ describe('AIPipeline confidence calibration', () => {
     });
 
     it('clamps the calibrated score to at least 0', async () => {
-        mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.05, level: ConfidenceLevel.LOW });
+        mockScore.mockResolvedValue({
+            ...sampleConfidence,
+            score: 0.05,
+            level: ConfidenceLevel.LOW,
+        });
         const result = await pipeline.generateSupportResponse('q', {
             source: 'discord',
             confidenceCalibration: -0.2, // min(0.85, 0.05)=0.05 - 0.2 = -0.15 → clamp

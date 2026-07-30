@@ -148,19 +148,30 @@ const highConfidenceResult = {
     suppressed: false,
 };
 
-/** A response the groundedness check refuses to publish (see #6167). */
+/**
+ * A response the groundedness check refuses to publish (see #6167).
+ *
+ * Withholding is driven solely by identifiers no retrieved source contains, and
+ * the bar is two — so this fixture carries the two invented class names #6167
+ * shipped. The claim wording rides along as penalty only; it does not withhold.
+ */
 const suppressedResult = {
     ...highConfidenceResult,
-    response: '## Bug Confirmed: Cursor Jump\n\nOverride `.copilotKitInputControls`.',
+    response:
+        '## Bug Confirmed: Cursor Jump\n\nOverride `.copilotKitInputControls` and ' +
+        '`.copilotKitInputControlsExpanded`.',
     confidenceLevel: 'LOW',
     confidenceScore: 0.32,
     groundedness: {
-        penalty: 0.5,
+        penalty: 0.6,
         unverifiedClaims: ['"bug confirmed"'],
-        unsourcedIdentifiers: ['copilotKitInputControls'],
+        unsourcedIdentifiers: ['copilotKitInputControls', 'copilotKitInputControlsExpanded'],
         hedgeCount: 0,
         suppress: true,
-        reasons: ['unverifiable claims: "bug confirmed"'],
+        reasons: [
+            'unverifiable claims: "bug confirmed"',
+            'identifiers absent from sources: copilotKitInputControls, copilotKitInputControlsExpanded',
+        ],
     },
     suppressed: true,
 };
