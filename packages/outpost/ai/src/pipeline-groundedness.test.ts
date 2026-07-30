@@ -19,11 +19,7 @@ vi.mock('./config.js', () => ({
 
 import { AIPipeline, SUPPRESSED_RESPONSE_TEXT } from './pipeline.js';
 import { ResponseGenerator } from './generator.js';
-import {
-    AI_DISCLAIMER,
-    AI_DISCLAIMER_ESCALATED,
-    ResponseFormatter,
-} from './formatter.js';
+import { AI_DISCLAIMER, AI_DISCLAIMER_ESCALATED, ResponseFormatter } from './formatter.js';
 import { assessGroundedness } from './groundedness.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
 import type { SearchResult } from './types.js';
@@ -79,6 +75,14 @@ const SOURCES: SearchResult[] = [
 
 const SCORER_SCORE = 0.95;
 
+/**
+ * What `ResponseGenerator.assessConfidence` scores for SOURCES: avg(0.9, 0.85) =
+ * 0.875 plus the 0.10 two-source count bonus. Retrieval quality ONLY — the
+ * generator must never fold the groundedness penalty into this, because it is the
+ * left operand of the pipeline's `min()`.
+ */
+const GENERATOR_RETRIEVAL_SCORE = 0.975;
+
 /** One invented identifier → penalty 0.15, and NOT suppressed (suppress needs 2). */
 const UNGROUNDED_RESPONSE = 'Override `.copilotKitInputControls` to force compact mode.';
 
@@ -129,9 +133,34 @@ describe('groundedness penalty is applied exactly once', () => {
 
         // min(generator 0.975, scorer 0.95) = 0.95, minus one penalty of 0.15.
         expect(result.confidenceScore).toBeCloseTo(SCORER_SCORE - penalty, 5);
+    });
 
-        // The regression this file exists for: two deductions gave 0.80 − 0.15 = 0.65.
-        expect(result.confidenceScore).not.toBeCloseTo(SCORER_SCORE - penalty * 2, 5);
+    // The regression this file exists for, isolated into its own test so the guard
+    // is the ONLY assertion that can fail — a neighbouring equality check catching
+    // the bug first would leave the guard itself unproven (and it was: the old
+    // hard-coded `SCORER_SCORE - penalty * 2` = 0.65 is not a value the bug can
+    // produce, so that guard passed even with the double deduction restored).
+    it('does not deduct the penalty twice', async () => {
+        mock.onMessage(/./, {
+            content: UNGROUNDED_RESPONSE,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+
+        const pipeline = createPipeline();
+        const result = await pipeline.generateSupportResponse('how do I force compact mode?', {
+            source: 'github',
+        });
+
+        const { penalty } = assessGroundedness(UNGROUNDED_RESPONSE, SOURCES);
+
+        // Derived, not hard-coded: if the generator ALSO deducted from its own
+        // confidenceScore, min() would see 0.975 − 0.15 = 0.825 rather than 0.975,
+        // so min(0.825, 0.95) = 0.825, and the pipeline's own deduction would land
+        // the result at 0.825 − 0.15 = 0.675.
+        const doubleApplied = Math.min(GENERATOR_RETRIEVAL_SCORE - penalty, SCORER_SCORE) - penalty;
+        expect(doubleApplied).toBeCloseTo(0.675, 5);
+
+        expect(result.confidenceScore).not.toBeCloseTo(doubleApplied, 5);
     });
 
     it('leaves the generator score free of the penalty so min() stays meaningful', async () => {
@@ -144,7 +173,7 @@ describe('groundedness penalty is applied exactly once', () => {
         const generated = await generator.generate({ question: 'q' }, SOURCES);
 
         // Retrieval quality only: avg 0.875 + 0.10 count bonus.
-        expect(generated.confidenceScore).toBeCloseTo(0.975, 5);
+        expect(generated.confidenceScore).toBeCloseTo(GENERATOR_RETRIEVAL_SCORE, 5);
         // The assessment rides along for the pipeline to apply.
         expect(generated.groundedness?.penalty).toBeCloseTo(0.15, 5);
     });
@@ -265,9 +294,7 @@ describe('generateStreamingResponse gate', () => {
         });
 
         const pipeline = createPipeline();
-        const chunks = await collect(
-            pipeline.generateStreamingResponse('q', { source: 'github' }),
-        );
+        const chunks = await collect(pipeline.generateStreamingResponse('q', { source: 'github' }));
 
         expect(chunks).toEqual([SUPPRESSED_RESPONSE_TEXT]);
         expect(chunks.join('')).not.toContain('copilotKitInputControls');
@@ -281,9 +308,7 @@ describe('generateStreamingResponse gate', () => {
         });
 
         const pipeline = createPipeline();
-        const chunks = await collect(
-            pipeline.generateStreamingResponse('q', { source: 'github' }),
-        );
+        const chunks = await collect(pipeline.generateStreamingResponse('q', { source: 'github' }));
 
         expect(chunks.length).toBeGreaterThan(0);
         expect(chunks.join('')).toBe(grounded);
@@ -313,7 +338,7 @@ describe('generator confidence level respects groundedness', () => {
         const generated = await generator.generate({ question: 'q' }, SOURCES);
 
         // The premise: retrieval alone would classify this HIGH.
-        expect(generated.confidenceScore).toBeCloseTo(0.975, 5);
+        expect(generated.confidenceScore).toBeCloseTo(GENERATOR_RETRIEVAL_SCORE, 5);
         expect(classifyConfidence(generated.confidenceScore)).toBe(ConfidenceLevel.HIGH);
 
         expect(generated.groundedness?.suppress).toBe(true);
@@ -333,7 +358,7 @@ describe('generator confidence level respects groundedness', () => {
         const generated = await generator.generate({ question: 'q' }, SOURCES);
 
         // 0.975 − 0.15 = 0.825, still HIGH — the penalty is charged, not amplified.
-        expect(generated.confidenceScore).toBeCloseTo(0.975, 5);
+        expect(generated.confidenceScore).toBeCloseTo(GENERATOR_RETRIEVAL_SCORE, 5);
         expect(generated.confidenceLevel).toBe(ConfidenceLevel.HIGH);
     });
 

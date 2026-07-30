@@ -5,7 +5,7 @@
  * classification, message persistence, and escalation triggering.
  * All external dependencies (Prisma, AIPipeline, etc.) are mocked.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { JobHandlerContext } from '../types.js';
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
@@ -94,6 +94,23 @@ function makeContext(): JobHandlerContext {
         jobId: 'test-job-1',
         reportProgress: vi.fn().mockResolvedValue(undefined),
     };
+}
+
+/**
+ * Put SHADOW_MODE back exactly as it was, including "it was never set".
+ *
+ * `process.env.SHADOW_MODE = original` cannot express absence — assigning
+ * `undefined` to an env var stores the STRING `"undefined"`, which is truthy for
+ * the handler's `process.env.SHADOW_MODE === 'true'`-style reads and, worse,
+ * leaks a *defined* var into every test that runs afterwards. Mirrors the
+ * delete-when-absent restore in onboarding-digest.test.ts.
+ */
+function restoreShadowMode(original: string | undefined): void {
+    if (original !== undefined) {
+        process.env.SHADOW_MODE = original;
+    } else {
+        delete process.env.SHADOW_MODE;
+    }
 }
 
 const sampleTicket = {
@@ -438,7 +455,7 @@ describe('handleAiResponse', () => {
                 expect(shadowCall).toBeDefined();
                 expect(shadowCall![0].data.content).toBe(SAFE_REPLACEMENT_FIXTURE);
             } finally {
-                process.env.SHADOW_MODE = originalShadow;
+                restoreShadowMode(originalShadow);
             }
         });
     });
@@ -694,7 +711,7 @@ describe('handleAiResponse', () => {
             );
             expect(shadowMessageCall).toBeDefined();
         } finally {
-            process.env.SHADOW_MODE = originalShadow;
+            restoreShadowMode(originalShadow);
         }
     });
 
@@ -744,7 +761,7 @@ describe('handleAiResponse', () => {
 
             expect(result.success).toBe(true);
         } finally {
-            process.env.SHADOW_MODE = originalShadow;
+            restoreShadowMode(originalShadow);
         }
     });
 
@@ -839,5 +856,40 @@ describe('handleAiResponse', () => {
                 ],
             }),
         );
+    });
+});
+
+/**
+ * The shadow-mode tests above set SHADOW_MODE and hand it back in a `finally`.
+ * Getting the hand-back wrong does not fail those tests — it silently defines
+ * SHADOW_MODE for every test that runs afterwards, because assigning `undefined`
+ * to `process.env.X` stores the string `"undefined"`. So the restore itself is
+ * pinned here rather than left to trust.
+ */
+describe('restoreShadowMode', () => {
+    const beforeEachTest = process.env.SHADOW_MODE;
+    afterEach(() => {
+        restoreShadowMode(beforeEachTest);
+    });
+
+    it('unsets SHADOW_MODE entirely when it was never set', () => {
+        delete process.env.SHADOW_MODE;
+        const original = process.env.SHADOW_MODE;
+        process.env.SHADOW_MODE = 'true';
+
+        restoreShadowMode(original);
+
+        expect('SHADOW_MODE' in process.env).toBe(false);
+        expect(process.env.SHADOW_MODE).toBeUndefined();
+    });
+
+    it('puts the original value back when it was set', () => {
+        process.env.SHADOW_MODE = 'false';
+        const original = process.env.SHADOW_MODE;
+        process.env.SHADOW_MODE = 'true';
+
+        restoreShadowMode(original);
+
+        expect(process.env.SHADOW_MODE).toBe('false');
     });
 });

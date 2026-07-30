@@ -5,6 +5,7 @@ import {
     MAX_GROUNDEDNESS_PENALTY,
     SUPPRESS_AT_UNSOURCED_IDENTIFIERS,
 } from './groundedness.js';
+import type { GroundednessAssessment } from './groundedness.js';
 import type { SearchResult } from './types.js';
 
 const source = (content: string, title = 'CopilotChat'): SearchResult => ({
@@ -318,9 +319,22 @@ describe('assessGroundedness', () => {
         expect(noSources.unsourcedIdentifiers).toEqual(['copilotKitInput']);
     });
 
-    it('tolerates sources with missing title or content', () => {
-        const partial = [{ title: '', content: '', score: 0.5 } as SearchResult];
-        expect(() => assessGroundedness('Anything at all.', partial)).not.toThrow();
+    // The `?? ''` coalesces in the haystack build exist for source rows whose
+    // optional fields are genuinely ABSENT — a present-but-empty `title: ''` never
+    // reaches the coalesce, so a fixture built that way asserts nothing about them.
+    // A partial cast is the only way to reproduce the real shape: a Pathfinder row
+    // for a page with no title has no `title` key at all.
+    it('tolerates a source whose title, content and sourceUrl are absent entirely', () => {
+        const missingFields = [{ score: 0.5 } as unknown as SearchResult];
+
+        let result: GroundednessAssessment | undefined;
+        expect(() => {
+            result = assessGroundedness('Use `.copilotKitInput` here.', missingFields);
+        }).not.toThrow();
+
+        // There is nothing to ground against, so the identifier is correctly reported
+        // unsourced — the absent fields contributed no matchable text to the haystack.
+        expect(result?.unsourcedIdentifiers).toEqual(['copilotKitInput']);
     });
 
     // The exact response from CopilotKit/CopilotKit#6167, condensed. It is withheld
