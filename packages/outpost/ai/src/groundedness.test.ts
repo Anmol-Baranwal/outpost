@@ -146,6 +146,69 @@ describe('extractCopilotKitIdentifiers', () => {
     });
 });
 
+// Regression suite for #147. The guard used to be the literal substring
+// `copilotkit`, so every name that does not contain it — which is most of the API
+// surface we actually ship — was invisible to the only signal that withholds a
+// response. A model inventing a neighbour of `useCopilotAction` is far likelier
+// than one inventing a `.copilotKit*` CSS class, so this was the common case
+// passing straight through.
+describe('extractCopilotKitIdentifiers — API surface coverage (#147)', () => {
+    it.each([
+        ['hook call', 'Call `useCopilotFabricated()` first.', 'useCopilotFabricated'],
+        ['JSX self-closing', 'Use `<CopilotGhostPanel />` here.', 'CopilotGhostPanel'],
+        ['JSX open tag', 'Wrap in `<CopilotGhostProvider>`.', 'CopilotGhostProvider'],
+        ['bare component', 'Render `CopilotGhostChat`.', 'CopilotGhostChat'],
+        ['dotted member', 'Call `CopilotGhostChat.open`.', 'CopilotGhostChat'],
+    ])('sees a %s', (_label, response, expected) => {
+        expect(extractCopilotKitIdentifiers(response)).toContain(expected);
+    });
+
+    it('still sees names carrying the literal copilotkit substring', () => {
+        const ids = extractCopilotKitIdentifiers(
+            'Override `.copilotKitInput` and use `CopilotKitProvider`.',
+        );
+        expect(ids).toEqual(expect.arrayContaining(['copilotKitInput', 'CopilotKitProvider']));
+    });
+
+    // The prefix test requires a character after `Copilot`, and this is why.
+    // "GitHub Copilot" and "Microsoft Copilot" turn up in perfectly good answers;
+    // counting either as an invented API name would withhold a correct reply.
+    it.each([
+        'Unlike `Copilot`, CopilotKit runs in your app.',
+        'This is not `Copilot` — different product.',
+    ])('does not treat a bare Copilot mention as an identifier: %j', (response) => {
+        expect(extractCopilotKitIdentifiers(response)).toEqual([]);
+    });
+
+    it('still excludes package specifiers and generic React vocabulary', () => {
+        expect(
+            extractCopilotKitIdentifiers('Install `@copilotkit/react-core`, then use `useRef`.'),
+        ).toEqual([]);
+    });
+
+    it('suppresses a response inventing two names that carry no copilotkit substring', () => {
+        const result = assessGroundedness(
+            'Call `useCopilotFabricated()` and render `<CopilotInvented />`.',
+            CHAT_DOCS,
+        );
+        expect(result.unsourcedIdentifiers).toEqual([
+            'useCopilotFabricated',
+            'CopilotInvented',
+        ]);
+        expect(result.suppress).toBe(true);
+    });
+
+    // The cost of widening: a real name is only grounded if retrieval actually
+    // returned a page mentioning it. This asserts the grounded direction so a
+    // future tightening of the haystack cannot start withholding correct answers
+    // without failing a test.
+    it('leaves a documented name alone when a source mentions it', () => {
+        const result = assessGroundedness('Use `CopilotChat` with the `input` prop.', CHAT_DOCS);
+        expect(result.unsourcedIdentifiers).toEqual([]);
+        expect(result.suppress).toBe(false);
+    });
+});
+
 describe('assessGroundedness', () => {
     it('gives a grounded answer no penalty and does not suppress it', () => {
         const response =

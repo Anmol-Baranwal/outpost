@@ -270,13 +270,61 @@ function stripUrls(text: string): string {
  * Anything that isn't identifier-shaped after unwrapping (prose, a fenced snippet,
  * a path) yields nothing.
  */
+/**
+ * Does this token name something on CopilotKit's API surface?
+ *
+ * The original guard was `/copilotkit/i` — the literal substring. That covered
+ * `CopilotKitProvider` and `.copilotKitInput` and missed everything else, which is
+ * most of what we actually ship: `useCopilotAction`, `CopilotChat`,
+ * `CopilotSidebar`, `CopilotTextarea`, `useCopilotReadable`. Those are the names
+ * all over our docs, so they are also the most natural thing for a model to invent
+ * a neighbour of — and since `suppress` now rides entirely on this signal, a name
+ * it cannot see is a fabrication it cannot withhold.
+ *
+ * Two shapes count:
+ *   1. Anything containing `copilotkit` (case-insensitive) — the original rule.
+ *   2. `Copilot` or `useCopilot` followed by more of a name — `CopilotChat`,
+ *      `useCopilotAction`.
+ *
+ * Rule 2 requires a character after the prefix on purpose. Bare `Copilot` must NOT
+ * match: "GitHub Copilot" and "Microsoft Copilot" appear in perfectly good answers,
+ * and treating either as an invented API name would withhold a correct reply.
+ *
+ * ## What widening costs
+ *
+ * A real name is only "grounded" if retrieval actually returned a page mentioning
+ * it. Covering `CopilotChat` therefore means a correct answer naming `CopilotChat`
+ * is withheld when the retrieved pages happen not to mention it and the response
+ * names a second such identifier. Three things bound that risk, and all three are
+ * load-bearing rather than incidental:
+ *
+ *   - Identifiers only count in CODE shape — backticks, JSX, a CSS selector, a call.
+ *     Prose that merely says the word CopilotChat is not a claim about an API.
+ *   - The haystack is every retrieved source's title, content AND `sourceUrl`, so a
+ *     response citing the page it was handed is citing, not inventing.
+ *   - `SUPPRESS_AT_UNSOURCED_IDENTIFIERS` is 2, so one unlucky name is priced, not
+ *     withheld.
+ *
+ * If correct answers start being withheld, the lever is retrieval breadth, not this
+ * predicate — narrowing it back trades a visible false withhold for an invisible
+ * published fabrication, which is the worse failure.
+ */
+function isCopilotKitIdentifier(token: string): boolean {
+    if (/copilotkit/i.test(token)) return true;
+    return /^(?:use)?Copilot[A-Z0-9]/.test(token);
+}
+
 function identifierSegments(rawToken: string): string[] {
     let token = rawToken.trim();
     if (!token) return [];
     // Package specifier, including subpath imports.
     if (token.startsWith('@')) return [];
-    if (!/copilotkit/i.test(token)) return [];
 
+    // The name test runs AFTER unwrapping, not before. It is a prefix test now
+    // (`Copilot…` / `useCopilot…`), and a raw token still carrying `<`, `.` or `(`
+    // fails a prefix test even when the name inside it matches — which silently
+    // made `<CopilotGhostPanel />` invisible. A substring test tolerated the
+    // wrapper; a shape test does not.
     const jsx = JSX_WRAPPER.exec(token);
     if (jsx) token = jsx[1];
 
@@ -287,7 +335,7 @@ function identifierSegments(rawToken: string): string[] {
 
     // A dotted form names a member; report the segments that carry our name so the
     // grounding lookup compares something a source could plausibly contain.
-    return token.split('.').filter((segment) => segment && /copilotkit/i.test(segment));
+    return token.split('.').filter((segment) => segment && isCopilotKitIdentifier(segment));
 }
 
 /**
