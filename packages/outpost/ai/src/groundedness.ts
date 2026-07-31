@@ -28,10 +28,18 @@ import type { SearchResult } from './types.js';
  *    either in the sources we handed the model or it is not. No English is parsed
  *    to reach it.
  *
- * 2. **Claim phrases — penalty only.** "Bug confirmed", "root cause is", "I
- *    reproduced this" are still detected, still charged
+ * 2. **Claim phrases — never withhold; sometimes escalate.** "Bug confirmed",
+ *    "root cause is", "I reproduced this" are still detected, still charged
  *    `PENALTY_PER_UNVERIFIED_CLAIM`, and still reported on `unverifiedClaims` and
- *    `reasons`. They no longer contribute to `suppress` at all.
+ *    `reasons`. They never contribute to `suppress`. The subset that asserts *our
+ *    own* verification additionally sets `forcesEscalation`, which the pipeline
+ *    clamps on so a person reviews the answer — but the answer still posts.
+ *
+ *    That subset is narrower than "any claim phrase": "this is a known issue,
+ *    fixed in 1.9.2" and "the fix is to pass the `input` prop" are ordinary
+ *    sentences in a correct docs-grounded answer, so they are priced and left
+ *    alone. Escalating on those would page a human several times a day for
+ *    English rather than for fabrication. See ESCALATION_FORCING_CATEGORIES.
  *
  * Why: deciding whether a sentence *asserts* a claim or *denies* it is natural
  * language negation, and three successive regex attempts at it failed in three
@@ -49,7 +57,33 @@ import type { SearchResult } from './types.js';
  */
 
 /** The kind of unsupportable claim a pattern detects. Several patterns can share one. */
-type ClaimCategory = 'confirmation' | 'bug-validity' | 'root-cause' | 'fix' | 'reproduction';
+type ClaimCategory =
+    | 'confirmation'
+    | 'bug-validity'
+    | 'known-issue'
+    | 'root-cause'
+    | 'fix'
+    | 'reproduction';
+
+/**
+ * The categories that force an escalation, as opposed to only charging a penalty.
+ *
+ * The split is about WHO is being quoted. These four assert that WE did something
+ * we cannot have done — confirmed a bug, established its cause, reproduced it — so
+ * a person has to look at the answer.
+ *
+ * `known-issue` and `fix` are deliberately absent. "This is a known issue, fixed in
+ * 1.9.2" and "the fix is to pass the `input` prop" are things a correct,
+ * docs-grounded answer says all day, and forcing an escalation on each one would
+ * page a human for ordinary English. They still carry the penalty, so a response
+ * built out of them still scores lower; it just doesn't wake anyone up.
+ */
+const ESCALATION_FORCING_CATEGORIES: ReadonlySet<ClaimCategory> = new Set([
+    'confirmation',
+    'bug-validity',
+    'root-cause',
+    'reproduction',
+]);
 
 /**
  * Claims of verification the bot cannot make: it has no repo, repro, or test run.
@@ -77,11 +111,15 @@ const UNVERIFIED_CLAIM_PATTERNS: Array<{
     {
         pattern: /\bknown\s+(?:bug|issue|regression)\b/i,
         label: 'claims a known bug',
-        category: 'bug-validity',
+        category: 'known-issue',
     },
     {
         pattern:
-            /\bthis\s+is\s+(?:a|an)\s+(?:real|genuine|confirmed|known|legitimate)\s+(?:bug|issue|regression|defect)\b/i,
+            /\bthis\s+is\s+(?:a|an)\s+(?:real|genuine|confirmed|legitimate)\s+(?:bug|issue|regression|defect)\b/i,
+        // `known` is deliberately NOT in the adjective list: "this is a known
+        // issue" belongs to the known-issue category, which is priced but does
+        // not page anyone. Leaving it here made that sentence match both
+        // categories and escalate anyway.
         label: 'asserts the report is a real bug',
         category: 'bug-validity',
     },
@@ -199,6 +237,17 @@ export interface GroundednessAssessment {
      * instead; a lowered score alone does not stop a post.
      */
     suppress: boolean;
+    /**
+     * True when at least one charged claim asserts that WE verified something —
+     * confirmed a bug, established a root cause, reproduced it. The caller clamps
+     * below the escalation gate on this so a person reviews the answer.
+     *
+     * Distinct from `unverifiedClaims.length > 0`, which also counts claims a
+     * correct docs-grounded answer legitimately makes ("known issue", "the fix
+     * is"). Those are priced but do not page anyone — see
+     * ESCALATION_FORCING_CATEGORIES.
+     */
+    forcesEscalation: boolean;
     /** Human-readable reasons, for logs and the dashboard. */
     reasons: string[];
 }
@@ -295,6 +344,7 @@ export function assessGroundedness(
         unsourcedIdentifiers: [],
         hedgeCount: 0,
         suppress: false,
+        forcesEscalation: false,
         reasons: [],
     };
 
@@ -313,12 +363,14 @@ export function assessGroundedness(
     // withheld reply.
     const unverifiedClaims: string[] = [];
     const chargedCategories = new Set<ClaimCategory>();
+    const escalationForcing: string[] = [];
 
     for (const { pattern, label, category } of UNVERIFIED_CLAIM_PATTERNS) {
         if (chargedCategories.has(category)) continue;
         if (!pattern.test(normalized)) continue;
         chargedCategories.add(category);
         unverifiedClaims.push(label);
+        if (ESCALATION_FORCING_CATEGORIES.has(category)) escalationForcing.push(label);
     }
 
     // Sources are searched as one haystack: an identifier documented on any
@@ -355,10 +407,14 @@ export function assessGroundedness(
 
     // Objective signal only. Claim wording is priced above and stops there.
     const suppress = unsourcedIdentifiers.length >= SUPPRESS_AT_UNSOURCED_IDENTIFIERS;
+    const forcesEscalation = escalationForcing.length > 0;
 
     const reasons: string[] = [];
     if (unverifiedClaims.length) {
         reasons.push(`unverifiable claims: ${unverifiedClaims.join(', ')}`);
+    }
+    if (forcesEscalation) {
+        reasons.push(`asserts own verification: ${escalationForcing.join(', ')}`);
     }
     if (unsourcedIdentifiers.length) {
         reasons.push(`identifiers absent from sources: ${unsourcedIdentifiers.join(', ')}`);
@@ -367,5 +423,13 @@ export function assessGroundedness(
         reasons.push(`${hedgeCount} hedge markers`);
     }
 
-    return { penalty, unverifiedClaims, unsourcedIdentifiers, hedgeCount, suppress, reasons };
+    return {
+        penalty,
+        unverifiedClaims,
+        unsourcedIdentifiers,
+        hedgeCount,
+        suppress,
+        forcesEscalation,
+        reasons,
+    };
 }

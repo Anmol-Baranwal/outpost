@@ -187,6 +187,69 @@ describe('assessGroundedness', () => {
         expect(result.suppress).toBe(false);
     });
 
+    // Every charged claim costs confidence, but only the ones asserting that WE
+    // verified something page a human. The split matters operationally: a claim
+    // phrase that a correct docs-grounded answer uses in normal prose would
+    // otherwise create an ESCALATION job several times a day, and the escalation
+    // queue is a person's attention.
+    describe('escalation is narrower than charging', () => {
+        it.each([
+            'Bug Confirmed: the cursor resets on every keystroke.',
+            'I confirmed the bug on the latest version.',
+            'This is a real bug worth fixing in the core.',
+            'Root cause is a re-render on every keystroke.',
+            'I reproduced this locally.',
+            'We ran the tests and they fail.',
+        ])('escalates on own-verification claim %j', (response) => {
+            const result = assessGroundedness(response, CHAT_DOCS);
+            expect(result.forcesEscalation).toBe(true);
+            expect(result.penalty).toBeGreaterThan(0);
+            // Still published — claim wording never withholds.
+            expect(result.suppress).toBe(false);
+        });
+
+        it.each([
+            // Both of these are things a correct, docs-grounded answer says.
+            'This is a known issue, fixed in 1.9.2.',
+            'The fix is to pass the `input` prop.',
+            'This is a known issue. The fix is to pass the `input` prop.',
+        ])('charges but does NOT escalate on docs-reportable claim %j', (response) => {
+            const result = assessGroundedness(response, CHAT_DOCS);
+            expect(result.unverifiedClaims.length).toBeGreaterThan(0);
+            expect(result.penalty).toBeGreaterThan(0);
+            expect(result.forcesEscalation).toBe(false);
+            expect(result.suppress).toBe(false);
+        });
+
+        // Regression guard: `known` used to appear in the real-bug pattern's
+        // adjective list, so this sentence matched two categories and escalated
+        // anyway — defeating the whole split for the most common phrasing of it.
+        it('does not escalate "this is a known issue" via the real-bug pattern', () => {
+            const result = assessGroundedness('This is a known issue.', CHAT_DOCS);
+            expect(result.unverifiedClaims).toEqual(['claims a known bug']);
+            expect(result.forcesEscalation).toBe(false);
+        });
+
+        it('escalates when a docs-reportable claim sits beside an own-verification one', () => {
+            const result = assessGroundedness(
+                'This is a known issue. I reproduced it locally.',
+                CHAT_DOCS,
+            );
+            expect(result.forcesEscalation).toBe(true);
+            expect(result.reasons.join(' ')).toContain('asserts own verification');
+        });
+
+        it('leaves a grounded answer with no claim at all alone', () => {
+            const result = assessGroundedness(
+                'Use the `input` prop on CopilotChat to supply your own input component.',
+                CHAT_DOCS,
+            );
+            expect(result.unverifiedClaims).toEqual([]);
+            expect(result.forcesEscalation).toBe(false);
+            expect(result.penalty).toBe(0);
+        });
+    });
+
     // The reported basis has to equal what was actually billed, or the log line
     // understates the deduction it is supposed to explain.
     describe('reported reasons match what was charged', () => {

@@ -304,14 +304,15 @@ describe('AIPipeline', () => {
                 });
 
                 // The supplied assessment also drives the escalation clamp, not just
-                // the arithmetic — a claim the generator charged must reach a human
-                // even though the pipeline never re-derived it.
-                it('clamps below the escalation gate on a supplied charged claim', async () => {
+                // the arithmetic — an own-verification claim the generator charged
+                // must reach a human even though the pipeline never re-derived it.
+                it('clamps below the escalation gate on a supplied own-verification claim', async () => {
                     mockGenerate.mockResolvedValue({
                         ...sampleGeneratedResponse,
                         groundedness: {
                             ...SENTINEL_ASSESSMENT,
-                            unverifiedClaims: ['sentinel claim'],
+                            unverifiedClaims: ['claims to have reproduced or tested'],
+                            forcesEscalation: true,
                         },
                     });
 
@@ -320,6 +321,29 @@ describe('AIPipeline', () => {
                     });
 
                     expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
+                });
+
+                // The other half of that contract, and the reason the pipeline reads
+                // `forcesEscalation` rather than `unverifiedClaims.length`: a charged
+                // claim that is only reporting what the docs say gets priced and
+                // published, without paging anyone.
+                it('does not clamp on a charged claim that is not own-verification', async () => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        groundedness: {
+                            ...SENTINEL_ASSESSMENT,
+                            unverifiedClaims: ['claims a known bug'],
+                            forcesEscalation: false,
+                        },
+                    });
+
+                    const result = await pipeline.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    // 0.85 − 0.25 penalty = 0.60, well clear of the gate.
+                    expect(result.confidenceScore).toBeCloseTo(0.6, 5);
+                    expect(result.confidenceScore).toBeGreaterThan(AI_CONFIDENCE.ESCALATE);
                 });
 
                 it('honours a generator-supplied suppress flag the recompute would not set', async () => {

@@ -65,7 +65,14 @@ export interface GeneratedResponse {
      * `classifyConfidence(confidenceScore)` for an ungrounded answer, and can never
      * report HIGH for one the gate would withhold. The deduction is local to the
      * classification — `confidenceScore` is left retrieval-only so the pipeline's
-     * `min()` still charges the penalty exactly once.
+     * `min()` still charges the deterministic penalty exactly once.
+     *
+     * "Exactly once" is about THIS penalty, not about groundedness overall. The
+     * LLM confidence scorer also weighs groundedness (rubric factor 5 in
+     * confidence.ts), and its score enters through the same `min()` before this
+     * deduction — so an ungrounded answer can be marked down by two independent
+     * mechanisms. That is intended as defense in depth, and
+     * MAX_GROUNDEDNESS_PENALTY bounds the deterministic half of it.
      */
     confidenceLevel: ConfidenceLevel;
     /** Search results used as context for generation */
