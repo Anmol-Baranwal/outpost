@@ -7,10 +7,13 @@
  *   3. Classifying the ticket inline (priority, type, tags)
  *   4. Formatting the response for the source platform
  *   5. Persisting the AI response as a Message record
- *   6. Enqueuing an ESCALATION job if confidence is too low
+ *   6. Enqueuing an ESCALATION job if confidence is too low, or if the pipeline
+ *      suppressed an ungrounded draft
  *
  * The pipeline itself handles Pathfinder retrieval, Claude generation,
- * confidence scoring, and platform-specific formatting.
+ * confidence scoring, platform-specific formatting, and the groundedness gate —
+ * so what it hands back is always safe to publish (see SUPPRESSED_RESPONSE_TEXT
+ * in packages/outpost/ai/src/pipeline.ts). This handler does not re-check it.
  */
 
 import { prisma } from '@copilotkit/outpost/db';
@@ -173,8 +176,27 @@ export async function handleAiResponse(
             },
         });
 
-        // 5b. Post the response back to the source platform
+        // 5b. Post the response back to the source platform — unconditionally.
+        //
+        // No suppression check here on purpose. The pipeline withholds an
+        // ungrounded draft at the boundary: `pipelineResult.formatted` already
+        // carries safe replacement copy whenever `suppressed` is true (see
+        // SUPPRESSED_RESPONSE_TEXT in packages/outpost/ai/src/pipeline.ts), so
+        // posting it is always correct. Re-gating it here is what previously made
+        // shadow mode drop the very records worth studying — the suppressed arm ran
+        // before the SHADOW_MODE arm, so nothing was logged. The draft itself is
+        // persisted as the BOT Message in step 5 for the human to edit (while
+        // suggestedResponse holds the publishable text bots pick up), and step 6
+        // below escalates on suppression regardless of score.
         const ticketSource = ticket.source as TicketSource;
+        if (pipelineResult.suppressed) {
+            console.warn(
+                `[AI Response] Ungrounded draft withheld for ticket ${ticketId} — ` +
+                    `${pipelineResult.groundedness.reasons.join('; ')}. ` +
+                    `Publishing the safe replacement and escalating to a human.`,
+            );
+        }
+
         if (process.env.SHADOW_MODE === 'true') {
             try {
                 await prisma.message.create({
@@ -244,12 +266,16 @@ export async function handleAiResponse(
 
         await context.reportProgress(85);
 
-        // 6. If confidence is below the escalation threshold, enqueue ESCALATION
-        if (pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE) {
+        // 6. Enqueue ESCALATION when confidence is below threshold, or when the
+        // response was withheld — nothing reached the reporter in that case, so a
+        // human has to pick it up regardless of what the score says.
+        if (pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE || pipelineResult.suppressed) {
             try {
                 await createJob(JobType.ESCALATION, {
                     ticketId: ticket.id,
-                    reason: `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`,
+                    reason: pipelineResult.suppressed
+                        ? `AI response withheld (${pipelineResult.groundedness.reasons.join('; ')}) — needs a human answer`
+                        : `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`,
                 });
             } catch (error) {
                 console.error(
@@ -266,7 +292,8 @@ export async function handleAiResponse(
 
     console.log(
         `[AI Response] Ticket ${ticketId}: confidence=${pipelineResult.confidenceLevel} ` +
-            `(${(pipelineResult.confidenceScore * 100).toFixed(0)}%), latency=${pipelineResult.latencyMs}ms`,
+            `(${(pipelineResult.confidenceScore * 100).toFixed(0)}%), latency=${pipelineResult.latencyMs}ms` +
+            `${pipelineResult.suppressed ? ', ungrounded draft withheld' : ''}`,
     );
 
     return {
@@ -276,7 +303,10 @@ export async function handleAiResponse(
             confidenceLevel: pipelineResult.confidenceLevel,
             confidenceScore: pipelineResult.confidenceScore,
             latencyMs: pipelineResult.latencyMs,
-            escalated: pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE,
+            escalated:
+                pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE ||
+                pipelineResult.suppressed,
+            suppressed: pipelineResult.suppressed,
         },
     };
 }

@@ -5,7 +5,7 @@
  * classification, message persistence, and escalation triggering.
  * All external dependencies (Prisma, AIPipeline, etc.) are mocked.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { JobHandlerContext } from '../types.js';
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
@@ -96,6 +96,23 @@ function makeContext(): JobHandlerContext {
     };
 }
 
+/**
+ * Put SHADOW_MODE back exactly as it was, including "it was never set".
+ *
+ * `process.env.SHADOW_MODE = original` cannot express absence — assigning
+ * `undefined` to an env var stores the STRING `"undefined"`, which is truthy for
+ * the handler's `process.env.SHADOW_MODE === 'true'`-style reads and, worse,
+ * leaks a *defined* var into every test that runs afterwards. Mirrors the
+ * delete-when-absent restore in onboarding-digest.test.ts.
+ */
+function restoreShadowMode(original: string | undefined): void {
+    if (original !== undefined) {
+        process.env.SHADOW_MODE = original;
+    } else {
+        delete process.env.SHADOW_MODE;
+    }
+}
+
 const sampleTicket = {
     id: 'tkt-1',
     displayId: 'TKT-0001',
@@ -137,6 +154,55 @@ const highConfidenceResult = {
     searchResults: [{ title: 'Getting Started', content: '...', score: 0.95 }],
     tokenUsage: { inputTokens: 100, outputTokens: 200 },
     latencyMs: 1500,
+    groundedness: {
+        penalty: 0,
+        unverifiedClaims: [],
+        unsourcedIdentifiers: [],
+        hedgeCount: 0,
+        suppress: false,
+        reasons: [],
+    },
+    suppressed: false,
+};
+
+/** The draft the groundedness check refuses to publish (see #6167). */
+const SUPPRESSED_DRAFT =
+    '## Bug Confirmed: Cursor Jump\n\nOverride `.copilotKitInputControls` and ' +
+    '`.copilotKitInputControlsExpanded`.';
+
+/**
+ * Stands in for the pipeline's safe replacement copy. The handler is agnostic to
+ * the wording — its contract is "publish `formatted`, whatever it is" — so this
+ * fixture only has to be distinguishable from the draft. The real copy is pinned
+ * by name (SUPPRESSED_RESPONSE_TEXT) in the AI package's pipeline tests.
+ */
+const SAFE_REPLACEMENT_FIXTURE = 'I could not find an answer, so I have escalated this.';
+
+/**
+ * What the pipeline returns for a suppressed draft: `response` keeps the draft for
+ * the human, `formatted` already carries the safe replacement.
+ */
+const suppressedResult = {
+    ...highConfidenceResult,
+    response: SUPPRESSED_DRAFT,
+    formatted: {
+        text: SAFE_REPLACEMENT_FIXTURE,
+        truncated: false,
+    },
+    confidenceLevel: 'LOW',
+    confidenceScore: 0.32,
+    groundedness: {
+        penalty: 0.6,
+        unverifiedClaims: ['"bug confirmed"'],
+        unsourcedIdentifiers: ['copilotKitInputControls', 'copilotKitInputControlsExpanded'],
+        hedgeCount: 0,
+        suppress: true,
+        reasons: [
+            'unverifiable claims: "bug confirmed"',
+            'identifiers absent from sources: copilotKitInputControls, copilotKitInputControlsExpanded',
+        ],
+    },
+    suppressed: true,
 };
 
 const mediumConfidenceResult = {
@@ -281,6 +347,117 @@ describe('handleAiResponse', () => {
                 reason: expect.stringContaining('Low AI confidence'),
             }),
         );
+    });
+
+    // A suppressed response is one the groundedness check found unsupportable.
+    //
+    // The handler does NOT gate on suppression — the pipeline already swapped safe
+    // copy into `formatted`, so the handler posts unconditionally. That is what
+    // these tests pin: the reporter gets the safe replacement and never the draft,
+    // a human is pulled in regardless of score, and the draft survives on the
+    // ticket for that human. A `suppressed` branch here is what previously made
+    // shadow mode drop exactly these records.
+    describe('suppressed (ungrounded) responses', () => {
+        beforeEach(() => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(suppressedResult);
+            mockHasAdapter.mockReturnValue(true);
+        });
+
+        it('posts the safe replacement, never the draft', async () => {
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.suppressed).toBe(true);
+            // Posts unconditionally — with the pipeline's safe text.
+            expect(mockPostResponse).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'tkt-1' }),
+                suppressedResult.formatted,
+            );
+            const posted = mockPostResponse.mock.calls[0][1] as { text: string };
+            expect(posted.text).toBe(SAFE_REPLACEMENT_FIXTURE);
+            expect(posted.text).not.toContain('Bug Confirmed');
+            expect(posted.text).not.toContain('copilotKitInputControls');
+        });
+
+        it('escalates to a human even though the score is above ESCALATE', async () => {
+            // 0.32 would escalate on score alone, so raise the score above the gate
+            // and prove the escalation comes from suppression. Assert on THIS call's
+            // return value — asserting on an earlier result would prove nothing.
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...suppressedResult,
+                confidenceScore: 0.95,
+                confidenceLevel: 'HIGH',
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data?.confidenceScore).toBe(0.95);
+            expect(result.data?.escalated).toBe(true);
+            expect(mockPrismaJob.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({ type: 'ESCALATION' }),
+                }),
+            );
+            const escalationCall = mockPrismaJob.create.mock.calls[0][0];
+            expect(escalationCall.data.payload.reason).toContain('withheld');
+        });
+
+        it('still persists the draft so a human can edit and send it', async () => {
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            // The draft — not the replacement — is the BOT message a human works from.
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        type: 'BOT',
+                        isAiGenerated: true,
+                        content: SUPPRESSED_DRAFT,
+                    }),
+                }),
+            );
+            // suggestedResponse is what bots pick up, so it holds the safe text.
+            expect(mockPrismaTicket.update).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        suggestedResponse: SAFE_REPLACEMENT_FIXTURE,
+                    }),
+                }),
+            );
+        });
+
+        // The regression this whole branch chain rewrite exists for: the old
+        // `if (suppressed)` arm ran BEFORE the SHADOW_MODE arm, so in shadow mode a
+        // suppressed response produced no shadow record — the responses most worth
+        // studying were the only ones that stopped being logged.
+        it('records a shadow message in shadow mode', async () => {
+            const originalShadow = process.env.SHADOW_MODE;
+            try {
+                process.env.SHADOW_MODE = 'true';
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext(),
+                );
+
+                expect(result.success).toBe(true);
+                expect(mockPostResponse).not.toHaveBeenCalled();
+                const shadowCall = mockPrismaMessage.create.mock.calls.find(
+                    (call: Array<Record<string, Record<string, unknown>>>) =>
+                        call[0].data.author === 'outpost-shadow',
+                );
+                expect(shadowCall).toBeDefined();
+                expect(shadowCall![0].data.content).toBe(SAFE_REPLACEMENT_FIXTURE);
+            } finally {
+                restoreShadowMode(originalShadow);
+            }
+        });
     });
 
     it('does not escalate when confidence is above ESCALATE threshold', async () => {
@@ -534,7 +711,7 @@ describe('handleAiResponse', () => {
             );
             expect(shadowMessageCall).toBeDefined();
         } finally {
-            process.env.SHADOW_MODE = originalShadow;
+            restoreShadowMode(originalShadow);
         }
     });
 
@@ -584,7 +761,7 @@ describe('handleAiResponse', () => {
 
             expect(result.success).toBe(true);
         } finally {
-            process.env.SHADOW_MODE = originalShadow;
+            restoreShadowMode(originalShadow);
         }
     });
 
@@ -679,5 +856,40 @@ describe('handleAiResponse', () => {
                 ],
             }),
         );
+    });
+});
+
+/**
+ * The shadow-mode tests above set SHADOW_MODE and hand it back in a `finally`.
+ * Getting the hand-back wrong does not fail those tests — it silently defines
+ * SHADOW_MODE for every test that runs afterwards, because assigning `undefined`
+ * to `process.env.X` stores the string `"undefined"`. So the restore itself is
+ * pinned here rather than left to trust.
+ */
+describe('restoreShadowMode', () => {
+    const beforeEachTest = process.env.SHADOW_MODE;
+    afterEach(() => {
+        restoreShadowMode(beforeEachTest);
+    });
+
+    it('unsets SHADOW_MODE entirely when it was never set', () => {
+        delete process.env.SHADOW_MODE;
+        const original = process.env.SHADOW_MODE;
+        process.env.SHADOW_MODE = 'true';
+
+        restoreShadowMode(original);
+
+        expect('SHADOW_MODE' in process.env).toBe(false);
+        expect(process.env.SHADOW_MODE).toBeUndefined();
+    });
+
+    it('puts the original value back when it was set', () => {
+        process.env.SHADOW_MODE = 'false';
+        const original = process.env.SHADOW_MODE;
+        process.env.SHADOW_MODE = 'true';
+
+        restoreShadowMode(original);
+
+        expect(process.env.SHADOW_MODE).toBe('false');
     });
 });

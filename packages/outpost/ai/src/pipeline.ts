@@ -6,18 +6,37 @@ import type {
     TokenUsage,
     SearchResult,
 } from './types.js';
-import { ConfidenceLevel, classifyConfidence } from './types.js';
+import { ConfidenceLevel, SUPPRESSED_CONFIDENCE_CAP, classifyConfidence } from './types.js';
+import { assessGroundedness } from './groundedness.js';
 import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import { PathfinderClient } from './pathfinder.js';
 import { ResponseGenerator } from './generator.js';
 import { ConfidenceScorer } from './confidence.js';
 import { TicketClassifier } from './classifier.js';
 import {
+    AI_DISCLAIMER,
     AI_DISCLAIMER_ESCALATED,
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
 } from './formatter.js';
 import { validateConfig } from './config.js';
+
+/**
+ * The text published in place of a suppressed draft.
+ *
+ * The groundedness gate lives HERE, at the boundary where the response is
+ * produced, not at each consumer. When `groundedness.suppress` is true the
+ * pipeline swaps this copy into `formatted`, so every consumer — the queue
+ * handler, the web QA route, anything added later — publishes safe text without
+ * having to know the gate exists. The model's draft is still returned on
+ * `PipelineResult.response` for the human picking up the escalation.
+ *
+ * The copy promises a human follow-up itself, which is why callers pair it with
+ * the plain `AI_DISCLAIMER` rather than `AI_DISCLAIMER_ESCALATED` — stacking
+ * both would promise the same follow-up twice.
+ */
+export const SUPPRESSED_RESPONSE_TEXT =
+    "I couldn't find an answer to this in the CopilotKit or AG-UI documentation or source code, so I don't want to guess. I've escalated this to our team — someone will follow up in this thread.";
 
 /**
  * Highest confidence score that still classifies BELOW HIGH. A degraded
@@ -34,6 +53,14 @@ const DEGRADED_CONFIDENCE_CAP = AI_CONFIDENCE.HIGH_THRESHOLD - 0.01;
  * scoring (against the real generated response) → response formatting. Every
  * step has error handling — the pipeline never crashes, always returns a
  * graceful fallback.
+ *
+ * The groundedness gate is enforced HERE, not by consumers. Both entry points
+ * withhold an ungrounded draft themselves: `generateSupportResponse` swaps
+ * SUPPRESSED_RESPONSE_TEXT into `formatted`, and `generateStreamingResponse`
+ * buffers before yielding so it can do the same. Publishing what the pipeline
+ * hands back is therefore always safe — a consumer never has to read
+ * `suppressed` to avoid posting a fabrication. `suppressed` and `groundedness`
+ * remain on the result for analytics and escalation routing.
  */
 export class AIPipeline {
     private pathfinder: PathfinderClient;
@@ -130,6 +157,56 @@ export class AIPipeline {
             Math.min(1, combinedConfidenceScore + calibration),
         );
 
+        // Groundedness is deducted AFTER calibration so aggregate 👍/👎 feedback can
+        // never offset a fabrication: feedback tunes how we weigh a well-formed
+        // answer, it does not license an unsupported claim.
+        //
+        // This is the ONLY place the penalty is applied. The generator assesses
+        // groundedness (it has the response and its sources in hand) and passes the
+        // result through untouched — it must not deduct from its own
+        // `confidenceScore`, because that score feeds the `min()` above and the
+        // penalty would land twice. Recomputed here only if a caller injected a
+        // generator that doesn't supply one.
+        const groundedness =
+            generatedResponse.groundedness ??
+            assessGroundedness(generatedResponse.text, searchResults);
+        if (groundedness.penalty > 0) {
+            finalConfidenceScore = Math.max(0, finalConfidenceScore - groundedness.penalty);
+            console.warn(
+                `[Pipeline] Groundedness penalty ${groundedness.penalty.toFixed(2)} — ${groundedness.reasons.join('; ')}`,
+            );
+        }
+
+        // A response we won't publish is not a confident one, whatever the
+        // retrieval scored. Clamp below the escalation gate so every downstream
+        // reader agrees: the disclaimer promises a human, the dashboard buckets it
+        // LOW, and the worker's score-based escalation fires on its own. The
+        // capped penalty alone can't guarantee this — a top score plus positive
+        // calibration lands exactly ON the gate, which does not escalate.
+        // Two independent reasons to guarantee a human sees this, both clamping to
+        // the same cap:
+        //
+        // 1. `suppress` — the response named identifiers no source contains, so the
+        //    draft is withheld and the reporter gets the no-answer copy instead.
+        // 2. `forcesEscalation` — the response asserted that WE verified something
+        //    (confirmed a bug, established a root cause, reproduced it). That text
+        //    still publishes; claim wording is fallible English and must never gate
+        //    publication. But somebody checks it.
+        //
+        // The penalty alone cannot guarantee either. The deduction is capped at
+        // MAX_GROUNDEDNESS_PENALTY (0.6), so a perfect base score plus the maximum
+        // positive feedback calibration lands on exactly 1.0 - 0.6 = ESCALATE, and
+        // the escalation gate tests `< ESCALATE` — the worst case would post with a
+        // "we'll review it" disclaimer and page nobody.
+        //
+        // `forcesEscalation` is deliberately narrower than `unverifiedClaims.length
+        // > 0`: "this is a known issue, fixed in 1.9.2" and "the fix is to pass the
+        // `input` prop" are ordinary sentences in a correct docs-grounded answer.
+        // They are priced, not escalated. See ESCALATION_FORCING_CATEGORIES.
+        if (groundedness.suppress || groundedness.forcesEscalation) {
+            finalConfidenceScore = Math.min(finalConfidenceScore, SUPPRESSED_CONFIDENCE_CAP);
+        }
+
         // Safety cap: a DEGRADED confidence signal (LLM scorer unavailable → heuristic
         // fallback over Pathfinder's synthetic rank-scores) must never present as HIGH.
         // HIGH suppresses the disclaimer and is treated as authoritative, so an ungrounded
@@ -147,6 +224,14 @@ export class AIPipeline {
 
         // Step 4: Format for target platform.
         //
+        // THE GATE. A suppressed draft never reaches `formatted`, so the withheld
+        // text cannot leak through any consumer — publishing `formatted` is
+        // always safe by construction. `response` below still carries the draft
+        // for the human handling the escalation.
+        const publishedText = groundedness.suppress
+            ? SUPPRESSED_RESPONSE_TEXT
+            : generatedResponse.text;
+
         // The "we've escalated this" copy must be gated on the SAME condition the
         // worker uses to actually enqueue the ESCALATION job — score < ESCALATE
         // (see queue handlers/ai-response.ts) — NOT on the LOW *level* (score <
@@ -154,22 +239,36 @@ export class AIPipeline {
         // is LOW but never escalated, so the reporter is promised a follow-up
         // that never comes.
         //
-        // Neither variant may hedge about the response's completeness — see the
+        // A suppressed response is the exception: SUPPRESSED_RESPONSE_TEXT already
+        // promises the same follow-up, so it takes the plain sentence instead of
+        // saying it twice.
+        //
+        // No variant may hedge about the response's completeness — see the
         // AI_DISCLAIMER doc comment in formatter.ts.
         const needsDisclaimer = finalConfidence !== ConfidenceLevel.HIGH;
         const willEscalate = finalConfidenceScore < AI_CONFIDENCE.ESCALATE;
-        const disclaimerText = willEscalate
-            ? AI_DISCLAIMER_ESCALATED
-            : AI_DISCLAIMER_REVIEWED;
+        const disclaimerText = groundedness.suppress
+            ? AI_DISCLAIMER
+            : willEscalate
+              ? AI_DISCLAIMER_ESCALATED
+              : AI_DISCLAIMER_REVIEWED;
 
-        const formatted = this.formatter.format(generatedResponse.text, options.source, {
+        const formatted = this.formatter.format(publishedText, options.source, {
             addDisclaimer: needsDisclaimer,
             disclaimerText,
         });
 
         const latencyMs = Date.now() - startTime;
 
+        if (groundedness.suppress) {
+            console.warn(
+                `[Pipeline] Response withheld from public post — ${groundedness.reasons.join('; ')}`,
+            );
+        }
+
         return {
+            // The ORIGINAL draft, even when suppressed — the human picking up the
+            // escalation works from it. Never publish this; publish `formatted`.
             response: generatedResponse.text,
             formatted,
             confidenceLevel: finalConfidence,
@@ -177,6 +276,8 @@ export class AIPipeline {
             searchResults,
             tokenUsage: totalTokenUsage,
             latencyMs,
+            groundedness,
+            suppressed: groundedness.suppress,
         };
     }
 
@@ -200,7 +301,25 @@ export class AIPipeline {
     }
 
     /**
-     * Generate a streaming response. Yields text chunks as they arrive.
+     * Generate a response as a chunk stream, gated on groundedness.
+     *
+     * NOT incremental. The groundedness gate is a property of the WHOLE response
+     * — you cannot know a draft invents an identifier until you have read it to
+     * the end — so this method drains the model stream into a buffer, assesses it,
+     * and only then yields. Consumers get the same chunk boundaries the model
+     * produced, but they get them after generation completes: time-to-first-token
+     * equals total latency.
+     *
+     * That is the deliberate tradeoff. The alternative — yielding chunks as they
+     * arrive — cannot be gated at all: text already written to the wire cannot be
+     * withheld, and this entry point would be the one ungated way to reach a
+     * public thread. Callers that genuinely need incremental delivery must not use
+     * a gated pipeline; callers that want the metadata (confidence, sources,
+     * suppression) should use {@link generateSupportResponse} directly.
+     *
+     * When the draft is suppressed, the ONLY thing yielded is
+     * {@link SUPPRESSED_RESPONSE_TEXT} — the draft is discarded, not returned, on
+     * this path. Use `generateSupportResponse` if you need the draft.
      */
     async *generateStreamingResponse(
         question: string,
@@ -225,11 +344,26 @@ export class AIPipeline {
             source: options.source,
         };
 
-        yield* this.generator.generateStream(
+        // Buffer the whole draft — the gate needs the complete text.
+        const chunks: string[] = [];
+        for await (const chunk of this.generator.generateStream(
             pipelineContext,
             searchResults,
             options.conversationHistory,
-        );
+        )) {
+            chunks.push(chunk);
+        }
+
+        const groundedness = assessGroundedness(chunks.join(''), searchResults);
+        if (groundedness.suppress) {
+            console.warn(
+                `[Pipeline] Streamed response withheld from public post — ${groundedness.reasons.join('; ')}`,
+            );
+            yield SUPPRESSED_RESPONSE_TEXT;
+            return;
+        }
+
+        yield* chunks;
     }
 
     /**

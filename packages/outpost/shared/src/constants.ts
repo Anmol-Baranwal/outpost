@@ -28,11 +28,20 @@ export const DEFAULT_SLA_RESOLUTION: Record<string, number> = {
 /**
  * AI confidence thresholds.
  *
- * Two overlapping schemes coexist here:
- *   - Action-based (AUTO_RESPOND / SUGGEST / ESCALATE): used by the
- *     response-generation pipeline to decide what action to take.
- *   - Level-based (HIGH_THRESHOLD / MEDIUM_THRESHOLD): used by the
- *     dashboard and analytics to bucket responses into confidence tiers.
+ * Three groups, and only two of them have readers:
+ *   - ESCALATE — live. The pipeline picks the disclaimer on it and the queue
+ *     handler enqueues an ESCALATION job below it.
+ *   - HIGH_THRESHOLD / MEDIUM_THRESHOLD — live. `classifyConfidence` buckets
+ *     responses into tiers for the disclaimer, the dashboard, and analytics.
+ *   - AUTO_RESPOND / SUGGEST — NO READER in `src/`. They described an
+ *     action-based scheme the pipeline never implemented: every response posts,
+ *     and what varies is the disclaimer and whether a human is paged. The last
+ *     reader was `GeneratedResponse.autoSend`, removed because it derived from a
+ *     pre-deduction score and so read `true` for exactly the responses the
+ *     groundedness gate withholds. Kept for the documented band and because
+ *     queue/github-app fixtures still reference the numbers; delete both if a
+ *     genuine auto-post gate is ever built, rather than wiring them to
+ *     something new that happens to want a 0.9 cutoff.
  */
 export const AI_CONFIDENCE = {
     /** Above this threshold, auto-respond */
