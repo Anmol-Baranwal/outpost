@@ -13,6 +13,7 @@
 import type { InboundMessage, InboundResult, TicketRef } from './types.js';
 import { generateTicketId, truncate } from '../utils.js';
 import { TicketSource } from '../types.js';
+import { readSlackMirrorConfig, isSlackMirrorEnabled } from './slack-mirror-config.js';
 
 /**
  * Prisma client interface — the subset of PrismaClient we actually call.
@@ -52,7 +53,7 @@ export interface PrismaLike {
  */
 export type CreateJobFn = (
     type: string,
-    payload: { ticketId: string; threadId?: string; source: string },
+    payload: { ticketId: string; threadId?: string; source: string; [key: string]: unknown },
 ) => Promise<string>;
 
 /**
@@ -94,6 +95,16 @@ export interface InboundHandlerConfig {
     createJob: CreateJobFn;
     /** Job type string for AI_RESPONSE (default: 'AI_RESPONSE') */
     aiResponseJobType?: string;
+    /** Job type string for the Slack ticket mirror (default: 'SLACK_MIRROR') */
+    slackMirrorJobType?: string;
+    /**
+     * Whether to enqueue Slack mirror jobs.
+     *
+     * Defaults to the environment's mirror configuration, so a deployment with
+     * `SLACK_MIRROR_MODE=off` (or no channel configured) never queues work that
+     * the handler would only discard. Tests pass this explicitly.
+     */
+    mirrorToSlack?: boolean;
 }
 
 /**
@@ -109,11 +120,51 @@ export class InboundHandler {
     private readonly prisma: PrismaLike;
     private readonly createJob: CreateJobFn;
     private readonly aiResponseJobType: string;
+    private readonly slackMirrorJobType: string;
+    private readonly mirrorToSlack: boolean;
 
     constructor(config: InboundHandlerConfig) {
         this.prisma = config.prisma;
         this.createJob = config.createJob;
         this.aiResponseJobType = config.aiResponseJobType ?? 'AI_RESPONSE';
+        this.slackMirrorJobType = config.slackMirrorJobType ?? 'SLACK_MIRROR';
+        this.mirrorToSlack =
+            config.mirrorToSlack ?? isSlackMirrorEnabled(readSlackMirrorConfig());
+    }
+
+    /**
+     * Enqueue a Slack mirror job, swallowing any failure.
+     *
+     * The mirror is an internal convenience view. A queue hiccup while
+     * mirroring must never take down ticket creation for a real reporter, so
+     * this logs and moves on rather than propagating.
+     */
+    private async enqueueSlackMirror(
+        ticketId: string,
+        source: TicketSource,
+        payload: { kind: 'ticket' | 'reply'; messageId?: string },
+    ): Promise<void> {
+        if (!this.mirrorToSlack) return;
+
+        // Never mirror a Slack-sourced ticket back into Slack. If the mirror
+        // channel is one the Slack bot monitors, the mirror post would arrive
+        // as a new inbound message, open a ticket, mirror that, and loop. The
+        // mirror exists to bring GitHub and Discord into Slack; Slack tickets
+        // are already there.
+        if (source === TicketSource.SLACK) return;
+
+        try {
+            await this.createJob(this.slackMirrorJobType, {
+                ticketId,
+                source: toPlatformTarget(source),
+                ...payload,
+            });
+        } catch (err) {
+            console.error(
+                `[InboundHandler] Failed to enqueue Slack mirror (${payload.kind}) for ticket ${ticketId}:`,
+                err instanceof Error ? err.message : String(err),
+            );
+        }
     }
 
     /**
@@ -198,6 +249,11 @@ export class InboundHandler {
             aiJobEnqueued = true;
         }
 
+        // Mirror the new ticket into the internal Slack channel. The mirror's
+        // thread-opening post carries the ticket body, so the first Message
+        // does not also need a reply job.
+        await this.enqueueSlackMirror(ticket.id, message.source, { kind: 'ticket' });
+
         return {
             ticketId: ticket.id,
             displayId,
@@ -268,6 +324,14 @@ export class InboundHandler {
                 });
             }
         }
+
+        // Mirror the follow-up under the ticket's existing Slack thread. Team
+        // replies mirror too — the thread is meant to be the whole life of the
+        // ticket, and a team answer is the most useful part of it.
+        await this.enqueueSlackMirror(ticket.id, message.source, {
+            kind: 'reply',
+            messageId: msg.id,
+        });
 
         return {
             ticketId: ticket.id,

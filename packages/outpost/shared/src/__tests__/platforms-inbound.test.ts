@@ -609,4 +609,82 @@ describe('InboundHandler', () => {
             expect(createJob).toHaveBeenCalledWith('CUSTOM_AI_JOB', expect.anything());
         });
     });
+    // ── Slack ticket mirror ──────────────────────────────────────────
+
+    describe('Slack ticket mirror', () => {
+        it('enqueues a thread-opening mirror job for a new ticket', async () => {
+            const handler = new InboundHandler({ prisma, createJob, mirrorToSlack: true });
+
+            await handler.handle(makeInboundMessage());
+
+            expect(createJob).toHaveBeenCalledWith('SLACK_MIRROR', {
+                ticketId: 'ticket-1',
+                source: 'discord',
+                kind: 'ticket',
+            });
+        });
+
+        it('enqueues nothing when the mirror is disabled', async () => {
+            const handler = new InboundHandler({ prisma, createJob, mirrorToSlack: false });
+
+            await handler.handle(makeInboundMessage());
+
+            const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+            expect(types).not.toContain('SLACK_MIRROR');
+        });
+
+        it('enqueues a threaded reply job carrying the message id', async () => {
+            prisma.ticket.findFirst = vi.fn().mockResolvedValue({
+                id: 'ticket-1',
+                displayId: 'TKT-ABCDEF12',
+                status: 'OPEN',
+                sourceId: 'thread-123',
+                channel: 'channel-1',
+                source: 'DISCORD',
+            });
+            const handler = new InboundHandler({ prisma, createJob, mirrorToSlack: true });
+
+            await handler.handle(makeInboundMessage({ isThreadStart: false }));
+
+            expect(createJob).toHaveBeenCalledWith('SLACK_MIRROR', {
+                ticketId: 'ticket-1',
+                source: 'discord',
+                kind: 'reply',
+                messageId: 'msg-1',
+            });
+        });
+
+        // A Slack-sourced ticket mirrored into a monitored Slack channel would
+        // arrive back as inbound, open a ticket, mirror again, and loop.
+        it('never mirrors a Slack-sourced ticket back into Slack', async () => {
+            const handler = new InboundHandler({ prisma, createJob, mirrorToSlack: true });
+
+            await handler.handle(
+                makeInboundMessage({ source: TicketSource.SLACK, channelId: 'C0MIRROR' }),
+            );
+
+            const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+            expect(types).not.toContain('SLACK_MIRROR');
+        });
+
+        it('still creates the ticket when enqueueing the mirror job fails', async () => {
+            const failing = vi.fn().mockImplementation((type: string) => {
+                if (type === 'SLACK_MIRROR') return Promise.reject(new Error('queue down'));
+                return Promise.resolve('job-1');
+            });
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const handler = new InboundHandler({
+                prisma,
+                createJob: failing as unknown as CreateJobFn,
+                mirrorToSlack: true,
+            });
+
+            const result = await handler.handle(makeInboundMessage());
+
+            expect(result.ticketId).toBe('ticket-1');
+            expect(result.isNewTicket).toBe(true);
+            expect(errorSpy).toHaveBeenCalled();
+            errorSpy.mockRestore();
+        });
+    });
 });

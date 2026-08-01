@@ -32,6 +32,7 @@ import {
     createTrackerSyncHandler,
     handleJobCleanup,
     handleGithubReactionPoll,
+    handleSlackMirror,
     createJob,
 } from '@copilotkit/outpost/queue';
 import { SyncEngine } from '@copilotkit/outpost/shared';
@@ -66,6 +67,7 @@ const worker = new Worker({
         [JobType.TRACKER_SYNC]: 1,
         [JobType.JOB_CLEANUP]: 1,
         [JobType.GITHUB_REACTION_POLL]: 1,
+        [JobType.SLACK_MIRROR]: 2,
     },
     jobTimeouts: {
         [JobType.AI_RESPONSE]: 120_000, // 2 minutes — AI pipeline is slow
@@ -85,6 +87,7 @@ worker.on(JobType.HUBSPOT_SYNC, handleHubSpotSync);
 worker.on(JobType.TRACKER_SYNC, handleTrackerSync);
 worker.on(JobType.JOB_CLEANUP, handleJobCleanup);
 worker.on(JobType.GITHUB_REACTION_POLL, handleGithubReactionPoll);
+worker.on(JobType.SLACK_MIRROR, handleSlackMirror);
 
 // ─── Start Scheduler ──────────────────────────────────────────────────────
 

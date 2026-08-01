@@ -20,7 +20,12 @@ import { prisma } from '@copilotkit/outpost/db';
 import { AIPipeline } from '@copilotkit/outpost/ai';
 import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
-import { hasAdapter, getAdapter } from '@copilotkit/outpost/shared/platforms';
+import {
+    hasAdapter,
+    getAdapter,
+    readSlackMirrorConfig,
+    isSlackMirrorEnabled,
+} from '@copilotkit/outpost/shared/platforms';
 import { createJob } from '../create-job.js';
 import { getFeedbackCalibration } from '../feedback-calibration.js';
 import { JobType } from '../types.js';
@@ -189,6 +194,10 @@ export async function handleAiResponse(
         // suggestedResponse holds the publishable text bots pick up), and step 6
         // below escalates on suppression regardless of score.
         const ticketSource = ticket.source as TicketSource;
+        // Tracks whether the reporter actually received `aiMessage.content`.
+        // The Slack mirror labels its post with this, so an internal reader is
+        // never told the community saw a draft that was withheld or only logged.
+        let draftReachedReporter = false;
         if (pipelineResult.suppressed) {
             console.warn(
                 `[AI Response] Ungrounded draft withheld for ticket ${ticketId} — ` +
@@ -252,6 +261,10 @@ export async function handleAiResponse(
                             data: { externalCommentId },
                         });
                     }
+                    // A suppressed run posts safe replacement copy, not the
+                    // draft stored on aiMessage — so the draft itself still
+                    // never reached anyone.
+                    draftReachedReporter = !pipelineResult.suppressed;
                     console.log(
                         `[AI Response] Posted response to ${ticket.source} for ticket ${ticketId}`,
                     );
@@ -265,6 +278,26 @@ export async function handleAiResponse(
         }
 
         await context.reportProgress(85);
+
+        // 5c. Mirror the AI reply into the internal Slack thread for this
+        // ticket. Enqueued regardless of whether the draft was delivered — an
+        // answer the community never saw is precisely what the team needs to
+        // notice — but labelled with which of those happened.
+        if (isSlackMirrorEnabled(readSlackMirrorConfig())) {
+            try {
+                await createJob(JobType.SLACK_MIRROR, {
+                    ticketId: ticket.id,
+                    kind: 'reply',
+                    messageId: aiMessage.id,
+                    delivered: draftReachedReporter,
+                });
+            } catch (error) {
+                console.error(
+                    `[AI Response] Failed to enqueue Slack mirror for ticket ${ticketId}:`,
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+        }
 
         // 6. Enqueue ESCALATION when confidence is below threshold, or when the
         // response was withheld — nothing reached the reporter in that case, so a

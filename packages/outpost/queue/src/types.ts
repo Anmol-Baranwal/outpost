@@ -30,6 +30,8 @@ export enum JobType {
     JOB_CLEANUP = 'JOB_CLEANUP',
     /** Poll GitHub reactions on AI-authored comments for feedback signal */
     GITHUB_REACTION_POLL = 'GITHUB_REACTION_POLL',
+    /** Mirror a ticket (or a reply on it) into the internal Slack channel */
+    SLACK_MIRROR = 'SLACK_MIRROR',
 }
 
 // ─── Payload Shapes ─────────────────────────────────────────────────────────
@@ -84,6 +86,32 @@ export type JobCleanupPayload = Record<string, never>;
 /** No payload needed — runs against all pending-feedback AI messages. */
 export type GithubReactionPollPayload = Record<string, never>;
 
+/**
+ * What kind of Slack mirror post this job should make.
+ *
+ * `ticket` opens the thread; `reply` posts underneath the thread the `ticket`
+ * job created. A `reply` that finds no thread opens one first, so an enable
+ * mid-conversation does not silently drop every later message.
+ */
+export type SlackMirrorKind = 'ticket' | 'reply';
+
+export interface SlackMirrorPayload {
+    /** The Outpost ticket ID being mirrored */
+    ticketId: string;
+    /** Whether this opens the thread or replies inside it */
+    kind: SlackMirrorKind;
+    /** The Message row this post reflects; omit for the thread-opening post */
+    messageId?: string;
+    /**
+     * For AI replies: whether the answer actually reached the reporter.
+     *
+     * Shadow mode and the groundedness gate both produce an AI Message row that
+     * was never delivered. The mirror labels those explicitly rather than
+     * implying the community saw them — the same failure #148 describes.
+     */
+    delivered?: boolean;
+}
+
 /** Map from JobType to its specific payload shape */
 export interface JobPayload {
     [JobType.AI_RESPONSE]: AiResponsePayload;
@@ -96,6 +124,7 @@ export interface JobPayload {
     [JobType.TRACKER_SYNC]: TrackerSyncPayload;
     [JobType.JOB_CLEANUP]: JobCleanupPayload;
     [JobType.GITHUB_REACTION_POLL]: GithubReactionPollPayload;
+    [JobType.SLACK_MIRROR]: SlackMirrorPayload;
 }
 
 // ─── Job Results ────────────────────────────────────────────────────────────

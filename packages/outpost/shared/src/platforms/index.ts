@@ -48,6 +48,11 @@ export { GitHubAdapter as PlatformGitHubAdapter, GitHubPlatformAdapter } from '.
 export type { GitHubAdapterConfig as PlatformGitHubAdapterConfig, GitHubOctokitLike } from './github.js';
 
 export { SlackAdapter as PlatformSlackAdapter, SlackAdapter, buildPermalink } from './slack.js';
+
+// Slack ticket mirror — flag semantics shared by the producers (inbound
+// handler, AI response handler) and the consumer (SLACK_MIRROR job handler).
+export { readSlackMirrorConfig, isSlackMirrorEnabled } from './slack-mirror-config.js';
+export type { SlackMirrorConfig, SlackMirrorMode } from './slack-mirror-config.js';
 export type { SlackAdapterConfig as PlatformSlackAdapterConfig, SlackAdapterConfig, SlackMessageEvent } from './slack.js';
 
 export { TeamsAdapter as PlatformTeamsAdapter, TeamsAdapter } from './teams.js';

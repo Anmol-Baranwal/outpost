@@ -79,6 +79,7 @@ Copy `.env.example` and fill in all values. Key groups:
 - **Discord**: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `GUILD_ID`, `MONITORED_CHANNEL_IDS`
 - **GitHub App**: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_INSTALLATION_ID`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TEAM_LOGINS` (optional)
 - **Slack**: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, `MONITORED_CHANNEL_IDS`, `TEAM_MEMBER_IDS` (optional)
+- **Slack ticket mirror** (`outpost-worker`, not the Slack bot): `SLACK_MIRROR_MODE` (`off` | `shadow` | `live`, default `off`), `SLACK_MIRROR_CHANNEL_ID` (channel ID, not name). Also needs `SLACK_BOT_TOKEN` with `chat:write` **set on the worker service** — it is otherwise only set on `outpost-slack-bot`, and the mirror handler runs in the worker. Invite the bot to the channel or posts fail `not_in_channel`. `SLACK_MIRROR_MODE` is intentionally independent of `SHADOW_MODE`: that flag protects community surfaces, while the mirror targets an internal channel. **Keep `SLACK_MIRROR_CHANNEL_ID` out of the Slack bot's `MONITORED_CHANNEL_IDS`** — a monitored mirror channel would turn each mirror post into a new inbound ticket. Slack-sourced tickets are never mirrored for the same reason, but keeping the channels disjoint is the durable fix.
 - **Teams**: `TEAMS_APP_ID`, `TEAMS_APP_PASSWORD`, `TEAMS_TENANT_ID` (optional, blank for multi-tenant), `MONITORED_CHANNEL_IDS`
 - **Linear sync**: `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `LINEAR_TEAM_ID`
 - **Monitoring**: `SENTRY_DSN` (optional), `LOG_LEVEL`
