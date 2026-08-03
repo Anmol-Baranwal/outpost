@@ -5,7 +5,22 @@
  * classification, message persistence, and escalation triggering.
  * All external dependencies (Prisma, AIPipeline, etc.) are mocked.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+
+// Seven tests in this file assert the non-shadow path. An inherited
+// SHADOW_MODE=true flips the handler and fails them, so the ambient value is
+// cleared for the whole suite and restored afterwards.
+const AMBIENT_SHADOW = { value: undefined as string | undefined };
+
+beforeAll(() => {
+    AMBIENT_SHADOW.value = process.env.SHADOW_MODE;
+    delete process.env.SHADOW_MODE;
+});
+
+afterAll(() => {
+    if (AMBIENT_SHADOW.value !== undefined) process.env.SHADOW_MODE = AMBIENT_SHADOW.value;
+    else delete process.env.SHADOW_MODE;
+});
 import type { JobHandlerContext } from '../types.js';
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
@@ -69,7 +84,9 @@ const mockGetAdapter = vi.fn().mockReturnValue({
 const mockMirrorConfig: { mode: string; channelId: string | null; token: string | null } = {
     mode: 'off',
     channelId: null,
-    token: null,
+    // A real token: the mirror suite below runs in `live`, and a null token is a
+    // config the production predicate treats as unable to post.
+    token: 'xoxb-test',
 };
 
 vi.mock('@copilotkit/outpost/shared', () => ({
@@ -919,6 +936,9 @@ describe('handleAiResponse', () => {
                     kind: 'reply',
                     ticketId: 'tkt-1',
                     delivery: 'delivered',
+                    // Pin the RESOLVED source; the handler used to forward the
+                    // AI job's optional hint, yielding source: undefined.
+                    source: 'discord',
                 }),
             );
         });

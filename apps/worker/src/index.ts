@@ -15,6 +15,7 @@
  *   - TRACKER_SYNC:     Push changes to external trackers
  *   - JOB_CLEANUP:      Periodic cleanup of old jobs and sync events
  *   - GITHUB_REACTION_POLL: Poll GitHub reactions on AI comments (no webhook exists)
+ * - SLACK_MIRROR: mirror a ticket or reply into the internal Slack channel
  */
 
 import http from 'node:http';

@@ -357,11 +357,10 @@ export class Worker {
                     // presenting the attempt as the final one.
                     await this.handleFailure(
                         job.id,
-                        // Presenting the attempt as the last one is what makes
-                        // handleFailure dead-letter instead of scheduling a retry.
-                        result.retryable === false ? job.maxAttempts : attempt,
+                        attempt,
                         job.maxAttempts,
                         result.error ?? 'Unknown error',
+                        result.retryable === false,
                     );
                 }
             } catch (error) {
@@ -402,8 +401,15 @@ export class Worker {
         attempt: number,
         maxAttempts: number,
         error: string,
+        /**
+         * The handler declared this failure permanent. Dead-letter it now, but
+         * record the TRUE attempt count — writing `maxAttempts` here would
+         * fabricate an exhausted-retry trail for a job that ran once, and an
+         * operator requeueing it could not tell the two cases apart.
+         */
+        permanent = false,
     ): Promise<void> {
-        if (attempt >= maxAttempts) {
+        if (permanent || attempt >= maxAttempts) {
             // Dead letter: job has exhausted all retries
             await prisma.job.update({
                 where: { id: jobId },
@@ -416,7 +422,8 @@ export class Worker {
                 },
             });
             console.error(
-                `[Queue Worker] Job ${jobId} moved to dead letter queue after ${attempt} attempts: ${error}`,
+                `[Queue Worker] Job ${jobId} moved to dead letter queue after ${attempt} attempt(s)` +
+                    `${permanent ? ' (handler reported the failure as permanent)' : ''}: ${error}`,
             );
         } else {
             // Schedule retry with exponential backoff

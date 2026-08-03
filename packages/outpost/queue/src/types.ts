@@ -128,8 +128,9 @@ export interface SlackMirrorPayload {
      * Platform the ticket came from, as a PlatformTarget string.
      *
      * Declared rather than left to ride the CreateJobFn index signature: both
-     * producers send it, and an undeclared field that only type-checks by
-     * accident is how the two of them drifted into different payload shapes.
+     * producers send a RESOLVED value (never the AI job's optional `source`
+     * hint), and an undeclared field that only type-checks by accident is how
+     * the two of them drifted into different payload shapes.
      * The handler does not read it — it re-reads the ticket — but it makes a
      * queued job legible on its own.
      */

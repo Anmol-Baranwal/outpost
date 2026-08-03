@@ -242,6 +242,9 @@ describe('Worker', () => {
                 where: { id: 'job-1' },
                 data: expect.objectContaining({
                     status: 'DEAD_LETTER',
+                    // The TRUE attempt count. Writing maxAttempts here would
+                    // fabricate an exhausted-retry trail for a job that ran once.
+                    attempts: 1,
                     error: 'not_in_channel',
                 }),
             }),

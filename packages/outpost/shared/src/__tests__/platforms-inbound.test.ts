@@ -1,4 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+
+// The handler's mirror default reads process.env. A developer (or CI) exporting
+// SLACK_MIRROR_MODE would otherwise change the createJob call counts asserted
+// throughout this file. Neutralize the ambient environment for the whole suite.
+const AMBIENT_MIRROR_ENV = ['SLACK_MIRROR_MODE', 'SLACK_MIRROR_CHANNEL_ID'] as const;
+const savedMirrorEnv: Record<string, string | undefined> = {};
+
+beforeAll(() => {
+    for (const key of AMBIENT_MIRROR_ENV) {
+        savedMirrorEnv[key] = process.env[key];
+        delete process.env[key];
+    }
+});
+
+afterAll(() => {
+    for (const key of AMBIENT_MIRROR_ENV) {
+        if (savedMirrorEnv[key] !== undefined) process.env[key] = savedMirrorEnv[key]!;
+        else delete process.env[key];
+    }
+});
 import { InboundHandler } from '../platforms/inbound.js';
 import type { PrismaLike, CreateJobFn } from '../platforms/inbound.js';
 import type { InboundMessage } from '../platforms/types.js';

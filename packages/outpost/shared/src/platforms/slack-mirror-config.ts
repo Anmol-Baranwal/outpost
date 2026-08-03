@@ -19,7 +19,7 @@ export interface SlackMirrorConfig {
     mode: SlackMirrorMode;
     /** Slack channel ID (e.g. C09AB2CD3EF) — an ID, never a channel name. */
     channelId: string | null;
-    /** Bot token; must carry chat:write and be set on the worker service. */
+    /** Bot token; must carry chat:write. Required by the worker, which posts. */
     token: string | null;
 }
 
@@ -32,6 +32,15 @@ export interface SlackMirrorConfig {
 export function readSlackMirrorConfig(env: NodeJS.ProcessEnv = process.env): SlackMirrorConfig {
     const raw = (env.SLACK_MIRROR_MODE ?? 'off').trim().toLowerCase();
     const mode: SlackMirrorMode = raw === 'live' || raw === 'shadow' ? raw : 'off';
+
+    // Failing closed is right, but doing it silently is not: a typo like
+    // SLACK_MIRROR_MODE=on would otherwise look identical to "deliberately off".
+    if (raw !== 'off' && mode === 'off') {
+        console.error(
+            `[Slack Mirror] SLACK_MIRROR_MODE="${raw}" is not one of off|shadow|live — ` +
+                'treating it as off. The mirror will not run.',
+        );
+    }
 
     return {
         mode,
@@ -50,38 +59,30 @@ export function readSlackMirrorConfig(env: NodeJS.ProcessEnv = process.env): Sla
  * is producing log lines showing what a live run would post. Only the channel
  * ID is required for that, not the token.
  *
- * `live` additionally requires a token. Without one, every job would reach the
- * poster, throw, and burn its retries into the dead-letter queue — one per
- * ticket, indefinitely. A misconfigured `live` therefore reads as DISABLED
- * (nothing is enqueued, nothing dies) and says so once, loudly, because the
- * operator's intent was to post and silence would hide that it never did.
+ * Deliberately does NOT require a token. This predicate gates the PRODUCERS,
+ * which run inside the bots and only enqueue — they never post, so demanding a
+ * Slack token there would either spread the bot token across services that have
+ * no use for it, or (if it is absent) make the bots silently enqueue nothing and
+ * leave the mirror dead with no signal anywhere. The token is the CONSUMER's
+ * requirement: `handleSlackMirror` reports a permanent, non-retrying failure that
+ * names the missing variable, so a misconfigured `live` is loud instead of quiet.
  */
 export function isSlackMirrorEnabled(config: SlackMirrorConfig): boolean {
     if (config.mode === 'off') return false;
-    if (config.channelId === null) return false;
-    if (config.mode === 'live' && config.token === null) {
-        warnLiveWithoutToken();
-        return false;
-    }
-    return true;
+    // Falsy, not `=== null`: readSlackMirrorConfig normalizes blanks to null, but
+    // a config built by hand (tests, a future caller) can carry '' and an empty
+    // channel id must never read as configured.
+    return Boolean(config.channelId);
 }
 
-/** Latch so the misconfiguration is reported once per process, not per job. */
-let liveWithoutTokenWarned = false;
-
-function warnLiveWithoutToken(): void {
-    if (liveWithoutTokenWarned) return;
-    liveWithoutTokenWarned = true;
-    console.error(
-        '[Slack Mirror] SLACK_MIRROR_MODE=live but SLACK_BOT_TOKEN is unset — the mirror is ' +
-            'DISABLED. Set SLACK_BOT_TOKEN (needs chat:write) on this service; the mirror handler ' +
-            'runs in outpost-worker, so the worker needs it too, not only outpost-slack-bot.',
-    );
-}
-
-/** Test seam: reset the once-per-process warning latch. */
-export function resetSlackMirrorWarnings(): void {
-    liveWithoutTokenWarned = false;
+/**
+ * Whether this config can actually post — the CONSUMER's stricter check.
+ *
+ * `shadow` posts nothing, so it needs no token. `live` does.
+ */
+export function canSlackMirrorPost(config: SlackMirrorConfig): boolean {
+    if (!isSlackMirrorEnabled(config)) return false;
+    return config.mode === 'shadow' || Boolean(config.token);
 }
 
 /**

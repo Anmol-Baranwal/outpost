@@ -299,7 +299,10 @@ export async function handleAiResponse(
             try {
                 await createJob(JobType.SLACK_MIRROR, {
                     ticketId: ticket.id,
-                    source: payload.source,
+                    // The ticket's own source, not the job payload's optional
+                    // hint — the inbound producer sends a resolved value and the
+                    // two must agree.
+                    source: toPlatformTarget(ticketSource),
                     kind: 'reply',
                     messageId: aiMessage.id,
                     delivery,

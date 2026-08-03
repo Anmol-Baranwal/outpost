@@ -22,8 +22,8 @@ import { handleSlackMirror, SLACK_MIRROR_PLUGIN } from '../slack-mirror.js';
 import {
     readSlackMirrorConfig,
     isSlackMirrorEnabled,
+    canSlackMirrorPost,
     isMirrorableSource,
-    resetSlackMirrorWarnings,
 } from '@copilotkit/outpost/shared/platforms';
 import type { SlackMirrorConfig } from '@copilotkit/outpost/shared/platforms';
 
@@ -34,7 +34,7 @@ const TICKET = {
     displayId: 'OUT-101',
     title: 'Sidebar crashes on mount',
     description: 'Repro: render CopilotSidebar with no props.',
-    source: 'GITHUB',
+    source: 'GITHUB_ISSUE',
     sourceUrl: 'https://github.com/CopilotKit/CopilotKit/issues/42',
 };
 
@@ -499,26 +499,28 @@ describe('handleSlackMirror', () => {
     });
 });
 
-describe('isSlackMirrorEnabled — live requires a token', () => {
-    beforeEach(() => {
-        resetSlackMirrorWarnings();
+describe('canSlackMirrorPost — the consumer needs a token, the producers do not', () => {
+    // The producer gate must NOT require a token: the bots only enqueue, and
+    // demanding a Slack token there would either spread it to services that
+    // never post or leave the mirror silently dead.
+    it('stays enabled for the producers when live has no token', () => {
+        expect(isSlackMirrorEnabled({ mode: 'live', channelId: 'C1', token: null })).toBe(true);
     });
 
-    // live + no token used to read as ENABLED, so producers enqueued jobs that
-    // could only throw in buildPoster and dead-letter, one per ticket, forever.
-    it('is disabled when live with no token, and says so once', () => {
-        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-        expect(isSlackMirrorEnabled({ mode: 'live', channelId: 'C1', token: null })).toBe(false);
-        expect(isSlackMirrorEnabled({ mode: 'live', channelId: 'C1', token: null })).toBe(false);
-
-        expect(errorSpy).toHaveBeenCalledTimes(1);
-        expect(errorSpy.mock.calls[0].join(' ')).toContain('SLACK_BOT_TOKEN');
-        errorSpy.mockRestore();
+    it('cannot post when live has no token', () => {
+        expect(canSlackMirrorPost({ mode: 'live', channelId: 'C1', token: null })).toBe(false);
     });
 
-    it('is enabled when live with a token', () => {
-        expect(isSlackMirrorEnabled({ mode: 'live', channelId: 'C1', token: 'xoxb-1' })).toBe(true);
+    it('can post in shadow with no token, because shadow posts nothing', () => {
+        expect(canSlackMirrorPost({ mode: 'shadow', channelId: 'C1', token: null })).toBe(true);
+    });
+
+    it('can post when live has a token', () => {
+        expect(canSlackMirrorPost({ mode: 'live', channelId: 'C1', token: 'xoxb-1' })).toBe(true);
+    });
+
+    it('treats an empty channel id as unset', () => {
+        expect(isSlackMirrorEnabled({ mode: 'live', channelId: '', token: 'x' })).toBe(false);
     });
 });
 
@@ -536,4 +538,130 @@ describe('isMirrorableSource', () => {
             expect(isMirrorableSource(source)).toBe(false);
         },
     );
+});
+
+describe('handleSlackMirror — permanent vs retryable', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockTicketFindUnique.mockResolvedValue(TICKET);
+        mockLinkFindUnique.mockResolvedValue(null);
+        mockLinkCreate.mockResolvedValue({});
+        mockLinkUpdate.mockResolvedValue({});
+    });
+
+    // The post landed but Slack gave us no ts. Retrying would post again.
+    it('does not retry when Slack accepts the post but returns no ts', async () => {
+        const postMessage = vi.fn().mockResolvedValue({});
+
+        const result = await handleSlackMirror({ ticketId: 'tkt-1', kind: 'ticket' }, context, {
+            config: liveConfig,
+            poster: { postMessage },
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.retryable).toBe(false);
+        expect(mockLinkCreate).not.toHaveBeenCalled();
+    });
+
+    // A deleted ticket IS retryable on purpose: the producers enqueue outside the
+    // ticket's transaction, so a worker can legitimately arrive first.
+    it('leaves a missing ticket retryable', async () => {
+        mockTicketFindUnique.mockResolvedValue(null);
+        const { poster } = makePoster();
+
+        const result = await handleSlackMirror({ ticketId: 'tkt-gone', kind: 'ticket' }, context, {
+            config: liveConfig,
+            poster,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.retryable).toBeUndefined();
+    });
+
+    it('rejects an unknown kind without posting', async () => {
+        const { poster, postMessage } = makePoster();
+
+        const result = await handleSlackMirror(
+            { ticketId: 'tkt-1', kind: 'bogus' as 'ticket' },
+            context,
+            { config: liveConfig, poster },
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.retryable).toBe(false);
+        expect(postMessage).not.toHaveBeenCalled();
+    });
+
+    it('reports live-without-token as a permanent misconfiguration', async () => {
+        const { poster, postMessage } = makePoster();
+
+        const result = await handleSlackMirror({ ticketId: 'tkt-1', kind: 'ticket' }, context, {
+            config: { mode: 'live', channelId: 'C0MIRROR', token: null },
+            poster,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.retryable).toBe(false);
+        expect(result.error).toContain('SLACK_BOT_TOKEN');
+        expect(postMessage).not.toHaveBeenCalled();
+    });
+});
+
+describe('handleSlackMirror — untrusted text', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockTicketFindUnique.mockResolvedValue({
+            ...TICKET,
+            title: 'Crash <script> & more',
+            description: 'See <https://evil.example|click me> & <@U123>',
+        });
+        mockLinkFindUnique.mockResolvedValue(null);
+        mockLinkCreate.mockResolvedValue({});
+    });
+
+    // Ticket bodies come from public issue trackers and Discord. Raw
+    // interpolation let a reporter inject links and mentions into an internal
+    // channel.
+    it('escapes Slack markup control characters in ticket text', async () => {
+        const { poster, postMessage } = makePoster();
+
+        await handleSlackMirror({ ticketId: 'tkt-1', kind: 'ticket' }, context, {
+            config: liveConfig,
+            poster,
+        });
+
+        const text = postMessage.mock.calls[0][0].text;
+        expect(text).not.toContain('<https://evil.example|click me>');
+        expect(text).not.toContain('<@U123>');
+        expect(text).toContain('&lt;');
+        expect(text).toContain('&amp;');
+    });
+
+    // An older queued payload, or drift after the union changes, must not render
+    // the literal string "undefined" into Slack.
+    it('renders an unrecognized delivery value as unconfirmed', async () => {
+        mockLinkFindUnique.mockResolvedValue({ externalId: 'C0MIRROR:111.222' });
+        mockMessageFindUnique.mockResolvedValue({
+            id: 'msg-ai',
+            author: 'outpost-ai',
+            content: 'answer',
+            isAiGenerated: true,
+        });
+        const { poster, postMessage } = makePoster();
+
+        await handleSlackMirror(
+            {
+                ticketId: 'tkt-1',
+                kind: 'reply',
+                messageId: 'msg-ai',
+                delivery: 'not-a-real-status' as 'delivered',
+            },
+            context,
+            { config: liveConfig, poster },
+        );
+
+        const text = postMessage.mock.calls[0][0].text;
+        expect(text).toContain('delivery unconfirmed');
+        expect(text).not.toContain('undefined');
+    });
 });

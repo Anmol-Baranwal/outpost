@@ -54,8 +54,8 @@ export { SlackAdapter as PlatformSlackAdapter, SlackAdapter, buildPermalink } fr
 export {
     readSlackMirrorConfig,
     isSlackMirrorEnabled,
+    canSlackMirrorPost,
     isMirrorableSource,
-    resetSlackMirrorWarnings,
 } from './slack-mirror-config.js';
 export type { SlackMirrorConfig, SlackMirrorMode } from './slack-mirror-config.js';
 export type { SlackAdapterConfig as PlatformSlackAdapterConfig, SlackAdapterConfig, SlackMessageEvent } from './slack.js';
