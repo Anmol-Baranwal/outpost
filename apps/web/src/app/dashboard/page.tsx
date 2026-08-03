@@ -18,16 +18,21 @@ interface StatsResponse {
     openTickets: number;
     trend: TrendDataPoint[];
     month: string;
+    monthKey: string;
+    availableMonths: string[];
     year: number;
 }
 
 export default function DashboardPage() {
     const [stats, setStats] = useState<StatsResponse | null>(null);
+    // null until the first response tells us which month the server picked.
+    const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
 
     useEffect(() => {
         async function fetchStats() {
             try {
-                const res = await fetch('/api/dashboard/stats');
+                const query = selectedMonth ? `?month=${selectedMonth}` : '';
+                const res = await fetch(`/api/dashboard/stats${query}`);
                 const data: StatsResponse = await res.json();
                 setStats(data);
             } catch {
@@ -35,7 +40,7 @@ export default function DashboardPage() {
             }
         }
         fetchStats();
-    }, []);
+    }, [selectedMonth]);
 
     const slaMetrics: SlaMetrics | undefined = stats
         ? {
@@ -66,6 +71,9 @@ export default function DashboardPage() {
                     <TicketsTrend
                         data={stats?.trend ?? []}
                         month={stats?.month ?? ''}
+                        monthKey={stats?.monthKey ?? ''}
+                        availableMonths={stats?.availableMonths ?? []}
+                        onMonthChange={setSelectedMonth}
                         totalTickets={stats?.totalTickets ?? 0}
                     />
                     <FaqSection />
