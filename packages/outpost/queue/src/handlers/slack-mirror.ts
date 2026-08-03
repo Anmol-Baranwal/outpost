@@ -19,7 +19,12 @@ import {
     buildPermalink,
     type SlackMirrorConfig,
 } from '@copilotkit/outpost/shared/platforms';
-import type { SlackMirrorPayload, JobResult, JobHandlerContext } from '../types.js';
+import type {
+    SlackMirrorPayload,
+    SlackMirrorDelivery,
+    JobResult,
+    JobHandlerContext,
+} from '../types.js';
 
 /** TicketExternalLink.plugin value owned by the mirror. */
 export const SLACK_MIRROR_PLUGIN = 'slack';
@@ -64,6 +69,50 @@ function buildPoster(config: SlackMirrorConfig): SlackPoster {
     };
 }
 
+/**
+ * Slack errors that no retry can fix.
+ *
+ * `not_in_channel` needs a human to invite the bot; `channel_not_found` and
+ * `invalid_auth` need a config change. Retrying them five times and
+ * dead-lettering hides an operator task behind a fault that reads as transient,
+ * so each is reported once with the remedy attached.
+ */
+const PERMANENT_SLACK_ERRORS: Record<string, string> = {
+    not_in_channel:
+        'invite the mirror bot to SLACK_MIRROR_CHANNEL_ID (Slack: channel → Integrations → Add apps)',
+    channel_not_found:
+        'SLACK_MIRROR_CHANNEL_ID does not name a channel this bot can see — check the ID, not the name',
+    channel_is_archived:
+        'the mirror channel is archived — point SLACK_MIRROR_CHANNEL_ID at a live channel',
+    invalid_auth: 'SLACK_BOT_TOKEN is invalid or revoked — reissue it',
+    account_inactive: 'the Slack bot account is deactivated — reinstall the app',
+    missing_scope: 'the bot token lacks chat:write — add the scope and reinstall',
+    is_archived: 'the mirror channel is archived — point SLACK_MIRROR_CHANNEL_ID at a live channel',
+};
+
+/**
+ * Map a thrown Slack error to a permanent-failure result, or null when it looks
+ * transient (rate limits, 5xx, network) and a retry is worth having.
+ */
+function classifySlackError(err: unknown, ticketLabel: string): JobResult | null {
+    // @slack/web-api puts the API's error string on `err.data.error`, and often
+    // on `err.message` too. Duck-type both rather than importing its error class.
+    const data = (err as { data?: { error?: unknown } })?.data;
+    const fromData = typeof data?.error === 'string' ? data.error : undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    const code = fromData ?? Object.keys(PERMANENT_SLACK_ERRORS).find((k) => message.includes(k));
+
+    if (!code) return null;
+    const remedy = PERMANENT_SLACK_ERRORS[code];
+    if (!remedy) return null;
+
+    return {
+        success: false,
+        error: `Slack rejected the mirror post for ${ticketLabel}: ${code}. To fix: ${remedy}`,
+        retryable: false,
+    };
+}
+
 /** Thread-opening post: what the ticket is, who reported it, where it came from. */
 function formatTicketPost(ticket: {
     displayId: string;
@@ -81,23 +130,42 @@ function formatTicketPost(ticket: {
 }
 
 /**
+ * What each delivery outcome says to an internal reader.
+ *
+ * The mirror states the reason the producer recorded and nothing more. It used
+ * to print "withheld or shadow mode" for every undelivered case, which named a
+ * cause for failures that had a different one — the same misreporting #148
+ * describes between what the DB holds and what was published.
+ */
+const DELIVERY_NOTES: Record<SlackMirrorDelivery, string> = {
+    delivered: '',
+    shadow: '\n_⚠️ not sent — SHADOW_MODE was on, so this was logged only_',
+    withheld:
+        '\n_⚠️ not sent — the groundedness gate withheld this draft; the reporter got the safe replacement_',
+    'post-failed': '\n_⚠️ not sent — posting to the source platform failed_',
+    'no-adapter': '\n_⚠️ not sent — no delivery was attempted for this source_',
+};
+
+/** An AI reply whose fate the payload did not record. Unknown is not "fine". */
+const DELIVERY_UNKNOWN = '\n_⚠️ delivery unconfirmed — this reply carried no delivery status_';
+
+/**
  * Threaded reply post.
  *
- * An AI message that was withheld or shadow-logged is labelled as such. The
- * mirror must not imply the reporter saw something they never saw — that is
- * exactly the divergence #148 describes between what the DB records and what
- * was actually published.
+ * Community and team replies carry no delivery status: the platform delivered
+ * them by definition. For an AI reply the status is mandatory in practice — its
+ * absence renders as unconfirmed, never as delivered.
  */
 function formatReplyPost(
     message: { author: string; content: string; isAiGenerated: boolean },
-    delivered: boolean | undefined,
+    delivery: SlackMirrorDelivery | undefined,
 ): string {
     const who = message.isAiGenerated ? `🤖 ${message.author}` : message.author;
-    const undelivered =
-        message.isAiGenerated && delivered === false
-            ? '\n_⚠️ not delivered to the reporter — withheld or shadow mode_'
-            : '';
-    return `*${who}*${undelivered}\n${truncate(message.content, MAX_MIRROR_TEXT)}`;
+    let note = '';
+    if (message.isAiGenerated) {
+        note = delivery ? DELIVERY_NOTES[delivery] : DELIVERY_UNKNOWN;
+    }
+    return `*${who}*${note}\n${truncate(message.content, MAX_MIRROR_TEXT)}`;
 }
 
 /**
@@ -147,6 +215,34 @@ export async function handleSlackMirror(
         return { success: true, data: { skipped: 'already-mirrored' } };
     }
 
+    // ── Validate the job before anything is posted ───────────────────────────
+    // A reply job used to reach the thread-opening post first and only then
+    // discover it had no messageId — posting a root message to Slack on every
+    // one of its retries. Validation owes no side effects.
+    let replyMessage: {
+        id: string;
+        author: string;
+        content: string;
+        isAiGenerated: boolean;
+    } | null = null;
+    if (payload.kind === 'reply') {
+        if (!payload.messageId) {
+            return {
+                success: false,
+                error: 'SLACK_MIRROR reply job is missing required field `messageId`',
+                retryable: false,
+            };
+        }
+        replyMessage = await db.message.findUnique({ where: { id: payload.messageId } });
+        if (!replyMessage) {
+            return {
+                success: false,
+                error: `SLACK_MIRROR reply job references Message ${payload.messageId}, which does not exist`,
+                retryable: false,
+            };
+        }
+    }
+
     const isShadow = config.mode === 'shadow';
     const poster = isShadow ? null : (deps?.poster ?? buildPoster(config));
 
@@ -160,7 +256,14 @@ export async function handleSlackMirror(
                 `[Slack Mirror] shadow — would open thread in ${channelId} for ${ticket.displayId}:\n${text}`,
             );
         } else {
-            const result = await poster!.postMessage({ channel: channelId, text });
+            let result: { ts?: string };
+            try {
+                result = await poster!.postMessage({ channel: channelId, text });
+            } catch (err) {
+                const permanent = classifySlackError(err, ticket.displayId);
+                if (permanent) return permanent;
+                throw err;
+            }
             if (!result.ts) {
                 return {
                     success: false,
@@ -213,16 +316,8 @@ export async function handleSlackMirror(
 
     // ── Post the reply underneath it ─────────────────────────────────────────
     if (payload.kind === 'reply') {
-        if (!payload.messageId) {
-            return { success: false, error: 'SLACK_MIRROR reply job carried no messageId' };
-        }
-
-        const message = await db.message.findUnique({ where: { id: payload.messageId } });
-        if (!message) {
-            return { success: false, error: `Message ${payload.messageId} not found` };
-        }
-
-        const text = formatReplyPost(message, payload.delivered);
+        const message = replyMessage!;
+        const text = formatReplyPost(message, payload.delivery);
         if (isShadow) {
             console.log(
                 `[Slack Mirror] shadow — would reply in ${channelId} on ${ticket.displayId}:\n${text}`,
@@ -231,11 +326,17 @@ export async function handleSlackMirror(
             // Post into the channel the link records, not the currently configured
             // one: re-pointing SLACK_MIRROR_CHANNEL_ID must not orphan the replies
             // of tickets whose thread already lives somewhere else.
-            await poster!.postMessage({
-                channel: thread!.channelId,
-                text,
-                thread_ts: thread!.ts,
-            });
+            try {
+                await poster!.postMessage({
+                    channel: thread!.channelId,
+                    text,
+                    thread_ts: thread!.ts,
+                });
+            } catch (err) {
+                const permanent = classifySlackError(err, ticket.displayId);
+                if (permanent) return permanent;
+                throw err;
+            }
         }
     }
 

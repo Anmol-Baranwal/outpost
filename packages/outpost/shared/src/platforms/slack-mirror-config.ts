@@ -49,8 +49,67 @@ export function readSlackMirrorConfig(env: NodeJS.ProcessEnv = process.env): Sla
  * `shadow` counts as enabled — it exists to be exercised, and its whole value
  * is producing log lines showing what a live run would post. Only the channel
  * ID is required for that, not the token.
+ *
+ * `live` additionally requires a token. Without one, every job would reach the
+ * poster, throw, and burn its retries into the dead-letter queue — one per
+ * ticket, indefinitely. A misconfigured `live` therefore reads as DISABLED
+ * (nothing is enqueued, nothing dies) and says so once, loudly, because the
+ * operator's intent was to post and silence would hide that it never did.
  */
 export function isSlackMirrorEnabled(config: SlackMirrorConfig): boolean {
     if (config.mode === 'off') return false;
-    return config.channelId !== null;
+    if (config.channelId === null) return false;
+    if (config.mode === 'live' && config.token === null) {
+        warnLiveWithoutToken();
+        return false;
+    }
+    return true;
+}
+
+/** Latch so the misconfiguration is reported once per process, not per job. */
+let liveWithoutTokenWarned = false;
+
+function warnLiveWithoutToken(): void {
+    if (liveWithoutTokenWarned) return;
+    liveWithoutTokenWarned = true;
+    console.error(
+        '[Slack Mirror] SLACK_MIRROR_MODE=live but SLACK_BOT_TOKEN is unset — the mirror is ' +
+            'DISABLED. Set SLACK_BOT_TOKEN (needs chat:write) on this service; the mirror handler ' +
+            'runs in outpost-worker, so the worker needs it too, not only outpost-slack-bot.',
+    );
+}
+
+/** Test seam: reset the once-per-process warning latch. */
+export function resetSlackMirrorWarnings(): void {
+    liveWithoutTokenWarned = false;
+}
+
+/**
+ * Ticket sources the mirror covers.
+ *
+ * An ALLOWLIST, deliberately. The mirror exists to bring GitHub and Discord
+ * tickets into Slack; a denylist ("everything except SLACK") silently pulled in
+ * TEAMS, EMAIL, WEB, MANUAL, and LINEAR tickets the feature was never specified
+ * for. Slack-sourced tickets are excluded because they already live in Slack.
+ *
+ * Values are the string forms of `TicketSource` (shared/src/types.ts). This
+ * module deliberately does not import that enum: it is consumed by both the
+ * queue package and the platform producers, and staying string-keyed keeps it
+ * free of a cycle through the platform barrel.
+ */
+const MIRRORABLE_SOURCES: ReadonlySet<string> = new Set([
+    'DISCORD',
+    'GITHUB_ISSUE',
+    'GITHUB_DISCUSSION',
+]);
+
+/**
+ * Whether a ticket from this source should be mirrored.
+ *
+ * Both producers MUST route through this. The rule previously lived in the
+ * inbound producer only, so the AI-reply producer mirrored everything — which
+ * is how a Slack-sourced ticket ended up opening a thread in the mirror channel.
+ */
+export function isMirrorableSource(source: string): boolean {
+    return MIRRORABLE_SOURCES.has(source);
 }

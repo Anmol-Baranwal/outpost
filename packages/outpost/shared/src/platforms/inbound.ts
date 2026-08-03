@@ -13,7 +13,11 @@
 import type { InboundMessage, InboundResult, TicketRef } from './types.js';
 import { generateTicketId, truncate } from '../utils.js';
 import { TicketSource } from '../types.js';
-import { readSlackMirrorConfig, isSlackMirrorEnabled } from './slack-mirror-config.js';
+import {
+    readSlackMirrorConfig,
+    isSlackMirrorEnabled,
+    isMirrorableSource,
+} from './slack-mirror-config.js';
 
 /**
  * Prisma client interface — the subset of PrismaClient we actually call.
@@ -53,6 +57,9 @@ export interface PrismaLike {
  */
 export type CreateJobFn = (
     type: string,
+    // Every bot's wrapper declares `source` as required, so it stays required
+    // here — narrowing it would break assignability for all of them. The index
+    // signature is what lets a job type add its own fields.
     payload: { ticketId: string; threadId?: string; source: string; [key: string]: unknown },
 ) => Promise<string>;
 
@@ -146,12 +153,12 @@ export class InboundHandler {
     ): Promise<void> {
         if (!this.mirrorToSlack) return;
 
-        // Never mirror a Slack-sourced ticket back into Slack. If the mirror
-        // channel is one the Slack bot monitors, the mirror post would arrive
-        // as a new inbound message, open a ticket, mirror that, and loop. The
-        // mirror exists to bring GitHub and Discord into Slack; Slack tickets
-        // are already there.
-        if (source === TicketSource.SLACK) return;
+        // The mirror covers GitHub and Discord. `isMirrorableSource` is the ONE
+        // place that rule lives; the AI-reply producer routes through the same
+        // predicate, which is what stops the two producers from disagreeing
+        // about whether a ticket is mirrorable. Slack-sourced tickets are
+        // excluded because they already live in Slack.
+        if (!isMirrorableSource(source)) return;
 
         try {
             await this.createJob(this.slackMirrorJobType, {
@@ -160,9 +167,14 @@ export class InboundHandler {
                 ...payload,
             });
         } catch (err) {
+            // The mirror is an internal convenience view; a queue failure here
+            // must never take down ticket creation for a real reporter. Log the
+            // error class and stack so schema drift is not mistaken for a
+            // transient queue hiccup.
             console.error(
                 `[InboundHandler] Failed to enqueue Slack mirror (${payload.kind}) for ticket ${ticketId}:`,
-                err instanceof Error ? err.message : String(err),
+                err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+                err instanceof Error ? err.stack : undefined,
             );
         }
     }

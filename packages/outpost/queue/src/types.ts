@@ -95,6 +95,28 @@ export type GithubReactionPollPayload = Record<string, never>;
  */
 export type SlackMirrorKind = 'ticket' | 'reply';
 
+/**
+ * What actually happened to an AI reply, from the producer that knows.
+ *
+ * A boolean was not enough. `delivered: false` covered five distinct causes —
+ * shadow mode, a suppressed draft, no adapter, adapter misconfigured, and the
+ * post throwing — and the mirror rendered one guess ("withheld or shadow mode")
+ * for all of them, asserting a cause nobody established. That is the same class
+ * of misreporting the mirror's delivery label exists to prevent, so the reason
+ * travels with the payload instead of being inferred.
+ */
+export type SlackMirrorDelivery =
+    /** Posted to the source platform; the reporter can see it. */
+    | 'delivered'
+    /** SHADOW_MODE was on: logged to the DB, never posted. */
+    | 'shadow'
+    /** The groundedness gate withheld the draft; safe replacement copy went out instead. */
+    | 'withheld'
+    /** postResponse threw — a delivery failure, not a deliberate hold. */
+    | 'post-failed'
+    /** No adapter for this source, or adapter construction failed. */
+    | 'no-adapter';
+
 export interface SlackMirrorPayload {
     /** The Outpost ticket ID being mirrored */
     ticketId: string;
@@ -103,13 +125,23 @@ export interface SlackMirrorPayload {
     /** The Message row this post reflects; omit for the thread-opening post */
     messageId?: string;
     /**
-     * For AI replies: whether the answer actually reached the reporter.
+     * Platform the ticket came from, as a PlatformTarget string.
      *
-     * Shadow mode and the groundedness gate both produce an AI Message row that
-     * was never delivered. The mirror labels those explicitly rather than
-     * implying the community saw them — the same failure #148 describes.
+     * Declared rather than left to ride the CreateJobFn index signature: both
+     * producers send it, and an undeclared field that only type-checks by
+     * accident is how the two of them drifted into different payload shapes.
+     * The handler does not read it — it re-reads the ticket — but it makes a
+     * queued job legible on its own.
      */
-    delivered?: boolean;
+    source?: string;
+    /**
+     * For AI replies: what became of the answer.
+     *
+     * Omitted on community/team replies (the platform delivered those by
+     * definition). Absent on an AI reply means UNKNOWN, which the mirror renders
+     * as unconfirmed — never as delivered.
+     */
+    delivery?: SlackMirrorDelivery;
 }
 
 /** Map from JobType to its specific payload shape */
@@ -133,6 +165,18 @@ export interface JobResult {
     success: boolean;
     data?: Record<string, unknown>;
     error?: string;
+    /**
+     * Whether a failure is worth retrying. Omit for the historical behavior
+     * (retry until `maxAttempts`, then dead-letter).
+     *
+     * Set `false` only for failures that CANNOT succeed on a retry — a malformed
+     * payload, a missing row it references, a permanent API rejection like
+     * Slack's `not_in_channel`. Those previously consumed every attempt and
+     * landed in the dead-letter queue with a misleading trail suggesting a
+     * transient fault. Additive by design: every existing handler omits it and
+     * behaves exactly as before.
+     */
+    retryable?: boolean;
 }
 
 // ─── Options ────────────────────────────────────────────────────────────────

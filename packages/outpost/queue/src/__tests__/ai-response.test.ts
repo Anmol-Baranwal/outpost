@@ -92,6 +92,11 @@ vi.mock('@copilotkit/outpost/shared/platforms', () => ({
     readSlackMirrorConfig: () => mockMirrorConfig,
     isSlackMirrorEnabled: (config: { mode: string; channelId: string | null }) =>
         config.mode !== 'off' && config.channelId !== null,
+    // Mirrors the real allowlist in shared/src/platforms/slack-mirror-config.ts.
+    // That predicate's own truth table is pinned in the mirror handler's suite;
+    // here it only has to route this producer the way production does.
+    isMirrorableSource: (source: string) =>
+        ['DISCORD', 'GITHUB_ISSUE', 'GITHUB_DISCUSSION'].includes(source),
 }));
 
 // Import after mocks
@@ -867,6 +872,117 @@ describe('handleAiResponse', () => {
             }),
         );
     });
+    // ── Slack ticket mirror ──────────────────────────────────────────────
+
+    describe('Slack ticket mirror enqueue', () => {
+        function mirrorJobs() {
+            return mockPrismaJob.create.mock.calls
+                .map((c) => c[0].data)
+                .filter((d: { type: string }) => d.type === 'SLACK_MIRROR');
+        }
+
+        beforeEach(() => {
+            // This suite lives inside describe('handleAiResponse'), so the outer
+            // beforeEach has already cleared mocks and primed the happy path.
+            // mockPostResponse is re-stubbed deliberately: an earlier version of
+            // this suite sat OUTSIDE that beforeEach, and its delivered case
+            // passed only on leftover state from a previous suite.
+            mockPostResponse.mockResolvedValue('999888');
+            mockMirrorConfig.mode = 'live';
+            mockMirrorConfig.channelId = 'C0MIRROR';
+        });
+
+        afterEach(() => {
+            mockMirrorConfig.mode = 'off';
+            mockMirrorConfig.channelId = null;
+        });
+
+        it('enqueues nothing while the mirror is off', async () => {
+            mockMirrorConfig.mode = 'off';
+            mockMirrorConfig.channelId = null;
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mirrorJobs()).toHaveLength(0);
+        });
+
+        it('marks the reply delivered when the adapter posted it', async () => {
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            // Pin that a post actually happened — otherwise this passes even if
+            // the handler stops posting entirely.
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            const jobs = mirrorJobs();
+            expect(jobs).toHaveLength(1);
+            expect(jobs[0].payload).toEqual(
+                expect.objectContaining({
+                    kind: 'reply',
+                    ticketId: 'tkt-1',
+                    delivery: 'delivered',
+                }),
+            );
+        });
+
+        it('reports shadow when SHADOW_MODE is on', async () => {
+            const originalShadow = process.env.SHADOW_MODE;
+            try {
+                process.env.SHADOW_MODE = 'true';
+
+                await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+                expect(mockPostResponse).not.toHaveBeenCalled();
+                expect(mirrorJobs()[0].payload).toEqual(
+                    expect.objectContaining({ kind: 'reply', delivery: 'shadow' }),
+                );
+            } finally {
+                restoreShadowMode(originalShadow);
+            }
+        });
+
+        // A suppressed run posts safe replacement copy, not the draft the mirror
+        // renders — the draft reached nobody even though the post succeeded.
+        it('reports withheld for a suppressed draft even though a post succeeded', async () => {
+            mockGenerateSupportResponse.mockResolvedValue(suppressedResult);
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mirrorJobs()[0].payload).toEqual(
+                expect.objectContaining({ kind: 'reply', delivery: 'withheld' }),
+            );
+        });
+
+        it('reports post-failed when the adapter throws', async () => {
+            mockPostResponse.mockRejectedValue(new Error('discord 500'));
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mirrorJobs()[0].payload).toEqual(
+                expect.objectContaining({ kind: 'reply', delivery: 'post-failed' }),
+            );
+        });
+
+        it('reports no-adapter when the source has none registered', async () => {
+            mockHasAdapter.mockReturnValue(false);
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mirrorJobs()[0].payload).toEqual(
+                expect.objectContaining({ kind: 'reply', delivery: 'no-adapter' }),
+            );
+        });
+
+        // This producer had no source check at all, so a Slack-sourced ticket's
+        // AI reply opened a thread in the mirror channel.
+        it('enqueues nothing for a ticket whose source is not mirrorable', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'SLACK' });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mirrorJobs()).toHaveLength(0);
+        });
+    });
 });
 
 /**
@@ -901,97 +1017,5 @@ describe('restoreShadowMode', () => {
         restoreShadowMode(original);
 
         expect(process.env.SHADOW_MODE).toBe('false');
-    });
-    // ── Slack ticket mirror ──────────────────────────────────────────────
-
-    describe('Slack ticket mirror enqueue', () => {
-        function mirrorJobs() {
-            return mockPrismaJob.create.mock.calls
-                .map((c) => c[0].data)
-                .filter((d: { type: string }) => d.type === 'SLACK_MIRROR');
-        }
-
-        beforeEach(() => {
-            // This describe sits outside the suite that clears mocks globally,
-            // so job calls would otherwise accumulate across these cases.
-            vi.clearAllMocks();
-            mockPrismaTicket.update.mockResolvedValue({});
-            mockPrismaMessage.create.mockResolvedValue({ id: 'msg-ai-1' });
-            mockPrismaMessage.update.mockResolvedValue({});
-            mockPrismaJob.create.mockResolvedValue({ id: 'job-1' });
-            mockClassifyTicket.mockResolvedValue(sampleClassification);
-            mockGetFeedbackCalibration.mockResolvedValue(0);
-            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
-            mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
-            mockHasAdapter.mockReturnValue(true);
-            mockGetAdapter.mockReturnValue({
-                platform: 'DISCORD',
-                postResponse: mockPostResponse,
-                postSystemMessage: vi.fn(),
-                parseInboundEvent: vi.fn(),
-                fetchUserInfo: vi.fn(),
-            });
-        });
-
-        afterEach(() => {
-            mockMirrorConfig.mode = 'off';
-            mockMirrorConfig.channelId = null;
-        });
-
-        it('enqueues nothing while the mirror is off', async () => {
-            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
-
-            expect(mirrorJobs()).toHaveLength(0);
-        });
-
-        it('marks the reply delivered when the adapter posted it', async () => {
-            mockMirrorConfig.mode = 'live';
-            mockMirrorConfig.channelId = 'C0MIRROR';
-
-            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
-
-            const jobs = mirrorJobs();
-            expect(jobs).toHaveLength(1);
-            expect(jobs[0].payload).toEqual(
-                expect.objectContaining({ kind: 'reply', delivered: true }),
-            );
-        });
-
-        // Shadow mode logs the draft but posts nothing, so the reporter never
-        // saw it. The mirror must say so rather than implying delivery.
-        it('marks the reply undelivered in shadow mode', async () => {
-            mockMirrorConfig.mode = 'live';
-            mockMirrorConfig.channelId = 'C0MIRROR';
-            const originalShadow = process.env.SHADOW_MODE;
-            try {
-                process.env.SHADOW_MODE = 'true';
-
-                await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
-
-                const jobs = mirrorJobs();
-                expect(jobs).toHaveLength(1);
-                expect(jobs[0].payload).toEqual(
-                    expect.objectContaining({ kind: 'reply', delivered: false }),
-                );
-            } finally {
-                restoreShadowMode(originalShadow);
-            }
-        });
-
-        // A suppressed run posts safe replacement copy, not the draft stored on
-        // the Message the mirror renders — so the draft still reached nobody.
-        it('marks a suppressed reply undelivered even though a post succeeded', async () => {
-            mockMirrorConfig.mode = 'live';
-            mockMirrorConfig.channelId = 'C0MIRROR';
-            mockGenerateSupportResponse.mockResolvedValue(suppressedResult);
-
-            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
-
-            const jobs = mirrorJobs();
-            expect(jobs).toHaveLength(1);
-            expect(jobs[0].payload).toEqual(
-                expect.objectContaining({ kind: 'reply', delivered: false }),
-            );
-        });
     });
 });

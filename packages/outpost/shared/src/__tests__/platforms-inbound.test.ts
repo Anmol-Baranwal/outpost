@@ -654,17 +654,60 @@ describe('InboundHandler', () => {
             });
         });
 
-        // A Slack-sourced ticket mirrored into a monitored Slack channel would
-        // arrive back as inbound, open a ticket, mirror again, and loop.
-        it('never mirrors a Slack-sourced ticket back into Slack', async () => {
+        // The mirror is an ALLOWLIST of GitHub + Discord. A denylist ("anything
+        // but SLACK") silently mirrored TEAMS/EMAIL/WEB/MANUAL/LINEAR tickets the
+        // feature was never specified for.
+        it.each([
+            TicketSource.SLACK,
+            TicketSource.TEAMS,
+            TicketSource.EMAIL,
+            TicketSource.WEB,
+            TicketSource.MANUAL,
+            TicketSource.LINEAR,
+        ])('does not mirror a %s-sourced ticket', async (source) => {
             const handler = new InboundHandler({ prisma, createJob, mirrorToSlack: true });
 
-            await handler.handle(
-                makeInboundMessage({ source: TicketSource.SLACK, channelId: 'C0MIRROR' }),
-            );
+            await handler.handle(makeInboundMessage({ source }));
 
             const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
             expect(types).not.toContain('SLACK_MIRROR');
+        });
+
+        it.each([TicketSource.GITHUB_ISSUE, TicketSource.GITHUB_DISCUSSION])(
+            'mirrors a %s-sourced ticket',
+            async (source) => {
+                const handler = new InboundHandler({ prisma, createJob, mirrorToSlack: true });
+
+                await handler.handle(makeInboundMessage({ source }));
+
+                const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+                expect(types).toContain('SLACK_MIRROR');
+            },
+        );
+
+        // Production does not pass mirrorToSlack — it falls back to the env. With
+        // the env unset the fallback must be OFF, so a stray SLACK_MIRROR_MODE in
+        // a developer's shell cannot silently enqueue jobs (and cannot perturb the
+        // call-count assertions in every other test in this file).
+        it('defaults to disabled when the environment configures no mirror', async () => {
+            const originalMode = process.env.SLACK_MIRROR_MODE;
+            const originalChannel = process.env.SLACK_MIRROR_CHANNEL_ID;
+            try {
+                delete process.env.SLACK_MIRROR_MODE;
+                delete process.env.SLACK_MIRROR_CHANNEL_ID;
+
+                const handler = new InboundHandler({ prisma, createJob });
+                await handler.handle(makeInboundMessage());
+
+                const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+                expect(types).not.toContain('SLACK_MIRROR');
+            } finally {
+                if (originalMode !== undefined) process.env.SLACK_MIRROR_MODE = originalMode;
+                else delete process.env.SLACK_MIRROR_MODE;
+                if (originalChannel !== undefined)
+                    process.env.SLACK_MIRROR_CHANNEL_ID = originalChannel;
+                else delete process.env.SLACK_MIRROR_CHANNEL_ID;
+            }
         });
 
         it('still creates the ticket when enqueueing the mirror job fails', async () => {

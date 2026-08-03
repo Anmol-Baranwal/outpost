@@ -25,11 +25,17 @@ import {
     getAdapter,
     readSlackMirrorConfig,
     isSlackMirrorEnabled,
+    isMirrorableSource,
 } from '@copilotkit/outpost/shared/platforms';
 import { createJob } from '../create-job.js';
 import { getFeedbackCalibration } from '../feedback-calibration.js';
 import { JobType } from '../types.js';
-import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.js';
+import type {
+    AiResponsePayload,
+    JobResult,
+    JobHandlerContext,
+    SlackMirrorDelivery,
+} from '../types.js';
 
 /**
  * Map from TicketSource enum values (stored in DB) to PlatformTarget
@@ -194,10 +200,12 @@ export async function handleAiResponse(
         // suggestedResponse holds the publishable text bots pick up), and step 6
         // below escalates on suppression regardless of score.
         const ticketSource = ticket.source as TicketSource;
-        // Tracks whether the reporter actually received `aiMessage.content`.
-        // The Slack mirror labels its post with this, so an internal reader is
-        // never told the community saw a draft that was withheld or only logged.
-        let draftReachedReporter = false;
+        // What became of `aiMessage.content`, recorded at the branch that knows.
+        // The Slack mirror renders this verbatim, so an internal reader is never
+        // told the community saw a draft that was withheld, only logged, or lost
+        // to a failed post. Starts as the no-adapter case: if no branch below
+        // claims it, nothing was ever attempted.
+        let delivery: SlackMirrorDelivery = 'no-adapter';
         if (pipelineResult.suppressed) {
             console.warn(
                 `[AI Response] Ungrounded draft withheld for ticket ${ticketId} — ` +
@@ -207,6 +215,9 @@ export async function handleAiResponse(
         }
 
         if (process.env.SHADOW_MODE === 'true') {
+            // Shadow mode is a fact about this run, independent of whether the
+            // shadow Message row below persists — claim it before the try.
+            delivery = 'shadow';
             try {
                 await prisma.message.create({
                     data: {
@@ -263,12 +274,13 @@ export async function handleAiResponse(
                     }
                     // A suppressed run posts safe replacement copy, not the
                     // draft stored on aiMessage — so the draft itself still
-                    // never reached anyone.
-                    draftReachedReporter = !pipelineResult.suppressed;
+                    // never reached anyone, even though the post succeeded.
+                    delivery = pipelineResult.suppressed ? 'withheld' : 'delivered';
                     console.log(
                         `[AI Response] Posted response to ${ticket.source} for ticket ${ticketId}`,
                     );
                 } catch (error) {
+                    delivery = 'post-failed';
                     console.error(
                         `[AI Response] Failed to post response to ${ticket.source} for ticket ${ticketId}:`,
                         error instanceof Error ? error.message : String(error),
@@ -283,13 +295,14 @@ export async function handleAiResponse(
         // ticket. Enqueued regardless of whether the draft was delivered — an
         // answer the community never saw is precisely what the team needs to
         // notice — but labelled with which of those happened.
-        if (isSlackMirrorEnabled(readSlackMirrorConfig())) {
+        if (isMirrorableSource(ticket.source) && isSlackMirrorEnabled(readSlackMirrorConfig())) {
             try {
                 await createJob(JobType.SLACK_MIRROR, {
                     ticketId: ticket.id,
+                    source: payload.source,
                     kind: 'reply',
                     messageId: aiMessage.id,
-                    delivered: draftReachedReporter,
+                    delivery,
                 });
             } catch (error) {
                 console.error(

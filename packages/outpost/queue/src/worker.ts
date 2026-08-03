@@ -349,7 +349,20 @@ export class Worker {
                         },
                     });
                 } else {
-                    await this.handleFailure(job.id, attempt, job.maxAttempts, result.error ?? 'Unknown error');
+                    // A handler that reports `retryable: false` has told us the
+                    // failure cannot succeed on a retry (malformed payload,
+                    // missing referenced row, permanent API rejection). Retrying
+                    // it burns every attempt and leaves a dead-letter trail that
+                    // reads like a transient fault. Dead-letter it immediately by
+                    // presenting the attempt as the final one.
+                    await this.handleFailure(
+                        job.id,
+                        // Presenting the attempt as the last one is what makes
+                        // handleFailure dead-letter instead of scheduling a retry.
+                        result.retryable === false ? job.maxAttempts : attempt,
+                        job.maxAttempts,
+                        result.error ?? 'Unknown error',
+                    );
                 }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
