@@ -244,7 +244,9 @@ describe('Dashboard API', () => {
             expect(countArgs?.where?.createdAt?.lte).toEqual(new Date(2026, 5, 30, 23, 59, 59, 999));
         });
 
-        it('falls back to the current month for a malformed month param', async () => {
+        it('falls back to the newest month with tickets for a malformed month param', async () => {
+            // Both findFirst calls (oldest, newest) resolve to January 2026, so
+            // the newest month with data IS January — not the calendar month.
             mockTicketFindFirst.mockResolvedValue({ createdAt: new Date(2026, 0, 1) });
             mockTicketCount
                 .mockResolvedValueOnce(0)
@@ -259,10 +261,32 @@ describe('Dashboard API', () => {
             const body = await res.json();
 
             expect(res.status).toBe(200);
-            const now = new Date();
-            expect(body.monthKey).toBe(
-                `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
-            );
+            expect(body.monthKey).toBe('2026-01');
+        });
+
+        it('defaults to the newest month with tickets, not the empty calendar month', async () => {
+            // The regression this guards: totalTickets used to be an all-time
+            // count, so it was never 0. Scoped to a month, defaulting to the
+            // calendar month made the dashboard read 0 with an empty chart for
+            // the first days of every month.
+            mockTicketFindFirst
+                .mockResolvedValueOnce({ createdAt: new Date(2026, 5, 4) })   // oldest
+                .mockResolvedValueOnce({ createdAt: new Date(2026, 6, 30) }); // newest
+            mockTicketCount
+                .mockResolvedValueOnce(47)
+                .mockResolvedValueOnce(47)
+                .mockResolvedValueOnce(0);
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]);
+
+            const res = await statsGet(statsRequest());
+            const body = await res.json();
+
+            expect(body.monthKey).toBe('2026-07');
+            expect(body.month).toBe('July 2026');
+            expect(body.totalTickets).toBe(47);
         });
 
         it('offers only the current month when there are no tickets', async () => {

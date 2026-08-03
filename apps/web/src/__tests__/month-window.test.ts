@@ -6,6 +6,7 @@ import {
     monthLabel,
     listMonths,
     resolveMonthKey,
+    defaultMonthKey,
 } from '@/lib/month-window';
 
 describe('month-window', () => {
@@ -92,29 +93,56 @@ describe('month-window', () => {
         });
     });
 
+    describe('defaultMonthKey', () => {
+        it('returns the month of the newest ticket, not the calendar month', () => {
+            // Newest ticket is in July; "today" is early August. Defaulting to
+            // August would open the dashboard on an empty chart reading 0.
+            expect(defaultMonthKey(new Date(2026, 6, 30), new Date(2026, 7, 3))).toBe('2026-07');
+        });
+
+        it('returns the current month when there are no tickets at all', () => {
+            expect(defaultMonthKey(null, new Date(2026, 7, 3))).toBe('2026-08');
+        });
+
+        it('returns the current month when the newest ticket is in it', () => {
+            expect(defaultMonthKey(new Date(2026, 7, 1), new Date(2026, 7, 3))).toBe('2026-08');
+        });
+    });
+
     describe('resolveMonthKey', () => {
         const oldest = new Date(2026, 5, 4);
-        const now = new Date(2026, 6, 31);
+        const newest = new Date(2026, 6, 30);
+        const now = new Date(2026, 7, 3);
 
         it('accepts a valid in-range key', () => {
-            expect(resolveMonthKey('2026-06', oldest, now)).toBe('2026-06');
+            expect(resolveMonthKey('2026-06', oldest, newest, now)).toBe('2026-06');
         });
 
-        it('falls back to the current month for a malformed key', () => {
-            expect(resolveMonthKey('garbage', oldest, now)).toBe('2026-07');
-            expect(resolveMonthKey('2026-13', oldest, now)).toBe('2026-07');
+        it('accepts the current month even when it has no tickets', () => {
+            // Selecting an empty month is a deliberate choice; only the
+            // DEFAULT avoids landing there.
+            expect(resolveMonthKey('2026-08', oldest, newest, now)).toBe('2026-08');
         });
 
-        it('falls back to the current month when no key is given', () => {
-            expect(resolveMonthKey(null, oldest, now)).toBe('2026-07');
+        it('defaults to the newest month with tickets for a malformed key', () => {
+            expect(resolveMonthKey('garbage', oldest, newest, now)).toBe('2026-07');
+            expect(resolveMonthKey('2026-13', oldest, newest, now)).toBe('2026-07');
+        });
+
+        it('defaults to the newest month with tickets when no key is given', () => {
+            expect(resolveMonthKey(null, oldest, newest, now)).toBe('2026-07');
         });
 
         it('falls back for a month before the first ticket', () => {
-            expect(resolveMonthKey('2026-01', oldest, now)).toBe('2026-07');
+            expect(resolveMonthKey('2026-01', oldest, newest, now)).toBe('2026-07');
         });
 
         it('falls back for a future month', () => {
-            expect(resolveMonthKey('2026-09', oldest, now)).toBe('2026-07');
+            expect(resolveMonthKey('2026-12', oldest, newest, now)).toBe('2026-07');
+        });
+
+        it('falls back to the current month when there are no tickets at all', () => {
+            expect(resolveMonthKey(null, null, null, now)).toBe('2026-08');
         });
     });
 });

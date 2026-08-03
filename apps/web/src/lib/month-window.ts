@@ -83,15 +83,30 @@ export function listMonths(oldest: Date | null, now: Date = new Date()): MonthKe
 /**
  * Resolve a raw `month` query param to a month we can actually render.
  *
- * Anything malformed, out of range, or absent yields the current month —
- * a bad query param must not blank the dashboard.
+ * Anything malformed, out of range, or absent falls back to the default
+ * month — a bad query param must not blank the dashboard.
  */
 export function resolveMonthKey(
     raw: string | null,
     oldest: Date | null,
+    newest: Date | null = null,
     now: Date = new Date(),
 ): MonthKey {
-    const current = currentMonthKey(now);
-    if (!isValidMonthKey(raw)) return current;
-    return listMonths(oldest, now).includes(raw as MonthKey) ? (raw as MonthKey) : current;
+    const fallback = defaultMonthKey(newest, now);
+    if (!isValidMonthKey(raw)) return fallback;
+    return listMonths(oldest, now).includes(raw as MonthKey) ? (raw as MonthKey) : fallback;
+}
+
+/**
+ * The month the dashboard opens on: the newest month that actually has
+ * tickets, not the calendar month.
+ *
+ * Defaulting to the calendar month means the first days of every month show
+ * an empty chart and a count of 0 while the backlog is untouched — the
+ * dashboard reads as broken precisely when nothing is wrong. Falls back to
+ * the current month only when there are no tickets at all, where an empty
+ * chart is the truth.
+ */
+export function defaultMonthKey(newest: Date | null, now: Date = new Date()): MonthKey {
+    return newest ? currentMonthKey(newest) : currentMonthKey(now);
 }

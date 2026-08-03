@@ -27,16 +27,23 @@ export async function GET(request: Request) {
     try {
         const now = new Date();
 
-        // Fetched first: resolveMonthKey needs the oldest ticket to know
-        // which months are in range.
-        const oldestTicket = await prisma.ticket.findFirst({
-            orderBy: { createdAt: 'asc' },
-            select: { createdAt: true },
-        });
+        // Fetched first: resolveMonthKey needs the oldest ticket to know which
+        // months are in range, and the newest to pick the default month.
+        const [oldestTicket, newestTicket] = await Promise.all([
+            prisma.ticket.findFirst({
+                orderBy: { createdAt: 'asc' },
+                select: { createdAt: true },
+            }),
+            prisma.ticket.findFirst({
+                orderBy: { createdAt: 'desc' },
+                select: { createdAt: true },
+            }),
+        ]);
         const oldest = oldestTicket?.createdAt ?? null;
+        const newest = newestTicket?.createdAt ?? null;
 
         const url = new URL(request.url);
-        const monthKey = resolveMonthKey(url.searchParams.get('month'), oldest, now);
+        const monthKey = resolveMonthKey(url.searchParams.get('month'), oldest, newest, now);
         const { start: monthStart, end: monthEnd, daysInMonth } = monthWindow(monthKey);
 
         // Run aggregate queries in parallel
