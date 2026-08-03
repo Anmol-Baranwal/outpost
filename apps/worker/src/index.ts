@@ -67,12 +67,19 @@ const worker = new Worker({
         [JobType.TRACKER_SYNC]: 1,
         [JobType.JOB_CLEANUP]: 1,
         [JobType.GITHUB_REACTION_POLL]: 1,
-        [JobType.SLACK_MIRROR]: 2,
+        // 1, not 2: the ticket and reply jobs for one ticket race to claim the
+        // same TicketExternalLink row. The handler survives the race, but serial
+        // processing keeps one ticket's thread in one Slack thread by construction.
+        [JobType.SLACK_MIRROR]: 1,
     },
     jobTimeouts: {
         [JobType.AI_RESPONSE]: 120_000, // 2 minutes — AI pipeline is slow
         [JobType.HUBSPOT_SYNC]: 300_000, // 5 minutes — full sync can be large
         [JobType.ACCOUNT_SCORING]: 300_000, // 5 minutes — many accounts
+        // 60s, above the 30s default: a reply that has to open its thread first
+        // makes two chat.postMessage calls, and WebClient sleeps through Slack's
+        // rate-limit retries. Timing out mid-post would re-post on the retry.
+        [JobType.SLACK_MIRROR]: 60_000,
     },
 });
 

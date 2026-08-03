@@ -4,6 +4,7 @@ const mockTicketFindUnique = vi.fn();
 const mockMessageFindUnique = vi.fn();
 const mockLinkFindUnique = vi.fn();
 const mockLinkCreate = vi.fn();
+const mockLinkUpdate = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
@@ -12,6 +13,7 @@ vi.mock('@copilotkit/outpost/db', () => ({
         ticketExternalLink: {
             findUnique: (...a: unknown[]) => mockLinkFindUnique(...a),
             create: (...a: unknown[]) => mockLinkCreate(...a),
+            update: (...a: unknown[]) => mockLinkUpdate(...a),
         },
     },
 }));
@@ -73,6 +75,7 @@ describe('handleSlackMirror', () => {
         mockTicketFindUnique.mockResolvedValue(TICKET);
         mockLinkFindUnique.mockResolvedValue(null);
         mockLinkCreate.mockResolvedValue({});
+        mockLinkUpdate.mockResolvedValue({});
     });
 
     it('posts nothing and touches no DB when the mirror is off', async () => {
@@ -225,6 +228,113 @@ describe('handleSlackMirror', () => {
         expect(mockLinkCreate).not.toHaveBeenCalled();
         expect(logSpy.mock.calls.flat().join(' ')).toContain('would open thread');
         logSpy.mockRestore();
+    });
+
+    // ── Idempotent link lifecycle ────────────────────────────────────────────
+
+    it('loses the create race without opening a second thread and replies on the winner ts', async () => {
+        // Both jobs for this ticket read "no link", so both post a root message.
+        // The loser's create hits @@unique([ticketId, plugin]).
+        mockLinkFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({
+            externalId: 'C0MIRROR:winner.0001',
+        });
+        mockLinkCreate.mockRejectedValue(
+            Object.assign(new Error('Unique constraint'), {
+                code: 'P2002',
+            }),
+        );
+        mockMessageFindUnique.mockResolvedValue({
+            id: 'msg-9',
+            author: 'octocat (12345)',
+            content: 'Still broken',
+            isAiGenerated: false,
+        });
+        const { poster, postMessage } = makePoster('loser.0002');
+
+        const result = await handleSlackMirror(
+            { ticketId: 'tkt-1', kind: 'reply', messageId: 'msg-9' },
+            context,
+            { config: liveConfig, poster },
+        );
+
+        expect(result.success).toBe(true);
+        expect(mockLinkCreate).toHaveBeenCalledTimes(1);
+        expect(mockLinkUpdate).not.toHaveBeenCalled();
+        // The reply threads under the winner's ts, not the loser's orphaned post.
+        const reply = postMessage.mock.calls.at(-1)![0];
+        expect(reply.thread_ts).toBe('winner.0001');
+    });
+
+    it('repairs a malformed link with an update instead of a second create', async () => {
+        mockLinkFindUnique.mockResolvedValue({ externalId: 'no-colon-here' });
+        const { poster, postMessage } = makePoster('repair.0003');
+
+        const result = await handleSlackMirror({ ticketId: 'tkt-1', kind: 'ticket' }, context, {
+            config: liveConfig,
+            poster,
+        });
+
+        expect(result.success).toBe(true);
+        expect(postMessage).toHaveBeenCalledTimes(1);
+        expect(mockLinkCreate).not.toHaveBeenCalled();
+        expect(mockLinkUpdate).toHaveBeenCalledTimes(1);
+        const update = mockLinkUpdate.mock.calls[0][0];
+        expect(update.where).toEqual({
+            ticketId_plugin: { ticketId: 'tkt-1', plugin: SLACK_MIRROR_PLUGIN },
+        });
+        expect(update.data).toMatchObject({ externalId: 'C0MIRROR:repair.0003' });
+    });
+
+    it('replies in the channel recorded on the link, not the currently configured one', async () => {
+        mockLinkFindUnique.mockResolvedValue({ externalId: 'C0OLDCHAN:111.222' });
+        mockMessageFindUnique.mockResolvedValue({
+            id: 'msg-9',
+            author: 'octocat (12345)',
+            content: 'Still broken',
+            isAiGenerated: false,
+        });
+        const { poster, postMessage } = makePoster();
+
+        const result = await handleSlackMirror(
+            { ticketId: 'tkt-1', kind: 'reply', messageId: 'msg-9' },
+            context,
+            { config: { ...liveConfig, channelId: 'C0NEWCHAN' }, poster },
+        );
+
+        expect(result.success).toBe(true);
+        expect(postMessage).toHaveBeenCalledTimes(1);
+        expect(postMessage.mock.calls[0][0]).toMatchObject({
+            channel: 'C0OLDCHAN',
+            thread_ts: '111.222',
+        });
+    });
+
+    it('a duplicate reply job opens no thread and writes no link', async () => {
+        mockLinkFindUnique.mockResolvedValue({ externalId: 'C0MIRROR:111.222' });
+        mockMessageFindUnique.mockResolvedValue({
+            id: 'msg-9',
+            author: 'octocat (12345)',
+            content: 'Still broken',
+            isAiGenerated: false,
+        });
+        const { poster, postMessage } = makePoster();
+
+        for (let i = 0; i < 2; i++) {
+            const result = await handleSlackMirror(
+                { ticketId: 'tkt-1', kind: 'reply', messageId: 'msg-9' },
+                context,
+                { config: liveConfig, poster },
+            );
+            expect(result.success).toBe(true);
+        }
+
+        // Two reply posts, but never a root post and never a link write.
+        expect(postMessage).toHaveBeenCalledTimes(2);
+        for (const [args] of postMessage.mock.calls) {
+            expect(args.thread_ts).toBe('111.222');
+        }
+        expect(mockLinkCreate).not.toHaveBeenCalled();
+        expect(mockLinkUpdate).not.toHaveBeenCalled();
     });
 
     it('fails the job when the ticket is gone', async () => {

@@ -106,6 +106,12 @@ function formatReplyPost(
  * Ordering note: a `reply` whose thread does not exist yet opens the thread
  * first. Jobs can land out of order, and the mirror can be switched on partway
  * through a live conversation; neither should drop messages on the floor.
+ *
+ * Idempotency: the TicketExternalLink row — not the config — is the identity of
+ * the thread. Two jobs for one ticket can both read "no link" and both post a
+ * root message; the one that loses `@@unique([ticketId, plugin])` re-reads the
+ * row and threads under the winner's ts rather than opening a rival thread. A
+ * row whose externalId cannot be parsed is repaired in place, never duplicated.
  */
 export async function handleSlackMirror(
     payload: SlackMirrorPayload,
@@ -128,13 +134,16 @@ export async function handleSlackMirror(
         return { success: false, error: `Ticket ${payload.ticketId} not found` };
     }
 
-    const existingLink = await db.ticketExternalLink.findUnique({
-        where: { ticketId_plugin: { ticketId: ticket.id, plugin: SLACK_MIRROR_PLUGIN } },
-    });
+    const linkWhere = {
+        ticketId_plugin: { ticketId: ticket.id, plugin: SLACK_MIRROR_PLUGIN },
+    };
+    const existingLink = await db.ticketExternalLink.findUnique({ where: linkWhere });
+    let thread = existingLink ? parseThreadRef(existingLink.externalId) : null;
 
     // Already mirrored — opening a second thread for the same ticket would
-    // split its history across two places.
-    if (payload.kind === 'ticket' && existingLink) {
+    // split its history across two places. A link we cannot parse does NOT
+    // count as mirrored: it falls through to the repair path below.
+    if (payload.kind === 'ticket' && thread) {
         return { success: true, data: { skipped: 'already-mirrored' } };
     }
 
@@ -144,9 +153,7 @@ export async function handleSlackMirror(
     await context.reportProgress(40);
 
     // ── Open the thread when it does not exist yet ───────────────────────────
-    let threadTs = existingLink ? parseThreadTs(existingLink.externalId) : null;
-
-    if (!threadTs) {
+    if (!thread) {
         const text = formatTicketPost(ticket);
         if (isShadow) {
             console.log(
@@ -160,15 +167,45 @@ export async function handleSlackMirror(
                     error: `Slack accepted the mirror post for ${ticket.displayId} but returned no ts`,
                 };
             }
-            threadTs = result.ts;
-            await db.ticketExternalLink.create({
-                data: {
-                    ticketId: ticket.id,
-                    plugin: SLACK_MIRROR_PLUGIN,
-                    externalId: `${channelId}:${threadTs}`,
-                    externalUrl: buildPermalink(channelId, threadTs),
-                },
-            });
+            const opened = { channelId, ts: result.ts };
+            const linkData = {
+                externalId: `${opened.channelId}:${opened.ts}`,
+                externalUrl: buildPermalink(opened.channelId, opened.ts),
+            };
+
+            if (existingLink) {
+                // The row exists but its externalId is unusable. Repair it so the
+                // thread we just opened becomes the ticket's identity — a second
+                // create would fail the unique constraint on every attempt.
+                await db.ticketExternalLink.update({ where: linkWhere, data: linkData });
+                thread = opened;
+            } else {
+                try {
+                    await db.ticketExternalLink.create({
+                        data: {
+                            ticketId: ticket.id,
+                            plugin: SLACK_MIRROR_PLUGIN,
+                            ...linkData,
+                        },
+                    });
+                    thread = opened;
+                } catch (err) {
+                    if (!isUniqueViolation(err)) throw err;
+                    // Another job for this ticket claimed the link first. Adopt its
+                    // thread; our root post is an orphan, but every message from
+                    // here on lands in the one thread the row points at.
+                    const winner = await db.ticketExternalLink.findUnique({ where: linkWhere });
+                    const winnerThread = winner ? parseThreadRef(winner.externalId) : null;
+                    if (winnerThread) {
+                        thread = winnerThread;
+                    } else {
+                        // The winning row is itself unparseable — repair it rather
+                        // than retry a create that can only fail again.
+                        await db.ticketExternalLink.update({ where: linkWhere, data: linkData });
+                        thread = opened;
+                    }
+                }
+            }
         }
     }
 
@@ -191,7 +228,14 @@ export async function handleSlackMirror(
                 `[Slack Mirror] shadow — would reply in ${channelId} on ${ticket.displayId}:\n${text}`,
             );
         } else {
-            await poster!.postMessage({ channel: channelId, text, thread_ts: threadTs! });
+            // Post into the channel the link records, not the currently configured
+            // one: re-pointing SLACK_MIRROR_CHANNEL_ID must not orphan the replies
+            // of tickets whose thread already lives somewhere else.
+            await poster!.postMessage({
+                channel: thread!.channelId,
+                text,
+                thread_ts: thread!.ts,
+            });
         }
     }
 
@@ -203,9 +247,31 @@ export async function handleSlackMirror(
     };
 }
 
-/** externalId is stored as `channelId:ts`; the ts is everything after the colon. */
-function parseThreadTs(externalId: string): string | null {
+/** The Slack thread a ticket is mirrored into, as recorded on its link row. */
+interface SlackThreadRef {
+    channelId: string;
+    ts: string;
+}
+
+/**
+ * externalId is stored as `channelId:ts`. Both halves are load-bearing — the
+ * channel is where replies go — so a row missing either half is unusable and
+ * must be repaired, not read.
+ */
+function parseThreadRef(externalId: string): SlackThreadRef | null {
     const idx = externalId.indexOf(':');
     if (idx === -1) return null;
-    return externalId.slice(idx + 1) || null;
+    const channelId = externalId.slice(0, idx);
+    const ts = externalId.slice(idx + 1);
+    if (!channelId || !ts) return null;
+    return { channelId, ts };
+}
+
+/**
+ * Prisma's unique-constraint failure. Duck-typed on purpose: importing the
+ * Prisma runtime into a queue handler just to name an error class would drag
+ * the client into every consumer's bundle.
+ */
+function isUniqueViolation(err: unknown): boolean {
+    return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002';
 }
