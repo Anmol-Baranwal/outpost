@@ -50,24 +50,40 @@ export async function POST(request: NextRequest) {
         include: { ticket: true },
     });
 
-    let jobs = 0;
-    for (const link of links) {
-        await createJob(JobType.TRACKER_SYNC, {
-            ticketId: link.ticket.id,
-            targetPlugin: plugin,
-            action: 'status_change',
-            changeData: { status: link.ticket.status },
-        });
-        jobs += 1;
-
-        await createJob(JobType.TRACKER_SYNC, {
-            ticketId: link.ticket.id,
-            targetPlugin: plugin,
-            action: 'priority_change',
-            changeData: { priority: link.ticket.priority },
-        });
-        jobs += 1;
-    }
+    // Enqueued in parallel rather than 2xN sequential round-trips: a plugin with
+    // many linked tickets made this a long chain that could brush the route
+    // timeout on a large workspace.
+    //
+    // Promise.all, NOT allSettled: a failed enqueue must still propagate so the
+    // route 500s. That behaviour is deliberate and pinned by
+    // sync-api.test.ts ("does not mislabel a mid-loop DB/queue error") — a DB or
+    // queue failure disguised as a 4xx was the bug this endpoint's error handling
+    // was narrowed to fix.
+    //
+    // This operation is therefore NOT atomic, by conscious choice: if one insert
+    // fails, jobs already enqueued stay enqueued and a retry re-enqueues from
+    // scratch, producing duplicate TRACKER_SYNC jobs. Acceptable here because the
+    // handler is idempotent in effect (it pushes current ticket state, so a
+    // duplicate write is a no-op) and this is a manual admin action, not an
+    // automated path.
+    const jobs = (
+        await Promise.all(
+            links.flatMap((link: (typeof links)[number]) => [
+                createJob(JobType.TRACKER_SYNC, {
+                    ticketId: link.ticket.id,
+                    targetPlugin: plugin,
+                    action: 'status_change',
+                    changeData: { status: link.ticket.status },
+                }),
+                createJob(JobType.TRACKER_SYNC, {
+                    ticketId: link.ticket.id,
+                    targetPlugin: plugin,
+                    action: 'priority_change',
+                    changeData: { priority: link.ticket.priority },
+                }),
+            ]),
+        )
+    ).length;
 
     return NextResponse.json({ queued: links.length, jobs });
 }

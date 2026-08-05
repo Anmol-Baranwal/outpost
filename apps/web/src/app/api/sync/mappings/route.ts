@@ -82,7 +82,7 @@ interface PersistedMappingConfig {
 type PersistedConfigRead =
     | { status: 'absent' }
     | { status: 'corrupt'; reason: string }
-    | { status: 'ok'; config: PersistedMappingConfig };
+    | { status: 'ok'; config: PersistedMappingConfig; invalidSections: string[] };
 
 async function readPersistedConfig(): Promise<PersistedConfigRead> {
     const row = await prisma.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
@@ -103,24 +103,36 @@ async function readPersistedConfig(): Promise<PersistedConfigRead> {
     // The PUT path validates before writing, but a row written by an older
     // version of this code — or hand-edited in the database — reaches the worker
     // unvalidated. Re-validate on read rather than trusting the cast.
-    if (
-        !isValidMappingShape(
-            (parsed as PersistedMappingConfig)?.statusMappings,
-            Object.values(TicketStatus),
-        ) ||
-        !isValidMappingShape(
-            (parsed as PersistedMappingConfig)?.priorityMappings,
-            Object.values(TicketPriority),
-        )
-    ) {
-        console.error(
-            `[sync/mappings] SystemConfig row "${MAPPING_CONFIG_KEY}" parsed but does not match the ` +
-                'expected mapping shape — serving code defaults and IGNORING the persisted config.',
-        );
-        return { status: 'corrupt', reason: 'row does not match the expected mapping shape' };
+    //
+    // Validated PER SECTION: a row whose priorityMappings are unusable should not
+    // discard perfectly good statusMappings. Each bad section falls back to the
+    // code defaults on its own and says which one it was.
+    const candidate = parsed as PersistedMappingConfig;
+    const bad: string[] = [];
+
+    if (!isValidMappingShape(candidate?.statusMappings, Object.values(TicketStatus))) {
+        bad.push('statusMappings');
+    }
+    if (!isValidMappingShape(candidate?.priorityMappings, Object.values(TicketPriority))) {
+        bad.push('priorityMappings');
     }
 
-    return { status: 'ok', config: parsed as PersistedMappingConfig };
+    if (bad.length > 0) {
+        console.error(
+            `[sync/mappings] SystemConfig row "${MAPPING_CONFIG_KEY}" has unusable section(s): ` +
+                `${bad.join(', ')} — serving code defaults for those and keeping the rest.`,
+        );
+    }
+
+    return {
+        status: 'ok',
+        config: {
+            ...candidate,
+            ...(bad.includes('statusMappings') ? { statusMappings: undefined } : {}),
+            ...(bad.includes('priorityMappings') ? { priorityMappings: undefined } : {}),
+        } as PersistedMappingConfig,
+        invalidSections: bad,
+    };
 }
 
 /**
@@ -160,6 +172,11 @@ export async function GET() {
         // can say so instead of presenting them as the saved configuration.
         configSource: persisted.status === 'ok' ? 'persisted' : 'defaults',
         ...(persisted.status === 'corrupt' ? { configError: persisted.reason } : {}),
+        // Names the sections that fell back, so the dashboard can mark those as
+        // defaults instead of presenting them as saved settings.
+        ...(persisted.status === 'ok' && persisted.invalidSections.length > 0
+            ? { invalidSections: persisted.invalidSections }
+            : {}),
     });
 }
 
@@ -180,6 +197,15 @@ function isValidMappingShape(value: unknown, validOutpostValues: string[]): bool
 
     return Object.values(value as Record<string, unknown>).every((entries) => {
         if (!Array.isArray(entries)) return false;
+
+        // An empty per-plugin array is rejected, not accepted-as-vacuously-valid.
+        // `loadStatusMap` / `loadPriorityMap` treat `entries.length === 0` as
+        // "nothing persisted, use the hardcoded defaults" (status-map.ts:131), so
+        // saving `{ linear: [] }` would leave the dashboard showing NO mappings
+        // while the worker kept applying the Linear defaults. Same reason the
+        // empty-object case above is rejected: a save must not be able to produce
+        // a state where the UI and the engine disagree about what is in effect.
+        if (entries.length === 0) return false;
 
         return entries.every((entry) => {
             if (typeof entry !== 'object' || entry === null) return false;

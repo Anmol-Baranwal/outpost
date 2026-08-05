@@ -80,7 +80,10 @@ describe('GET /api/sync/mappings — persisted config read path', () => {
 
     // A row written by an older version of the code, or hand-edited in the DB,
     // reached the worker unvalidated because the read path only cast.
-    it('rejects a row that parses but does not match the mapping shape', async () => {
+    //
+    // Validated per section: one unusable section must not discard the other, so
+    // the good half is still served and the bad half is named.
+    it('falls back per section, keeping the valid half and naming the bad one', async () => {
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         mockSystemConfigFindUnique.mockResolvedValue({
             value: JSON.stringify({
@@ -93,9 +96,14 @@ describe('GET /api/sync/mappings — persisted config read path', () => {
 
         const body = await (await GET()).json();
 
-        expect(body.configSource).toBe('defaults');
-        expect(body.configError).toContain('shape');
-        expect(errorSpy).toHaveBeenCalled();
+        expect(body.invalidSections).toEqual(['statusMappings']);
+        // The bad section serves code defaults...
+        expect(body.statusMappings).not.toEqual({
+            linear: [{ externalStatus: 'Done', outpostStatus: 'NOT_A_STATUS' }],
+        });
+        // ...while the good one is still the admin's saved config.
+        expect(body.priorityMappings).toEqual(VALID_CONFIG.priorityMappings);
+        expect(errorSpy.mock.calls.flat().join(' ')).toContain('statusMappings');
         errorSpy.mockRestore();
     });
 });

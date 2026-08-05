@@ -280,7 +280,9 @@ describe('GET /api/sync/mappings', () => {
         mockExternalIdentityFindMany.mockResolvedValue([]);
         const saved = {
             statusMappings: { linear: [{ externalStatus: 'Custom', outpostStatus: 'OPEN' }] },
-            priorityMappings: { linear: [] },
+            priorityMappings: {
+                linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+            },
             labelRules: { linear: [] },
         };
         mockSystemConfigFindUnique.mockResolvedValue({
@@ -323,7 +325,9 @@ describe('PUT /api/sync/mappings', () => {
     it('persists a valid mapping update', async () => {
         const config = {
             statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
-            priorityMappings: { linear: [] },
+            priorityMappings: {
+                linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+            },
         };
         mockSystemConfigUpsert.mockResolvedValue({
             key: 'sync.mappingConfig',
@@ -356,10 +360,34 @@ describe('PUT /api/sync/mappings', () => {
             'http://localhost:3000/api/sync/mappings',
             {
                 statusMappings: 'garbage',
-                priorityMappings: { linear: [] },
+                priorityMappings: {
+                    linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+                },
             },
             'PUT',
         );
+        const res = await putMappings(req as never);
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
+    // An empty per-plugin array used to pass validation, but loadStatusMap and
+    // loadPriorityMap treat an empty array as "nothing persisted" and fall back to
+    // the hardcoded defaults — so saving this left the dashboard showing NO
+    // mappings while the worker kept applying Linear's defaults.
+    it('rejects an empty per-plugin mapping array', async () => {
+        const req = makeJsonRequest(
+            'http://localhost:3000/api/sync/mappings',
+            {
+                statusMappings: { linear: [] },
+                priorityMappings: {
+                    linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+                },
+            },
+            'PUT',
+        );
+
         const res = await putMappings(req as never);
 
         expect(res.status).toBe(400);
@@ -371,7 +399,9 @@ describe('PUT /api/sync/mappings', () => {
             'http://localhost:3000/api/sync/mappings',
             {
                 statusMappings: { linear: [{ externalStatus: 'X', outpostStatus: 'NOT_REAL' }] },
-                priorityMappings: { linear: [] },
+                priorityMappings: {
+                    linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+                },
             },
             'PUT',
         );
@@ -385,7 +415,7 @@ describe('PUT /api/sync/mappings', () => {
         const req = makeJsonRequest(
             'http://localhost:3000/api/sync/mappings',
             {
-                statusMappings: { linear: [] },
+                statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
                 priorityMappings: {
                     linear: [{ externalPriority: 'X', outpostPriority: 'NOT_REAL' }],
                 },
@@ -404,8 +434,10 @@ describe('PUT /api/sync/mappings', () => {
         const req = makeJsonRequest(
             'http://localhost:3000/api/sync/mappings',
             {
-                statusMappings: { linear: [] },
-                priorityMappings: { linear: [] },
+                statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
+                priorityMappings: {
+                    linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+                },
             },
             'PUT',
         );
@@ -434,8 +466,10 @@ describe('PUT /api/sync/mappings', () => {
         const req = makeJsonRequest(
             'http://localhost:3000/api/sync/mappings',
             {
-                statusMappings: { linear: [] },
-                priorityMappings: { linear: [] },
+                statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
+                priorityMappings: {
+                    linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+                },
                 labelRules: 'garbage',
             },
             'PUT',
@@ -448,8 +482,10 @@ describe('PUT /api/sync/mappings', () => {
 
     it('persists a valid labelRules update', async () => {
         const config = {
-            statusMappings: { linear: [] },
-            priorityMappings: { linear: [] },
+            statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
+            priorityMappings: {
+                linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+            },
             labelRules: { linear: [{ externalPrefix: 'Priority: ', outpostPrefix: '' }] },
         };
         mockSystemConfigUpsert.mockResolvedValue({
@@ -474,8 +510,10 @@ describe('PUT /api/sync/mappings', () => {
         const req = makeJsonRequest(
             'http://localhost:3000/api/sync/mappings',
             {
-                statusMappings: { linear: [] },
-                priorityMappings: { linear: [] },
+                statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
+                priorityMappings: {
+                    linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+                },
                 labelRules: {},
             },
             'PUT',
@@ -489,7 +527,9 @@ describe('PUT /api/sync/mappings', () => {
     it('does not mislabel a DB write failure as "Invalid request body"', async () => {
         const config = {
             statusMappings: { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] },
-            priorityMappings: { linear: [] },
+            priorityMappings: {
+                linear: [{ externalPriority: 'Urgent', outpostPriority: 'CRITICAL' }],
+            },
         };
         mockSystemConfigUpsert.mockRejectedValueOnce(new Error('db down'));
 
