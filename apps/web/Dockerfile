@@ -24,6 +24,24 @@ RUN pnpm install --frozen-lockfile
 COPY --from=pruner /app/out/full/ .
 # turbo prune omits the root tsconfig.json that packages/outpost/tsconfig.base.json extends
 COPY --from=pruner /app/tsconfig.json ./tsconfig.json
+
+# NEXT_PUBLIC_* values are inlined into the client bundle at build time, not read at
+# runtime — so they must exist during `next build` or Next bakes in `undefined`, and
+# setting them on the running service afterwards has no effect. Railway supplies service
+# variables to Dockerfile builds as build args, so each one needs an ARG here; the ARG
+# alone is not enough because Next reads process.env, hence the matching ENV. Both must
+# appear ABOVE the build step to have any effect.
+#
+# ADDING A NEW NEXT_PUBLIC_* VARIABLE REQUIRES ITS OWN ARG + ENV PAIR HERE. turbo.json's
+# wildcard covers turbo's side, but Docker has no wildcard for build args — a variable
+# without a pair below is silently baked in as `undefined`.
+#
+# No default value is given deliberately. An unset build arg makes ENV an empty string,
+# and consumers treat empty as absent (`||`, not `??`) so the application's own default
+# applies. Repeating the default here instead would put it in two places that can drift.
+ARG NEXT_PUBLIC_AUTH_PROVIDER
+ENV NEXT_PUBLIC_AUTH_PROVIDER=$NEXT_PUBLIC_AUTH_PROVIDER
+
 RUN pnpm turbo run build --filter=@copilotkit/outpost-web
 
 # ── Stage 3: production image ────────────────────────────────────────────────
@@ -54,8 +72,10 @@ ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
+# Use 127.0.0.1, not localhost: the standalone server binds IPv4 (0.0.0.0) and
+# `localhost` can resolve to IPv6 ::1 inside the container, which is refused.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:3000/api/health || exit 1
+    CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
 
 COPY --from=installer --chown=outpost:outpost /app/apps/web/start.sh ./apps/web/start.sh
 

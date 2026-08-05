@@ -6,12 +6,7 @@
  */
 
 import { TicketSource } from '../types.js';
-import type {
-    PlatformAdapter,
-    InboundMessage,
-    PlatformUser,
-    FormattedResponse,
-} from './types.js';
+import type { PlatformAdapter, InboundMessage, PlatformUser, FormattedResponse } from './types.js';
 
 export interface EmailPostmarkAdapterConfig {
     apiKey: string;
@@ -52,7 +47,7 @@ export class EmailPostmarkAdapter implements PlatformAdapter {
 
         // Check for In-Reply-To header to determine if this is a reply
         const headers = (event.Headers as Array<Record<string, string>>) ?? [];
-        const inReplyTo = headers.find(h => h.Name === 'In-Reply-To')?.Value;
+        const inReplyTo = headers.find((h) => h.Name === 'In-Reply-To')?.Value;
         const isThreadStart = !inReplyTo;
 
         // Use subject line as content identifier for threading
@@ -83,14 +78,24 @@ export class EmailPostmarkAdapter implements PlatformAdapter {
     }
 
     async postResponse(
-        _ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        _ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         _response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         throw new Error('EmailPostmarkAdapter.postResponse not yet implemented');
     }
 
     async postSystemMessage(
-        _ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        _ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         _message: string,
     ): Promise<void> {
         throw new Error('EmailPostmarkAdapter.postSystemMessage not yet implemented');

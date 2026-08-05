@@ -38,7 +38,9 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
     const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
     // Local ticket overrides for optimistic updates
-    const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<TicketDetail>>>({});
+    const [ticketOverrides, setTicketOverrides] = useState<Record<string, Partial<TicketDetail>>>(
+        {},
+    );
     const [error, setError] = useState<string | null>(null);
 
     // Fetch accounts and team members on mount
@@ -53,7 +55,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                 if (!res.ok) return [];
                 return res.json();
             })
-            .then((data) => setTeamMembers(Array.isArray(data) ? data : data.members ?? []))
+            .then((data) => setTeamMembers(Array.isArray(data) ? data : (data.members ?? [])))
             .catch(() => setTeamMembers([]));
     }, []);
 
@@ -152,20 +154,22 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: TicketStatus.CLOSED }),
-        }).then((res) => {
-            if (!res.ok) throw new Error();
-        }).catch(() => {
-            setTicketOverrides((prev) => {
-                const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
-                if (previousStatus !== undefined) {
-                    restored[ticketId].status = previousStatus;
-                } else {
-                    delete restored[ticketId].status;
-                }
-                return restored;
+        })
+            .then((res) => {
+                if (!res.ok) throw new Error();
+            })
+            .catch(() => {
+                setTicketOverrides((prev) => {
+                    const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
+                    if (previousStatus !== undefined) {
+                        restored[ticketId].status = previousStatus;
+                    } else {
+                        delete restored[ticketId].status;
+                    }
+                    return restored;
+                });
+                setError('Failed to mark ticket as done. Please try again.');
             });
-            setError('Failed to mark ticket as done. Please try again.');
-        });
     }, [ticketId]);
 
     const handleCreateTicket = useCallback(() => {
@@ -193,12 +197,16 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                 isAiGenerated: false,
                 attachments: null,
                 createdAt: new Date().toISOString(),
+                confidenceLevel: null,
             };
             setTicketOverrides((prev) => ({
                 ...prev,
                 [selectedTicket.id]: {
                     ...prev[selectedTicket.id],
-                    messages: [...(prev[selectedTicket.id]?.messages ?? selectedTicket.messages), tempMessage],
+                    messages: [
+                        ...(prev[selectedTicket.id]?.messages ?? selectedTicket.messages),
+                        tempMessage,
+                    ],
                 },
             }));
             // Persist to API
@@ -272,45 +280,50 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(patchable),
-                }).then((res) => {
-                    if (!res.ok) throw new Error();
-                }).catch(() => {
-                    setTicketOverrides((prev) => {
-                        const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
-                        for (const key of Object.keys(fields) as (keyof TicketDetail)[]) {
-                            if (previousValues && previousValues[key] !== undefined) {
-                                restored[ticketId][key] = previousValues[key] as never;
-                            } else {
-                                delete restored[ticketId][key];
+                })
+                    .then((res) => {
+                        if (!res.ok) throw new Error();
+                    })
+                    .catch(() => {
+                        setTicketOverrides((prev) => {
+                            const restored = { ...prev, [ticketId]: { ...prev[ticketId] } };
+                            for (const key of Object.keys(fields) as (keyof TicketDetail)[]) {
+                                if (previousValues && previousValues[key] !== undefined) {
+                                    restored[ticketId][key] = previousValues[key] as never;
+                                } else {
+                                    delete restored[ticketId][key];
+                                }
                             }
-                        }
-                        return restored;
+                            return restored;
+                        });
+                        setError('Failed to update ticket. Please try again.');
                     });
-                    setError('Failed to update ticket. Please try again.');
-                });
             }
         },
         [ticketId],
     );
 
-    const handleTicketCreated = useCallback((_ticket?: Record<string, unknown>) => {
-        // Re-fetch the ticket list after creation
-        const params = new URLSearchParams();
-        if (filters.search) params.set('search', filters.search);
-        if (filters.accountId) params.set('accountId', filters.accountId);
-        if (filters.assigneeId) params.set('assigneeId', filters.assigneeId);
-        for (const s of filters.status) params.append('status', s);
-        for (const s of filters.source) params.append('source', s);
-        for (const p of filters.priority) params.append('priority', p);
-        for (const t of filters.type) params.append('type', t);
-        params.set('page', '1');
-        params.set('pageSize', '50');
+    const handleTicketCreated = useCallback(
+        (_ticket?: Record<string, unknown>) => {
+            // Re-fetch the ticket list after creation
+            const params = new URLSearchParams();
+            if (filters.search) params.set('search', filters.search);
+            if (filters.accountId) params.set('accountId', filters.accountId);
+            if (filters.assigneeId) params.set('assigneeId', filters.assigneeId);
+            for (const s of filters.status) params.append('status', s);
+            for (const s of filters.source) params.append('source', s);
+            for (const p of filters.priority) params.append('priority', p);
+            for (const t of filters.type) params.append('type', t);
+            params.set('page', '1');
+            params.set('pageSize', '50');
 
-        fetch(`/api/tickets?${params.toString()}`)
-            .then((res) => res.json())
-            .then((data) => setTickets(data.tickets ?? []))
-            .catch(() => {});
-    }, [filters]);
+            fetch(`/api/tickets?${params.toString()}`)
+                .then((res) => res.json())
+                .then((data) => setTickets(data.tickets ?? []))
+                .catch(() => {});
+        },
+        [filters],
+    );
 
     useTicketShortcuts({
         focusSearch: () => searchInputRef.current?.focus(),
@@ -410,12 +423,18 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                                 <span
                                     className={cn(
                                         'text-[10px] px-1.5 py-0.5 rounded font-medium',
-                                        selectedTicket.status === TicketStatus.OPEN && 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
-                                        selectedTicket.status === TicketStatus.IN_PROGRESS && 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
-                                        selectedTicket.status === TicketStatus.RESOLVED && 'bg-muted text-muted-foreground',
-                                        selectedTicket.status === TicketStatus.CLOSED && 'bg-muted text-muted-foreground/80',
-                                        (selectedTicket.status === TicketStatus.WAITING_ON_CUSTOMER ||
-                                            selectedTicket.status === TicketStatus.WAITING_ON_TEAM) &&
+                                        selectedTicket.status === TicketStatus.OPEN &&
+                                            'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+                                        selectedTicket.status === TicketStatus.IN_PROGRESS &&
+                                            'bg-sky-500/15 text-sky-600 dark:text-sky-400',
+                                        selectedTicket.status === TicketStatus.RESOLVED &&
+                                            'bg-muted text-muted-foreground',
+                                        selectedTicket.status === TicketStatus.CLOSED &&
+                                            'bg-muted text-muted-foreground/80',
+                                        (selectedTicket.status ===
+                                            TicketStatus.WAITING_ON_CUSTOMER ||
+                                            selectedTicket.status ===
+                                                TicketStatus.WAITING_ON_TEAM) &&
                                             'bg-amber-500/15 text-amber-600 dark:text-amber-400',
                                     )}
                                 >
@@ -426,10 +445,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                                 {selectedTicket.title}
                             </h2>
                         </div>
-                        <ConversationThread
-                            messages={selectedTicket.messages}
-                            className="flex-1"
-                        />
+                        <ConversationThread messages={selectedTicket.messages} className="flex-1" />
                         <ReplyEditor
                             ref={replyEditorRef}
                             suggestedResponse={selectedTicket.suggestedResponse}
@@ -446,8 +462,10 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                             <div className="mt-4 flex flex-wrap justify-center gap-2 text-[10px] text-muted-foreground">
                                 <span className="bg-muted px-2 py-1 rounded font-mono">J</span> next
                                 <span className="bg-muted px-2 py-1 rounded font-mono">F</span> prev
-                                <span className="bg-muted px-2 py-1 rounded font-mono">/</span> search
-                                <span className="bg-muted px-2 py-1 rounded font-mono">C</span> create
+                                <span className="bg-muted px-2 py-1 rounded font-mono">/</span>{' '}
+                                search
+                                <span className="bg-muted px-2 py-1 rounded font-mono">C</span>{' '}
+                                create
                             </div>
                         </div>
                     </div>

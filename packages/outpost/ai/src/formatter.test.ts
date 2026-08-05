@@ -1,5 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { ResponseFormatter } from './formatter.js';
+import {
+    AI_DISCLAIMER,
+    AI_DISCLAIMER_ESCALATED,
+    AI_DISCLAIMER_REVIEWED,
+    ResponseFormatter,
+} from './formatter.js';
+
+describe('disclaimer copy', () => {
+    it('opens every variant with the plain AI-generated sentence', () => {
+        expect(AI_DISCLAIMER).toBe('This is an AI-generated response.');
+        expect(AI_DISCLAIMER_ESCALATED.startsWith(AI_DISCLAIMER)).toBe(true);
+        expect(AI_DISCLAIMER_REVIEWED.startsWith(AI_DISCLAIMER)).toBe(true);
+    });
+
+    it('never volunteers a judgement about the response quality', () => {
+        for (const text of [AI_DISCLAIMER, AI_DISCLAIMER_ESCALATED, AI_DISCLAIMER_REVIEWED]) {
+            expect(text).not.toMatch(/incomplete|inaccurate|may not be|unreliable/i);
+        }
+    });
+
+    it('only the escalated variant promises a follow-up in-thread', () => {
+        expect(AI_DISCLAIMER_ESCALATED).toContain("We've escalated this to our engineering team");
+        expect(AI_DISCLAIMER_REVIEWED).not.toContain('escalated');
+    });
+});
 
 describe('ResponseFormatter', () => {
     const formatter = new ResponseFormatter();
@@ -56,6 +80,16 @@ describe('ResponseFormatter', () => {
             });
 
             expect(result.text).toContain('AI-generated response');
+        });
+
+        it('never hedges about completeness on any platform', () => {
+            for (const platform of ['discord', 'github', 'slack', 'teams', 'web'] as const) {
+                const result = formatter.format('Answer text', platform, {
+                    addDisclaimer: true,
+                });
+                expect(result.text).not.toMatch(/may be incomplete|might be incomplete/i);
+                expect(result.text).toContain(AI_DISCLAIMER);
+            }
         });
 
         it('should use custom disclaimer text', () => {

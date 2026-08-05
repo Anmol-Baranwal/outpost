@@ -23,7 +23,10 @@ import type {
 const DISCORD_MAX_MESSAGE_LENGTH = 2000;
 
 /** Cached discord.js module reference — loaded once on first use. */
-let discordJsModule: { REST: new (opts: { version: string }) => DiscordREST; Routes: typeof import('discord.js').Routes } | null = null;
+let discordJsModule: {
+    REST: new (opts: { version: string }) => DiscordREST;
+    Routes: typeof import('discord.js').Routes;
+} | null = null;
 
 /**
  * Minimal interface matching the discord.js REST class methods we use.
@@ -84,7 +87,8 @@ export class DiscordAdapter implements PlatformAdapter {
 
             return {
                 platformUserId: (author?.id as string) ?? '',
-                platformUsername: (author?.tag as string) ?? (author?.username as string) ?? 'Unknown',
+                platformUsername:
+                    (author?.tag as string) ?? (author?.username as string) ?? 'Unknown',
                 content: (starter?.content as string) ?? '',
                 threadId: thread.id as string,
                 channelId: thread.parentId as string | undefined,
@@ -119,7 +123,7 @@ export class DiscordAdapter implements PlatformAdapter {
         try {
             const rest = await this.getRestClient();
             const { Routes } = await getDiscordJs();
-            const user = await rest.get(Routes.user(platformUserId)) as Record<string, unknown>;
+            const user = (await rest.get(Routes.user(platformUserId))) as Record<string, unknown>;
             return {
                 platformId: platformUserId,
                 username: (user.username as string) ?? platformUserId,
@@ -150,11 +154,18 @@ export class DiscordAdapter implements PlatformAdapter {
      * - Action buttons (response.buttons) — attaches ActionRow components to the last message
      */
     async postResponse(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         response: FormattedResponse,
-    ): Promise<void> {
+    ): Promise<string | undefined> {
         if (!ticket.sourceId) {
-            throw new Error(`Cannot post Discord response — ticket ${ticket.id} has no sourceId (thread ID)`);
+            throw new Error(
+                `Cannot post Discord response — ticket ${ticket.id} has no sourceId (thread ID)`,
+            );
         }
 
         const rest = await this.getRestClient();
@@ -162,9 +173,10 @@ export class DiscordAdapter implements PlatformAdapter {
         const threadId = ticket.sourceId;
 
         // Determine message parts: use explicit parts if provided, otherwise split the text
-        const parts = response.parts && response.parts.length > 0
-            ? response.parts
-            : this.splitMessage(response.text);
+        const parts =
+            response.parts && response.parts.length > 0
+                ? response.parts
+                : this.splitMessage(response.text);
 
         // Post all parts except the last one (without buttons)
         for (let i = 0; i < parts.length - 1; i++) {
@@ -192,17 +204,25 @@ export class DiscordAdapter implements PlatformAdapter {
         }
 
         await rest.post(Routes.channelMessages(threadId), { body });
+        return undefined;
     }
 
     /**
      * Post a system-level message (acknowledgments, status updates, errors) to a thread.
      */
     async postSystemMessage(
-        ticket: { id: string; sourceId: string | null; channel: string | null; source: TicketSource },
+        ticket: {
+            id: string;
+            sourceId: string | null;
+            channel: string | null;
+            source: TicketSource;
+        },
         message: string,
     ): Promise<void> {
         if (!ticket.sourceId) {
-            throw new Error(`Cannot post Discord system message — ticket ${ticket.id} has no sourceId (thread ID)`);
+            throw new Error(
+                `Cannot post Discord system message — ticket ${ticket.id} has no sourceId (thread ID)`,
+            );
         }
 
         const rest = await this.getRestClient();
@@ -264,9 +284,10 @@ export class DiscordAdapter implements PlatformAdapter {
         return items.map((item: unknown) => {
             const a = item as Record<string, unknown>;
             // discord.js Collection entries are [key, value] tuples
-            const attachment = Array.isArray(a) ? a[1] as Record<string, unknown> : a;
+            const attachment = Array.isArray(a) ? (a[1] as Record<string, unknown>) : a;
             return {
-                filename: (attachment.name as string) ?? (attachment.filename as string) ?? 'unknown',
+                filename:
+                    (attachment.name as string) ?? (attachment.filename as string) ?? 'unknown',
                 url: (attachment.url as string) ?? '',
                 size: attachment.size as number | undefined,
                 contentType: (attachment.contentType as string) ?? undefined,

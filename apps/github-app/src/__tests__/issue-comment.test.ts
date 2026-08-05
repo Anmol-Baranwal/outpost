@@ -44,6 +44,7 @@ vi.mock('../config.js', () => ({
         webhookSecret: 'test-secret',
         port: 3200,
         teamLogins: ['teambot', 'admin-user'],
+        allowedRepos: ['CopilotKit/CopilotKit'],
     },
 }));
 
@@ -234,5 +235,13 @@ describe('handleIssueComment', () => {
             where: { id: 'ticket-1' },
             data: { status: 'WAITING_ON_CUSTOMER' },
         });
+    });
+
+    it('ignores comments on non-allowlisted repos (e.g. CopilotKit/outpost)', async () => {
+        const event = makeEvent({ repository: { full_name: 'CopilotKit/outpost' } });
+        await handleIssueComment(event);
+
+        expect(prisma.message.create).not.toHaveBeenCalled();
+        expect(createJob).not.toHaveBeenCalled();
     });
 });

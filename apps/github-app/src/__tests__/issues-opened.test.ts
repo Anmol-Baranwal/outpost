@@ -59,6 +59,7 @@ vi.mock('../config.js', () => ({
         webhookSecret: 'test-secret',
         port: 3200,
         teamLogins: ['teambot'],
+        allowedRepos: ['CopilotKit/CopilotKit'],
     },
 }));
 
@@ -140,17 +141,13 @@ describe('handleIssueOpened', () => {
         });
     });
 
-    it('posts an acknowledgment via adapter.postSystemMessage', async () => {
+    it('does not post a ticket-created acknowledgment comment on the issue', async () => {
         const event = makeEvent();
         await handleIssueOpened(event);
 
-        expect(mockPostSystemMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                id: 'ticket-internal-id',
-                source: 'GITHUB_ISSUE',
-            }),
-            expect.stringContaining('TKT-GH01'),
-        );
+        // The internal ticket id is noise on a public issue — the AI response is
+        // the bot's only comment in the thread.
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 
     it('handles parse failure gracefully', async () => {
@@ -162,5 +159,15 @@ describe('handleIssueOpened', () => {
         // Should not create external link or call InboundHandler
         expect(prisma.ticketExternalLink.create).not.toHaveBeenCalled();
         expect(mockHandle).not.toHaveBeenCalled();
+    });
+
+    it('ignores issues on non-allowlisted repos (e.g. CopilotKit/outpost)', async () => {
+        const event = makeEvent({ repository: { full_name: 'CopilotKit/outpost' } });
+        await handleIssueOpened(event);
+
+        // No ticket created, no acknowledgment posted
+        expect(mockHandle).not.toHaveBeenCalled();
+        expect(prisma.ticketExternalLink.create).not.toHaveBeenCalled();
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 });

@@ -18,6 +18,7 @@ export function mockPrisma(): Record<string, unknown> {
             },
             user: {
                 findFirst: vi.fn(),
+                create: vi.fn(),
             },
             teamMember: {
                 findUnique: vi.fn(),

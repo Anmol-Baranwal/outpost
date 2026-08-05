@@ -18,6 +18,12 @@ Evaluate these factors:
 2. **Coverage**: Does the response address all parts of the question?
 3. **Specificity**: Is the response specific and actionable, or vague and generic?
 4. **Accuracy indicators**: Does the response cite specific features, APIs, or code patterns that exist in CopilotKit?
+5. **Groundedness**: Is every specific claim traceable to the search results above? The assistant that wrote this response could not read CopilotKit's source, reproduce the user's problem, or run any test — it only had these search results. Score LOW when the response:
+   - confirms a bug, asserts a root cause, or claims to have reproduced or tested anything
+   - names a file, CSS class, component, prop, hook, or version that does not appear in the search results
+   - hedges ("likely", "may vary") and then states the same claim as fact
+
+Specificity that is not grounded is worse than a vague answer — a confident fabrication is the failure mode this score exists to catch. Weigh groundedness above specificity when the two conflict.
 
 Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 {
@@ -27,11 +33,11 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 }`;
 
 /**
- * Independent confidence scorer that runs in parallel with response generation.
+ * Confidence scorer that runs after response generation completes.
  *
- * Uses Claude Haiku for cost-effective, fast confidence assessment. Evaluates
- * the quality of search results and generated response independently from
- * the response generator.
+ * Uses Claude Haiku for cost-effective, fast confidence assessment. Scores
+ * the quality of the search results against the actual generated response
+ * text, sequentially after the response generator has produced it.
  */
 export class ConfidenceScorer {
     private client: Anthropic;
@@ -119,7 +125,10 @@ export class ConfidenceScorer {
         searchResults: SearchResult[],
     ): string {
         const resultsText = searchResults
-            .map((r, i) => `[Result ${i + 1}] Score: ${r.score.toFixed(2)} | Title: ${r.title}\n${r.content.slice(0, 500)}`)
+            .map(
+                (r, i) =>
+                    `[Result ${i + 1}] Score: ${r.score.toFixed(2)} | Title: ${r.title}\n${r.content.slice(0, 500)}`,
+            )
             .join('\n\n');
 
         return [
@@ -137,8 +146,15 @@ export class ConfidenceScorer {
     private parseAssessment(text: string, tokenUsage: TokenUsage): ConfidenceAssessment {
         try {
             // Strip any markdown code fences
-            const cleaned = text.replace(/```json?\s*/g, '').replace(/```\s*/g, '').trim();
-            const parsed = JSON.parse(cleaned) as { score?: number; level?: string; reasoning?: string };
+            const cleaned = text
+                .replace(/```json?\s*/g, '')
+                .replace(/```\s*/g, '')
+                .trim();
+            const parsed = JSON.parse(cleaned) as {
+                score?: number;
+                level?: string;
+                reasoning?: string;
+            };
 
             const score = Math.max(0, Math.min(1, Number(parsed.score ?? 0.5)));
             const level = this.parseLevel(parsed.level) ?? classifyConfidence(score);
@@ -171,5 +187,4 @@ export class ConfidenceScorer {
         if (upper === 'LOW') return ConfidenceLevel.LOW;
         return null;
     }
-
 }

@@ -10,6 +10,8 @@ services:
             POSTGRES_DB: outpost
         volumes:
             - postgres_data:/var/lib/postgresql/data
+            # Creates the extra `pathfinder` database on first init (fresh volume only)
+            - ./scripts/db-init:/docker-entrypoint-initdb.d:ro
         healthcheck:
             test: ['CMD-SHELL', 'pg_isready -U outpost']
             interval: 5s
@@ -24,6 +26,10 @@ services:
         environment:
             PORT: 8787
             DATABASE_URL: postgresql://outpost:outpost@postgres:5432/pathfinder
+            # Bundled CopilotKit docs KB (OpenAI text-embedding-3-small)
+            PATHFINDER_CONFIG: /app/copilotkit-docs.yaml
+            # Embeddings key — set OPENAI_API_KEY in .env (compose auto-loads it)
+            OPENAI_API_KEY: ${OPENAI_API_KEY:-}
         depends_on:
             postgres:
                 condition: service_healthy
@@ -32,6 +38,11 @@ services:
         build:
             context: .
             dockerfile: apps/web/Dockerfile
+            # NEXT_PUBLIC_* must be passed as a BUILD arg, not runtime environment — Next
+            # inlines it into the client bundle during `next build`, so the `environment:`
+            # entry below has no effect on what the browser receives.
+            args:
+                NEXT_PUBLIC_AUTH_PROVIDER: ${NEXT_PUBLIC_AUTH_PROVIDER:-credentials}
         container_name: outpost-web
         ports:
             - '3000:3000'

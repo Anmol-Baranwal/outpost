@@ -58,6 +58,7 @@ vi.mock('../config.js', () => ({
         webhookSecret: 'test-secret',
         port: 3200,
         teamLogins: [],
+        allowedRepos: ['CopilotKit/CopilotKit'],
     },
 }));
 
@@ -140,18 +141,11 @@ describe('handleDiscussionCreated', () => {
         });
     });
 
-    it('posts acknowledgment via adapter.postSystemMessage with discussion node_id', async () => {
+    it('does not post a ticket-created acknowledgment comment on the discussion', async () => {
         const event = makeEvent();
         await handleDiscussionCreated(event);
 
-        expect(mockPostSystemMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                id: 'ticket-disc-id',
-                discussionNodeId: 'D_kwDOTest1234',
-                source: 'GITHUB_DISCUSSION',
-            }),
-            expect.stringContaining('TKT-DS01'),
-        );
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 
     it('handles discussions with no body gracefully', async () => {
@@ -183,5 +177,13 @@ describe('handleDiscussionCreated', () => {
         // Should still use InboundHandler (ticket creation happens there)
         expect(InboundHandler).toHaveBeenCalled();
         expect(mockHandle).toHaveBeenCalled();
+    });
+
+    it('ignores discussions on non-allowlisted repos (e.g. CopilotKit/outpost)', async () => {
+        const event = makeEvent({ repository: { full_name: 'CopilotKit/outpost' } });
+        await handleDiscussionCreated(event);
+
+        expect(mockHandle).not.toHaveBeenCalled();
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 });

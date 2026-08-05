@@ -28,6 +28,8 @@ export enum JobType {
     TRACKER_SYNC = 'TRACKER_SYNC',
     /** Periodic cleanup of old completed/dead-letter jobs and sync events */
     JOB_CLEANUP = 'JOB_CLEANUP',
+    /** Poll GitHub reactions on AI-authored comments for feedback signal */
+    GITHUB_REACTION_POLL = 'GITHUB_REACTION_POLL',
 }
 
 // ─── Payload Shapes ─────────────────────────────────────────────────────────
@@ -42,9 +44,8 @@ export interface TicketClassifyPayload {
     ticketId: string;
 }
 
-export interface SlaCheckPayload {
-    // No payload needed — runs against all open tickets
-}
+/** No payload needed — runs against all open tickets. */
+export type SlaCheckPayload = Record<string, never>;
 
 export interface EscalationPayload {
     ticketId: string;
@@ -77,9 +78,11 @@ export interface TrackerSyncPayload {
     changeData: Record<string, unknown>;
 }
 
-export interface JobCleanupPayload {
-    // No payload needed — runs on a fixed schedule
-}
+/** No payload needed — runs on a fixed schedule. */
+export type JobCleanupPayload = Record<string, never>;
+
+/** No payload needed — runs against all pending-feedback AI messages. */
+export type GithubReactionPollPayload = Record<string, never>;
 
 /** Map from JobType to its specific payload shape */
 export interface JobPayload {
@@ -92,6 +95,7 @@ export interface JobPayload {
     [JobType.HUBSPOT_SYNC]: HubSpotSyncPayload;
     [JobType.TRACKER_SYNC]: TrackerSyncPayload;
     [JobType.JOB_CLEANUP]: JobCleanupPayload;
+    [JobType.GITHUB_REACTION_POLL]: GithubReactionPollPayload;
 }
 
 // ─── Job Results ────────────────────────────────────────────────────────────

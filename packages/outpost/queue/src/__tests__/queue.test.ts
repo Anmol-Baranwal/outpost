@@ -11,11 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { JobType } from '../types.js';
-import type {
-    JobResult,
-    JobHandlerContext,
-    WorkerHealthStatus,
-} from '../types.js';
+import type { JobResult, JobHandlerContext, WorkerHealthStatus } from '../types.js';
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
 
@@ -49,13 +45,15 @@ const { Scheduler, DEFAULT_SCHEDULED_JOBS } = await import('../scheduler.js');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeJobRow(overrides: Partial<{
-    id: string;
-    type: string;
-    payload: unknown;
-    attempts: number;
-    maxAttempts: number;
-}> = {}) {
+function makeJobRow(
+    overrides: Partial<{
+        id: string;
+        type: string;
+        payload: unknown;
+        attempts: number;
+        maxAttempts: number;
+    }> = {},
+) {
     return {
         id: overrides.id ?? 'job-1',
         type: overrides.type ?? JobType.AI_RESPONSE,
@@ -414,13 +412,14 @@ describe('Scheduler', () => {
     });
 
     it('has correct default scheduled jobs', () => {
-        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(5);
+        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(6);
         const types = DEFAULT_SCHEDULED_JOBS.map((d) => d.type);
         expect(types).toContain(JobType.SLA_CHECK);
         expect(types).toContain(JobType.ONBOARDING_DIGEST);
         expect(types).toContain(JobType.ACCOUNT_SCORING);
         expect(types).toContain(JobType.HUBSPOT_SYNC);
         expect(types).toContain(JobType.JOB_CLEANUP);
+        expect(types).toContain(JobType.GITHUB_REACTION_POLL);
     });
 
     it('creates a job immediately on start if none exists', async () => {
@@ -540,8 +539,8 @@ describe('JobType enum', () => {
         expect(JobType.ONBOARDING_DIGEST).toBe('ONBOARDING_DIGEST');
     });
 
-    it('has exactly 9 job types', () => {
+    it('has exactly 10 job types', () => {
         const values = Object.values(JobType);
-        expect(values).toHaveLength(9);
+        expect(values).toHaveLength(10);
     });
 });

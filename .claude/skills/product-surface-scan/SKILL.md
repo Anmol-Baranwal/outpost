@@ -11,12 +11,23 @@ A feature can be **free-but-limited AND commercial** at the same time — **thre
 
 This skill produces, every week, the **current** authoritative list of those surfaces (they change — features get added, tiers get re-drawn) so the report never runs off a stale hand-maintained list.
 
+## HARD RULE — every claim is quote-verified against a live page this run (NO shortcuts)
+
+This report is read by the **product + engineering teams**. A false surface / tier / pricing claim makes us look bad and erodes trust. So:
+
+- **Never emit a tier, price, free-vs-paid boundary, Premium/Enterprise gating, or "coming soon" status from memory, from the baseline lists in THIS file, or from last week's snapshot.** Those are reference/diff scaffolding ONLY, and they go stale.
+- **Every such claim in your return MUST be backed by text you fetched from the live page THIS run, and you must include the exact quoted source text** (the page URL + the words on it). If you can't fetch the page, or can't find the words on it, you do **not** make the claim — record `could not verify on <page>` and omit it. A missing claim is fine; a false one is not.
+- **Report a contradiction ONLY when you hold both conflicting quotes**, each tied to its page. Never infer a conflict from a half-remembered tier. If one side can't be quoted from a live fetch this run, there is no contradiction to report.
+- **The baseline lists below are stale by design** — they were true at a past snapshot. Treat them as "what to diff against," never as "what to publish." Your return replaces them.
+
+Non-negotiable. When in doubt, fetch again or drop the claim. The orchestrator's link-review pass re-checks these against the live pages before publish.
+
 ## What it does
 
 1. **Fetch the canonical pages** (below) with `WebFetch`. If a page 404s or is unreachable, record that (don't guess) — a page going live/dead is itself a signal (e.g. `copilotkit.ai/enterprise` is currently a 404; if it goes live, flag it).
 2. **Extract the commercial surfaces + the pricing-tier caps + the free-vs-paid boundaries** from the fetched pages.
-3. **Diff against the stored snapshot** (`docs/community-signal/commercial-surfaces.json`) to detect **what changed since last week** — new named product/surface, a new premium feature, a moved free-vs-paid boundary (a cap change), a tier rename/reprice, a page appearing/disappearing.
-4. **Return** the surface list + tier table + the "changed since last week" delta + the classifier, and the updated snapshot to write back.
+3. **Diff against last week's report in Notion** — read the prior Weekly Community Signal page's 🏢 Enterprise "Surfaces this week" table + the pricing note under it (that IS last week's baseline) to detect **what changed since last week** — new named product/surface, a new premium feature, a moved free-vs-paid boundary (a cap change), a tier rename/reprice, a page appearing/disappearing. **Nothing is stored on disk** — the report lives only in Notion (see the rule in `weekly-report`).
+4. **Return** the surface list + tier table + the "changed since last week" delta + the classifier. (Nothing is written to the repo.)
 
 ## Canonical pages to scan (re-check every week)
 
@@ -41,8 +52,8 @@ Snapshot as of 2026-07-10 (source-linked in the pages above). The scan **replace
 - **Self-Hosted Enterprise Intelligence** — same platform in your own K8s/VPC/air-gapped boundary via the `copilot-intelligence` Helm chart; unlocked by a **license key** (offline validation).
 - **Threads & Persistence** — persistent server-side thread containers (full event history, resumable). Free-but-limited (200 threads / 3-day / 1 GB), paid above.
 - **CopilotKit Inspector** — real-time + historical interaction monitoring, replay, decision tracing, perf/error tracking.
-- **Premium UI components** — platform-gated UI (e.g. **Fully Headless Chat UI**); the **Angular SDK is marked Enterprise** (React SDK is free).
-- **Analytics & Self-Learning** — perf dashboard, SQL-queryable lakehouse for compliance/audit, OTLP observability, in-context RL / per-user prompt mutation (Enterprise, early access).
+- **Premium UI components** — platform-gated UI (e.g. **Fully Headless Chat UI**). **The Angular SDK is open source (MIT), same as React** — verified on /product + npm 2026-07-21; optional premium UI extras exist but the SDK itself is not paid. (A products PDF still mislabels the Angular client "Premium" — that PDF is stale.)
+- **Analytics & Self-Learning** — perf dashboard, SQL-queryable lakehouse for compliance/audit, OTLP observability, in-context RL / per-user prompt mutation. **Status: "Coming Soon"** on both /product and the Intelligence page (verified 2026-07-21) — there is no "Early Access" label; don't invent one.
 - **Enterprise security bundle** — SOC 2 Type II, SSO + RBAC, offline licensing.
 - **Support / SLA** — Dedicated Slack Support (Team+), SLA + priority bug fixes + dedicated engineering hrs + roadmap input (Enterprise).
 - **Slack & Teams integrations** — deploy agentic UI into Slack/Teams/messaging surfaces (paid product ecosystem).
@@ -55,8 +66,10 @@ Snapshot as of 2026-07-10 (source-linked in the pages above). The scan **replace
 |---|---|---|
 | **Developer** | Free forever | 1 seat · VPC/on-prem runtime only · 3-day retention · 200 threads · 1 GB multimodal · Inspector · Discord support |
 | **Pro** | $39/dev/mo (≤5 seats) | 5-day retention · 5,000 threads · 10 GB · frontend SDKs + backend connections |
-| **Team** | $500/mo (5 seats incl.) | self-hosting **with database** · 14-day retention · 25,000 threads · 100 GB · dedicated Slack support · all frameworks/integrations |
-| **Enterprise** | Custom | VPC/on-prem · unlimited threads · custom retention/storage · Analytics + Self-Learning (early access) · dedicated eng (≤5 hrs/wk) · SLA · priority bug fixes · roadmap input |
+| **Team** | **$100/dev/mo** (5 seats incl.) — verified /pricing 2026-07-21 | self-hosting **with database** · 14-day retention · 25,000 threads · 100 GB · dedicated Slack support · all frameworks/integrations |
+| **Enterprise** | Custom | VPC/on-prem · unlimited threads · custom retention/storage · Analytics + Self-Learning (**Coming Soon**) · dedicated eng (≤5 hrs/wk) · SLA · priority bug fixes · roadmap input |
+
+*(Inspector is shown across **all** tiers incl. free Developer — it is not Premium/Team-gated. Re-verify every value live each run per the HARD RULE above; do not trust this table blind.)*
 
 ## The classifier — "does this issue hit a commercial surface?"
 
@@ -83,7 +96,7 @@ Apply to every issue/thread when deciding whether it belongs in 🏢 Enterprise.
 
 ## Detecting "a feature was added"
 
-The diff is the point — leadership wants to know when the commercial product grew. Compare the fresh scan to `docs/community-signal/commercial-surfaces.json` and report any of:
+The diff is the point — leadership wants to know when the commercial product grew. Compare the fresh scan to **last week's report in Notion** (its 🏢 Enterprise "Surfaces this week" table + pricing note) and report any of:
 - **New named surface / product** (a page or a product name that wasn't there last week).
 - **New premium feature** under an existing surface (e.g. a "coming soon" that shipped, or a new Inspector capability).
 - **Moved free-vs-paid boundary** — a cap changed (threads/retention/storage/seats), a feature moved between tiers, a price changed.
@@ -100,6 +113,8 @@ A second job, for product: **do the scanned pages contradict each other?** Marke
 - **Every scanned page must be referenced** — cite the URL for each side of a contradiction so the fix target is unambiguous. Link all canonical pages in the output even when they agree (so product has the full reference set).
 - **A page-vs-page conflict is the target**, but also flag a **page-vs-reality** conflict when a maintainer/GitHub/Discord statement plainly contradicts a page (e.g. a maintainer says a component is "going fully open source" while the product/pricing page still marks it Enterprise) — tag it `page-vs-source` and link both.
 - **Be under oath — don't invent contradictions.** Quote the exact conflicting text from each page. If two pages merely describe different things, that's not a contradiction. When unsure, describe both statements and mark it `possible`.
+- **Map every claim to the actual product model before flagging — two pages describing *different scopes of the same word* is NOT a contradiction.** Read the claim in the context of how the product actually works (fetch `/product` + `/copilotkit-intelligence` + `/pricing` and reconcile them), not as two isolated strings.
+- **Known product model — do NOT re-flag (verified live 2026-07-24):** CopilotKit's **Enterprise Intelligence Platform is self-hostable.** Full-platform self-host is on the **Team self-hosted plan / custom Enterprise** (your own Kubernetes, bring-your-own-database, air-gapped supported); the **/pricing** per-tier line "VPC or On-Prem Deployment — Runtime only" on Developer/Pro means only the *runtime* deploys to your infra on those tiers. Those are **different scopes** (full-platform self-host tier vs runtime-deployment location) — the pricing page and the self-hosting doc do **not** contradict each other. Don't file this as a contradiction.
 - Each finding: `<what conflicts> · Page A: "<quote>" (<url>) · Page B: "<quote>" (<url>) · suggested source of truth`.
 
 ## Report placement — the ⚠️ Product surface contradictions category
@@ -110,31 +125,9 @@ The contradiction check gets its **own category in the report**, and **when ther
 - **When there are NONE:** don't take top space — render a single quiet line inside the 🏢 Enterprise section: *"Product pages checked for contradictions — none this week."* plus the referenced page list, so the reference set is always present.
 - This is cross-community (it's about the CopilotKit product), main page only.
 
-## Ledger — `docs/community-signal/commercial-surfaces.json`
+## No snapshot on disk — Notion is the baseline
 
-Store one snapshot per run so the next run can diff. Schema:
-
-```json
-{
-  "_comment": "Snapshot of CopilotKit commercial surfaces + pricing caps, captured at the start of each weekly report. The next run diffs against the newest entry to detect added/changed commercial features. Keep the last ~8 runs.",
-  "runs": [
-    {
-      "run_date": "2026-07-10",
-      "pages_checked": { "pricing": "ok", "copilotkit-intelligence": "ok", "product": "ok", "premium-overview": "ok", "enterprise": "404" },
-      "surfaces": ["Enterprise Intelligence Platform", "CopilotKit Cloud", "Self-Hosted Enterprise Intelligence", "Threads & Persistence", "CopilotKit Inspector", "Premium UI components (Fully Headless Chat, Angular SDK)", "Analytics & Self-Learning", "Enterprise security bundle (SOC2/SSO/RBAC)", "Support/SLA", "Slack & Teams integrations"],
-      "tiers": {
-        "Developer": { "price": "free", "threads": 200, "retention_days": 3, "storage_gb": 1, "seats": 1 },
-        "Pro": { "price": "$39/dev/mo", "threads": 5000, "retention_days": 5, "storage_gb": 10, "seats": 5 },
-        "Team": { "price": "$500/mo", "threads": 25000, "retention_days": 14, "storage_gb": 100, "seats": 5, "self_host_with_db": true },
-        "Enterprise": { "price": "custom", "threads": "unlimited", "retention_days": "custom", "storage_gb": "custom", "analytics_self_learning": "early access" }
-      },
-      "notes": "copilotkit.ai/enterprise 404s; enterprise product lives at /copilotkit-intelligence. Docs MCP had no session — facts via WebFetch."
-    }
-  ]
-}
-```
-
-Create the file on the first run if it doesn't exist. Prune to the last ~8 runs.
+**This scan writes nothing to the repo.** The report and every artifact derived from it live only in Notion (see the "report data lives only in Notion" rule in `weekly-report`). To get the week-over-week diff, read the **prior** Weekly Community Signal page in Notion — its 🏢 Enterprise "Surfaces this week" table + the pricing note under it are last week's baseline — and compare the fresh live scan against that. (Historical note: this used to persist `docs/community-signal/commercial-surfaces.json`; that snapshot was removed — report-derived data does not get committed to the codebase.)
 
 ## Output (return to the orchestrator)
 
@@ -146,7 +139,6 @@ Compact, so the orchestrator's context stays small:
 4. **Referenced pages** — the full list of scanned page URLs (always returned, so the report carries the reference set even when everything agrees).
 5. **Tier caps** — the current free-vs-paid numbers (so the report can judge whether a threads/retention/storage complaint crosses the paid boundary).
 6. **Page-reachability notes** — anything that 404'd or was unreachable.
-7. **The snapshot JSON** to write into the ledger.
 
 ## Cross-references
 

@@ -4,6 +4,9 @@
 
 import { AI_CONFIDENCE, TicketPriority, TicketType } from '@copilotkit/outpost/shared';
 import type { PlatformTarget } from '@copilotkit/outpost/shared';
+// Type-only import — erased at build time, so the types.ts ↔ groundedness.ts
+// cycle never exists at runtime.
+import type { GroundednessAssessment } from './groundedness.js';
 export { TicketPriority, TicketType } from '@copilotkit/outpost/shared';
 export type { PlatformTarget } from '@copilotkit/outpost/shared';
 
@@ -23,6 +26,16 @@ export function classifyConfidence(score: number): ConfidenceLevel {
     return ConfidenceLevel.LOW;
 }
 
+/**
+ * Highest score a suppressed (unpublishable) response may carry. Sits just below
+ * the escalation gate so a withheld answer always reads as needing a human.
+ *
+ * Lives here rather than in pipeline.ts because the generator classifies its own
+ * `confidenceLevel` against the same clamp — two places must agree on what a
+ * withheld response is worth, so they read one constant.
+ */
+export const SUPPRESSED_CONFIDENCE_CAP = AI_CONFIDENCE.ESCALATE - 0.01;
+
 export interface SearchResult {
     /** Title of the matched document or section */
     title: string;
@@ -39,20 +52,45 @@ export interface SearchResult {
 export interface GeneratedResponse {
     /** The generated response text */
     text: string;
-    /** Confidence score from 0 to 1 */
+    /**
+     * Retrieval-quality confidence from 0 to 1 — how good the sources were, NOT
+     * what the response did with them. The groundedness penalty is deliberately
+     * absent: see `groundedness` below.
+     */
     confidenceScore: number;
-    /** Classified confidence level */
+    /**
+     * Confidence in THIS response, classified from `confidenceScore` after the
+     * groundedness penalty is deducted and clamped to SUPPRESSED_CONFIDENCE_CAP
+     * when `groundedness.suppress` is set. It therefore reads lower than
+     * `classifyConfidence(confidenceScore)` for an ungrounded answer, and can never
+     * report HIGH for one the gate would withhold. The deduction is local to the
+     * classification — `confidenceScore` is left retrieval-only so the pipeline's
+     * `min()` still charges the deterministic penalty exactly once.
+     *
+     * "Exactly once" is about THIS penalty, not about groundedness overall. The
+     * LLM confidence scorer also weighs groundedness (rubric factor 5 in
+     * confidence.ts), and its score enters through the same `min()` before this
+     * deduction — so an ungrounded answer can be marked down by two independent
+     * mechanisms. That is intended as defense in depth, and
+     * MAX_GROUNDEDNESS_PENALTY bounds the deterministic half of it.
+     */
     confidenceLevel: ConfidenceLevel;
     /** Search results used as context for generation */
     sources: SearchResult[];
-    /** Whether this response should be auto-sent */
-    autoSend: boolean;
     /** Reasoning for the confidence assessment */
     reasoning: string;
     /** Token usage for cost monitoring */
     tokenUsage?: TokenUsage;
     /** End-to-end latency in milliseconds */
     latencyMs?: number;
+    /**
+     * Groundedness of `text` against `sources`, assessed once here and consumed by
+     * the pipeline. The generator does NOT apply the penalty to `confidenceScore`:
+     * the pipeline is the single place that deducts, after feedback calibration.
+     * Subtracting in both places double-counted it, since `confidenceScore` feeds
+     * the pipeline's `min()` before its own deduction.
+     */
+    groundedness?: GroundednessAssessment;
 }
 
 export interface TokenUsage {
@@ -69,6 +107,12 @@ export interface PipelineContext {
     ticketId?: string;
     /** The account domain for targeted search */
     accountDomain?: string;
+    /**
+     * The channel the question was asked in. Used so the generated response
+     * never redirects the user to the channel they're already using
+     * (e.g. "join the Discord" to someone already in Discord).
+     */
+    source?: PlatformTarget;
 }
 
 export interface PathfinderQuery {
@@ -171,6 +215,8 @@ export interface PipelineOptions {
     conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
     /** Maximum output tokens */
     maxTokens?: number;
+    /** Bounded confidence adjustment from aggregate 👍/👎 feedback (default 0). */
+    confidenceCalibration?: number;
 }
 
 export interface FormattedResponse {
@@ -185,9 +231,18 @@ export interface FormattedResponse {
 }
 
 export interface PipelineResult {
-    /** The generated response text */
+    /**
+     * The model's draft, always — including when `suppressed` is true. Internal
+     * only: it is what the human handling an escalation edits from. Never publish
+     * it to a user-facing surface; publish `formatted` instead.
+     */
     response: string;
-    /** Formatted response for the target platform */
+    /**
+     * The text to publish, formatted for the target platform. Safe by
+     * construction: when `suppressed` is true this holds SUPPRESSED_RESPONSE_TEXT
+     * rather than the draft, so a consumer that publishes it unconditionally
+     * cannot leak an ungrounded answer.
+     */
     formatted: FormattedResponse;
     /** Confidence assessment */
     confidenceLevel: ConfidenceLevel;
@@ -199,4 +254,14 @@ export interface PipelineResult {
     tokenUsage: TokenUsage;
     /** End-to-end latency in milliseconds */
     latencyMs: number;
+    /** Deterministic check of the response against its sources. */
+    groundedness: GroundednessAssessment;
+    /**
+     * True when the draft makes a claim we can't stand behind, so `formatted`
+     * carries the safe replacement instead of `response`. Mirrors
+     * `groundedness.suppress`. This is a SIGNAL, not a gate a consumer must
+     * enforce — the pipeline already withheld the text. Read it to escalate to a
+     * human, to log, or for analytics; you do not need it to post safely.
+     */
+    suppressed: boolean;
 }

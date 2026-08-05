@@ -35,6 +35,8 @@ WORKDIR /app
 COPY --from=installer --chown=outpost:outpost /app/node_modules ./node_modules
 COPY --from=installer --chown=outpost:outpost /app/apps/github-app/dist ./apps/github-app/dist
 COPY --from=installer --chown=outpost:outpost /app/apps/github-app/package.json ./apps/github-app/package.json
+# pnpm's isolated layout keeps the app's own deps here (symlinked into root .pnpm) — required at runtime.
+COPY --from=installer --chown=outpost:outpost /app/apps/github-app/node_modules ./apps/github-app/node_modules
 COPY --from=installer --chown=outpost:outpost /app/packages ./packages
 COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 

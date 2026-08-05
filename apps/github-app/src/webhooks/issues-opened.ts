@@ -4,6 +4,8 @@ import { createJob } from '@copilotkit/outpost/queue';
 import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { getOctokit } from '../lib/github-client.js';
+import { isRepoAllowed } from '../lib/repo-allowlist.js';
+import { config } from '../config.js';
 
 export async function handleIssueOpened(
     event: EmitterWebhookEvent<'issues.opened'>,
@@ -14,6 +16,13 @@ export async function handleIssueOpened(
         `[GitHub App] Issue opened: ${repository.full_name}#${issue.number} ` +
         `"${issue.title}" by ${sender.login}`,
     );
+
+    if (!isRepoAllowed(repository.full_name, config.allowedRepos)) {
+        console.log(
+            `[GitHub App] Ignoring issue on non-allowlisted repo ${repository.full_name}`,
+        );
+        return;
+    }
 
     try {
         const adapter = new GitHubPlatformAdapter({ octokit: getOctokit() });
@@ -48,17 +57,9 @@ export async function handleIssueOpened(
             },
         });
 
-        // Post acknowledgment comment on the issue
-        const ticketRef = {
-            id: result.ticketId,
-            sourceId: `${repository.full_name}#${issue.number}`,
-            channel: repository.full_name,
-            source: 'GITHUB_ISSUE' as const,
-        };
-        await adapter.postSystemMessage(
-            ticketRef as Parameters<typeof adapter.postSystemMessage>[0],
-            `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your issue...`,
-        );
+        // Intentionally no "Ticket TKT-\u2026 created" acknowledgment comment. The
+        // ticket id is internal, and the AI response lands in the same thread
+        // moments later \u2014 the ack was pure noise on a public issue.
 
         console.log(
             `[GitHub App] Created ticket ${result.displayId} for issue ${repository.full_name}#${issue.number}`,

@@ -49,6 +49,7 @@ Channels mapped per community in the `weekly-report` skill.
 
 ### Cross-skill conventions
 
+- **The report lives ONLY in Notion — never document it in the codebase.** Report content and any per-run snapshot/ledger derived from it are published to the Notion pages, not committed as files. Diff-against-last-week reads the prior Notion report, not a stored file. The one allowed repo artifact is `docs/community-signal/reddit-pulse-seen.json` (operational dedup state — seen Reddit post IDs, not report content).
 - Read-only on Discord. Never post.
 - Reports are **company-readable** (product, marketing, leadership, sales/CS, engineering) — strip orchestrator process notes.
 - Convert relative dates to absolute ISO so pages stay interpretable later.

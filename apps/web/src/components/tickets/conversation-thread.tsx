@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { MessageType } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
+import { ConfidenceBadge } from '@/components/qa/confidence-badge';
 import type { TicketMessage } from './types';
 
 interface ConversationThreadProps {
@@ -56,7 +57,11 @@ function SystemMessage({ message }: { message: TicketMessage }) {
     );
 }
 
-function AttachmentCard({ attachment }: { attachment: { name: string; url: string; size: string } }) {
+function AttachmentCard({
+    attachment,
+}: {
+    attachment: { name: string; url: string; size: string };
+}) {
     return (
         <a
             href={attachment.url}
@@ -108,7 +113,9 @@ function MessageContent({ content }: { content: string }) {
                             className="mt-2 mb-2 p-3 bg-slate-950 text-slate-100 rounded text-xs overflow-x-auto font-mono"
                         >
                             {lang && (
-                                <span className="block text-[10px] text-slate-400 mb-1 uppercase">{lang}</span>
+                                <span className="block text-[10px] text-slate-400 mb-1 uppercase">
+                                    {lang}
+                                </span>
                             )}
                             <code>{code}</code>
                         </pre>
@@ -174,18 +181,23 @@ function UserMessage({ message }: { message: TicketMessage }) {
                                 AI generated
                             </span>
                         )}
+                        {message.isAiGenerated && message.confidenceLevel && (
+                            <ConfidenceBadge level={message.confidenceLevel} />
+                        )}
                         <span className="text-[10px] text-muted-foreground">
                             {formatTimestamp(message.createdAt)}
                         </span>
                     </div>
                     <MessageContent content={message.content} />
-                    {message.attachments && Array.isArray(message.attachments) && message.attachments.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-2">
-                            {message.attachments.map((att, idx) => (
-                                <AttachmentCard key={idx} attachment={att} />
-                            ))}
-                        </div>
-                    )}
+                    {message.attachments &&
+                        Array.isArray(message.attachments) &&
+                        message.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-2">
+                                {message.attachments.map((att, idx) => (
+                                    <AttachmentCard key={idx} attachment={att} />
+                                ))}
+                            </div>
+                        )}
                 </div>
             </div>
         </div>
@@ -213,9 +225,7 @@ export function ConversationThread({ messages, className }: ConversationThreadPr
         const messageDate = new Date(message.createdAt).toDateString();
         if (messageDate !== lastDate) {
             lastDate = messageDate;
-            elements.push(
-                <DateSeparator key={`date-${messageDate}`} date={message.createdAt} />,
-            );
+            elements.push(<DateSeparator key={`date-${messageDate}`} date={message.createdAt} />);
         }
 
         if (message.type === MessageType.SYSTEM) {
@@ -226,7 +236,10 @@ export function ConversationThread({ messages, className }: ConversationThreadPr
     });
 
     return (
-        <div className={cn('flex-1 min-h-0 overflow-y-auto', className)} data-testid="conversation-thread">
+        <div
+            className={cn('flex-1 min-h-0 overflow-y-auto', className)}
+            data-testid="conversation-thread"
+        >
             {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                     No messages yet. Start the conversation below.

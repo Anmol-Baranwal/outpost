@@ -14,6 +14,7 @@
  *   - HUBSPOT_SYNC:     CRM sync
  *   - TRACKER_SYNC:     Push changes to external trackers
  *   - JOB_CLEANUP:      Periodic cleanup of old jobs and sync events
+ *   - GITHUB_REACTION_POLL: Poll GitHub reactions on AI comments (no webhook exists)
  */
 
 import http from 'node:http';
@@ -30,11 +31,16 @@ import {
     handleHubSpotSync,
     createTrackerSyncHandler,
     handleJobCleanup,
+    handleGithubReactionPoll,
 } from '@copilotkit/outpost/queue';
 import { buildSyncEngine } from './build-sync-engine.js';
 
 // ─── Build SyncEngine for TRACKER_SYNC handler ────────────────────────────
 
+// This PR moves the engine's construction into build-sync-engine.ts, which owns
+// the prisma/createJob coercion and the plugin registration that used to be
+// inline here. main's inline version is therefore dropped rather than merged;
+// handleGithubReactionPoll, added on main, is kept — it is registered below.
 const syncEngine = await buildSyncEngine();
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);
@@ -53,6 +59,7 @@ const worker = new Worker({
         [JobType.HUBSPOT_SYNC]: 1,
         [JobType.TRACKER_SYNC]: 1,
         [JobType.JOB_CLEANUP]: 1,
+        [JobType.GITHUB_REACTION_POLL]: 1,
     },
     jobTimeouts: {
         [JobType.AI_RESPONSE]: 120_000, // 2 minutes — AI pipeline is slow
@@ -71,6 +78,7 @@ worker.on(JobType.ACCOUNT_SCORING, handleAccountScoring);
 worker.on(JobType.HUBSPOT_SYNC, handleHubSpotSync);
 worker.on(JobType.TRACKER_SYNC, handleTrackerSync);
 worker.on(JobType.JOB_CLEANUP, handleJobCleanup);
+worker.on(JobType.GITHUB_REACTION_POLL, handleGithubReactionPoll);
 
 // ─── Start Scheduler ──────────────────────────────────────────────────────
 

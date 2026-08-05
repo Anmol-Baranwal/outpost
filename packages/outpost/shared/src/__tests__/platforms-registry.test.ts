@@ -80,9 +80,10 @@ describe('Platform Registry', () => {
         });
 
         it('throws descriptive error when credentials are missing for Discord', () => {
+            delete process.env.DISCORD_TOKEN;
             delete process.env.DISCORD_BOT_TOKEN;
             expect(() => getAdapter(TicketSource.DISCORD)).toThrow(
-                'Missing DISCORD_BOT_TOKEN',
+                'Missing DISCORD_TOKEN',
             );
         });
 

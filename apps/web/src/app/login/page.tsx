@@ -5,7 +5,15 @@ import { useSearchParams } from 'next/navigation';
 import { Mountain, Github, KeyRound, Shield } from 'lucide-react';
 import { Suspense, useState, useEffect } from 'react';
 
-const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? 'credentials';
+// `||` rather than `??` on purpose: this value is inlined at build time, and an unset or
+// blank build arg inlines an empty string, which `??` would accept — leaving AUTH_PROVIDER
+// as '' and rendering a login card with no sign-in control at all. Empty means "not
+// configured", so it must fall through to the default.
+//
+// This must agree with the server's AUTH_PROVIDER (see src/lib/auth.ts). The two are read
+// from different places — this one at build time, the server's at runtime — so a mismatch
+// does not fail loudly: it locks users out behind a misleading "Invalid email or password".
+const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER || 'credentials';
 
 function CredentialsForm() {
     const [email, setEmail] = useState('');

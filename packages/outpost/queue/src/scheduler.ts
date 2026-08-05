@@ -40,6 +40,12 @@ export const DEFAULT_SCHEDULED_JOBS: ScheduledJobDefinition[] = [
         intervalMs: 24 * 60 * 60 * 1000, // 24 hours
         description: 'Clean up old completed/dead-letter jobs and sync events',
     },
+    {
+        type: JobType.GITHUB_REACTION_POLL,
+        payload: {},
+        intervalMs: 24 * 60 * 60 * 1000, // 24 hours
+        description: 'Poll GitHub reactions on AI-authored comments for feedback signal',
+    },
 ];
 
 /**

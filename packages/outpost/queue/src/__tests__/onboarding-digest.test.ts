@@ -51,14 +51,17 @@ function makeMemberRow(overrides: Record<string, unknown> = {}) {
 describe('handleOnboardingDigest', () => {
     let originalDiscordToken: string | undefined;
     let originalChannelId: string | undefined;
+    let originalShadowMode: string | undefined;
 
     beforeEach(() => {
         vi.clearAllMocks();
         originalDiscordToken = process.env.DISCORD_TOKEN;
         originalChannelId = process.env.DISCORD_DIGEST_CHANNEL_ID;
+        originalShadowMode = process.env.SHADOW_MODE;
         // Default: no Discord env vars set (development fallback)
         delete process.env.DISCORD_TOKEN;
         delete process.env.DISCORD_DIGEST_CHANNEL_ID;
+        delete process.env.SHADOW_MODE;
     });
 
     afterEach(() => {
@@ -71,6 +74,11 @@ describe('handleOnboardingDigest', () => {
             process.env.DISCORD_DIGEST_CHANNEL_ID = originalChannelId;
         } else {
             delete process.env.DISCORD_DIGEST_CHANNEL_ID;
+        }
+        if (originalShadowMode !== undefined) {
+            process.env.SHADOW_MODE = originalShadowMode;
+        } else {
+            delete process.env.SHADOW_MODE;
         }
     });
 
@@ -190,6 +198,59 @@ describe('handleOnboardingDigest', () => {
         );
 
         consoleSpy.mockRestore();
+    });
+
+    it('does not post to Discord when SHADOW_MODE is enabled', async () => {
+        process.env.DISCORD_TOKEN = 'test-bot-token';
+        process.env.DISCORD_DIGEST_CHANNEL_ID = '1234567890';
+        process.env.SHADOW_MODE = 'true';
+
+        mockOnboardingMember.findMany
+            .mockResolvedValueOnce([makeMemberRow()])
+            .mockResolvedValueOnce([makeMemberRow()]);
+
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ id: 'msg-1' }),
+        });
+        vi.stubGlobal('fetch', mockFetch);
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+        const ctx = makeContext();
+        const result = await handleOnboardingDigest({ date: '2026-04-15' }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(mockFetch).not.toHaveBeenCalled();
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('Shadow mode'),
+        );
+
+        consoleSpy.mockRestore();
+        vi.unstubAllGlobals();
+    });
+
+    it('posts to Discord when SHADOW_MODE is explicitly false', async () => {
+        process.env.DISCORD_TOKEN = 'test-bot-token';
+        process.env.DISCORD_DIGEST_CHANNEL_ID = '1234567890';
+        process.env.SHADOW_MODE = 'false';
+
+        mockOnboardingMember.findMany
+            .mockResolvedValueOnce([makeMemberRow()])
+            .mockResolvedValueOnce([makeMemberRow()]);
+
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ id: 'msg-1' }),
+        });
+        vi.stubGlobal('fetch', mockFetch);
+
+        const ctx = makeContext();
+        const result = await handleOnboardingDigest({ date: '2026-04-15' }, ctx);
+
+        expect(result.success).toBe(true);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        vi.unstubAllGlobals();
     });
 
     it('throws when Discord API returns an error', async () => {

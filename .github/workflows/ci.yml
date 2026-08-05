@@ -1,10 +1,14 @@
 name: CI
 
 on:
+    # `main` is the known-good line and deploys production; `staging` is the
+    # integration line and deploys staging. Railway's deploy triggers wait for a CI
+    # check suite on the pushed commit, so both branches must run CI here — dropping
+    # one would leave its deploys waiting on a check that never arrives.
     pull_request:
-        branches: [main]
+        branches: [main, staging]
     push:
-        branches: [main]
+        branches: [main, staging]
 
 permissions:
     contents: read
@@ -18,17 +22,15 @@ jobs:
         name: Lint, Typecheck & Test
         runs-on: ubuntu-latest
         timeout-minutes: 15
-        env:
-            ESLINT_USE_FLAT_CONFIG: 'false'
 
         steps:
             - name: Checkout
-              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
 
             - name: Setup pnpm
-              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+              uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
             - name: Setup Node.js
               uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -54,8 +56,14 @@ jobs:
             - name: Build
               run: pnpm build
 
-            # Lint skipped: ESLint 9 requires flat config but repo uses legacy .eslintrc.cjs.
-            # TODO: Migrate to eslint.config.js and re-enable.
+            # Lint is NOT run here yet, even though this job is named "Lint, Typecheck &
+            # Test" and branch protection requires that check. Enabling it needs the
+            # ESLint 9 flat-config migration (this repo still uses .eslintrc.cjs, and
+            # ESLint 9 will not read it without ESLINT_USE_FLAT_CONFIG=false, which does
+            # not survive turbo's environment sanitization). That migration also changes
+            # lint resolution for editors, per-package invocations, and apps/web's
+            # separate Next config, so it is being landed as its own PR where those
+            # effects can be verified in isolation rather than bundled here.
 
             - name: Typecheck
               run: pnpm typecheck

@@ -4,6 +4,8 @@ import { createJob } from '@copilotkit/outpost/queue';
 import { InboundHandler, GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { getOctokit } from '../lib/github-client.js';
+import { isRepoAllowed } from '../lib/repo-allowlist.js';
+import { config } from '../config.js';
 
 export async function handleDiscussionCreated(
     event: EmitterWebhookEvent<'discussion.created'>,
@@ -14,6 +16,13 @@ export async function handleDiscussionCreated(
         `[GitHub App] Discussion created: ${repository.full_name} ` +
         `"${discussion.title}" by ${sender.login}`,
     );
+
+    if (!isRepoAllowed(repository.full_name, config.allowedRepos)) {
+        console.log(
+            `[GitHub App] Ignoring discussion on non-allowlisted repo ${repository.full_name}`,
+        );
+        return;
+    }
 
     try {
         const adapter = new GitHubPlatformAdapter({ octokit: getOctokit() });
@@ -48,19 +57,8 @@ export async function handleDiscussionCreated(
             },
         });
 
-        // Post acknowledgment comment on the discussion
-        // Store the discussion node_id on the ticket ref for routing
-        const ticketRef = {
-            id: result.ticketId,
-            sourceId: `${repository.full_name}#${discussion.number}`,
-            channel: repository.full_name,
-            source: 'GITHUB_DISCUSSION' as const,
-            discussionNodeId: discussion.node_id,
-        };
-        await adapter.postSystemMessage(
-            ticketRef as Parameters<typeof adapter.postSystemMessage>[0],
-            `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your question...`,
-        );
+        // Intentionally no "Ticket TKT-\u2026 created" acknowledgment comment \u2014 see
+        // the matching note in issues-opened.ts.
 
         console.log(
             `[GitHub App] Created ticket ${result.displayId} for discussion "${discussion.title}"`,

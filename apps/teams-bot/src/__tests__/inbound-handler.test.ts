@@ -23,6 +23,7 @@ function makePrisma(): PrismaLike {
         },
         user: {
             findFirst: vi.fn().mockResolvedValue(null),
+            create: vi.fn().mockResolvedValue({ id: 'user-1' }),
         },
         teamMember: {
             findUnique: vi.fn().mockResolvedValue(null),

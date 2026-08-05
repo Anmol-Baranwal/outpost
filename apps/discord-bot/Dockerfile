@@ -35,6 +35,9 @@ WORKDIR /app
 COPY --from=installer --chown=outpost:outpost /app/node_modules ./node_modules
 COPY --from=installer --chown=outpost:outpost /app/apps/discord-bot/dist ./apps/discord-bot/dist
 COPY --from=installer --chown=outpost:outpost /app/apps/discord-bot/package.json ./apps/discord-bot/package.json
+# pnpm's isolated layout puts the bot's own deps (e.g. discord.js) here, symlinked
+# into the root .pnpm store — must be copied or runtime fails with ERR_MODULE_NOT_FOUND.
+COPY --from=installer --chown=outpost:outpost /app/apps/discord-bot/node_modules ./apps/discord-bot/node_modules
 COPY --from=installer --chown=outpost:outpost /app/packages ./packages
 COPY --from=installer --chown=outpost:outpost /app/package.json ./package.json
 

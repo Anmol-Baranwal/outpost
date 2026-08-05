@@ -3,6 +3,22 @@ import { GitHubPlatformAdapter } from '../platforms/github.js';
 import type { GitHubOctokitLike } from '../platforms/github.js';
 import { TicketSource } from '../types.js';
 
+// Mock the Octokit SDK so the adapter can build a client from App credentials
+// without performing real GitHub auth. The injected-instance tests below never
+// hit `new Octokit`, so this only affects the credential-construction tests.
+const { builtOctokit } = vi.hoisted(() => ({
+    builtOctokit: {
+        issues: { createComment: vi.fn() },
+        graphql: vi.fn(),
+    },
+}));
+vi.mock('@octokit/rest', () => ({
+    Octokit: vi.fn(function () {
+        return builtOctokit;
+    }),
+}));
+vi.mock('@octokit/auth-app', () => ({ createAppAuth: vi.fn() }));
+
 // ── Mock Octokit ──────────────────────────────────────────────────────────
 
 function mockOctokit(): GitHubOctokitLike {
@@ -57,32 +73,39 @@ describe('GitHubPlatformAdapter', () => {
                 sender: { login: 'user123', id: 999, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'user123',
-                platformUsername: 'user123',
-                content: 'It crashes on init',
-                threadId: 'CopilotKit/CopilotKit#42',
-                channelId: 'CopilotKit/CopilotKit',
-                source: TicketSource.GITHUB_ISSUE,
-                isThreadStart: true,
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'user123',
+                    platformUsername: 'user123',
+                    content: 'It crashes on init',
+                    threadId: 'CopilotKit/CopilotKit#42',
+                    channelId: 'CopilotKit/CopilotKit',
+                    source: TicketSource.GITHUB_ISSUE,
+                    isThreadStart: true,
+                }),
+            );
         });
 
         it('parses issue_comment.created into a follow-up InboundMessage', () => {
             const result = adapter.parseInboundEvent({
                 action: 'created',
                 comment: { id: 100, body: 'Still broken' },
-                issue: { number: 42, html_url: 'https://github.com/CopilotKit/CopilotKit/issues/42' },
+                issue: {
+                    number: 42,
+                    html_url: 'https://github.com/CopilotKit/CopilotKit/issues/42',
+                },
                 repository: { full_name: 'CopilotKit/CopilotKit' },
                 sender: { login: 'user123', id: 999, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'user123',
-                content: 'Still broken',
-                source: TicketSource.GITHUB_ISSUE,
-                isThreadStart: false,
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'user123',
+                    content: 'Still broken',
+                    source: TicketSource.GITHUB_ISSUE,
+                    isThreadStart: false,
+                }),
+            );
         });
 
         it('parses discussion.created into a new InboundMessage', () => {
@@ -99,14 +122,16 @@ describe('GitHubPlatformAdapter', () => {
                 sender: { login: 'asker', id: 888, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'asker',
-                content: 'Help please',
-                source: TicketSource.GITHUB_DISCUSSION,
-                isThreadStart: true,
-                threadId: 'CopilotKit/CopilotKit#7',
-                channelId: 'CopilotKit/CopilotKit',
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'asker',
+                    content: 'Help please',
+                    source: TicketSource.GITHUB_DISCUSSION,
+                    isThreadStart: true,
+                    threadId: 'CopilotKit/CopilotKit#7',
+                    channelId: 'CopilotKit/CopilotKit',
+                }),
+            );
         });
 
         it('parses discussion_comment.created into a follow-up InboundMessage', () => {
@@ -122,12 +147,14 @@ describe('GitHubPlatformAdapter', () => {
                 sender: { login: 'another', id: 111, type: 'User' },
             });
 
-            expect(result).toEqual(expect.objectContaining({
-                platformUserId: 'another',
-                content: 'Me too',
-                source: TicketSource.GITHUB_DISCUSSION,
-                isThreadStart: false,
-            }));
+            expect(result).toEqual(
+                expect.objectContaining({
+                    platformUserId: 'another',
+                    content: 'Me too',
+                    source: TicketSource.GITHUB_DISCUSSION,
+                    isThreadStart: false,
+                }),
+            );
         });
 
         it('returns a minimal InboundMessage for unknown event types', () => {
@@ -246,14 +273,27 @@ describe('GitHubPlatformAdapter', () => {
 
         it('throws for invalid sourceId format', async () => {
             const ticket = makeTicket({ sourceId: 'bad-format' });
-            await expect(adapter.postResponse(ticket, { text: 'Answer' }))
-                .rejects.toThrow('Invalid GitHub sourceId');
+            await expect(adapter.postResponse(ticket, { text: 'Answer' })).rejects.toThrow(
+                'Invalid GitHub sourceId',
+            );
         });
 
         it('throws when sourceId is null', async () => {
             const ticket = makeTicket({ sourceId: null });
-            await expect(adapter.postResponse(ticket, { text: 'Answer' }))
-                .rejects.toThrow('no sourceId');
+            await expect(adapter.postResponse(ticket, { text: 'Answer' })).rejects.toThrow(
+                'no sourceId',
+            );
+        });
+
+        it('returns the created comment ID', async () => {
+            vi.mocked(octokit.issues.createComment).mockResolvedValueOnce({
+                data: { id: 999888 },
+            });
+            const ticket = makeTicket();
+
+            const result = await adapter.postResponse(ticket, { text: 'Answer' });
+
+            expect(result).toBe('999888');
         });
     });
 
@@ -299,6 +339,70 @@ describe('GitHubPlatformAdapter', () => {
                     discussionId: 'D_kwDOAbc',
                     body: 'Ticket created',
                 }),
+            );
+        });
+    });
+
+    // ── App-credential Octokit construction (no injected instance) ────
+    // This is the path the shared registry / worker uses: it passes App
+    // credentials, not a pre-built Octokit. Regression for GH post-back failing
+    // with "No Octokit instance available".
+
+    describe('App-credential Octokit construction', () => {
+        beforeEach(() => {
+            builtOctokit.issues.createComment.mockReset();
+            builtOctokit.issues.createComment.mockResolvedValue({ data: { id: 55555 } });
+        });
+
+        it('builds an authenticated Octokit from App creds when no instance is injected', async () => {
+            const { Octokit } = await import('@octokit/rest');
+            const { createAppAuth } = await import('@octokit/auth-app');
+            vi.mocked(Octokit).mockClear();
+
+            const credAdapter = new GitHubPlatformAdapter({
+                appId: '12345',
+                privateKey: 'PEM-KEY',
+                installationId: 67890,
+            });
+
+            const result = await credAdapter.postResponse(makeTicket(), { text: 'Answer' });
+
+            expect(Octokit).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    authStrategy: createAppAuth,
+                    auth: { appId: '12345', privateKey: 'PEM-KEY', installationId: 67890 },
+                }),
+            );
+            expect(builtOctokit.issues.createComment).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    owner: 'CopilotKit',
+                    repo: 'CopilotKit',
+                    issue_number: 42,
+                    body: expect.stringContaining('Answer'),
+                }),
+            );
+            expect(result).toBe('55555');
+        });
+
+        it('builds the Octokit only once (cached across calls)', async () => {
+            const { Octokit } = await import('@octokit/rest');
+            vi.mocked(Octokit).mockClear();
+
+            const credAdapter = new GitHubPlatformAdapter({
+                appId: '1',
+                privateKey: 'k',
+                installationId: 2,
+            });
+            await credAdapter.postResponse(makeTicket(), { text: 'a' });
+            await credAdapter.postResponse(makeTicket(), { text: 'b' });
+
+            expect(Octokit).toHaveBeenCalledTimes(1);
+        });
+
+        it('throws when neither an instance nor complete App credentials are provided', async () => {
+            const bare = new GitHubPlatformAdapter({});
+            await expect(bare.postResponse(makeTicket(), { text: 'x' })).rejects.toThrow(
+                /incomplete App credentials/,
             );
         });
     });
