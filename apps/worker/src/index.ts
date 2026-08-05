@@ -41,6 +41,20 @@ import { buildSyncEngine } from './build-sync-engine.js';
 // the prisma/createJob coercion and the plugin registration that used to be
 // inline here. main's inline version is therefore dropped rather than merged;
 // handleGithubReactionPoll, added on main, is kept — it is registered below.
+//
+// BOOT SEMANTICS — deliberate change. This is a top-level await that performs
+// three database reads (the persisted status / priority / label mapping configs)
+// before this module finishes evaluating. If the database is unreachable at boot
+// the import throws, so the process exits BEFORE the health server below starts
+// listening: the container crash-loops with no /health at all rather than coming
+// up and reporting itself degraded.
+//
+// Fail-fast is the intent — a worker running with silently-defaulted mappings is
+// worse than one that is visibly down, since TRACKER_SYNC would then write wrong
+// statuses to Linear. Railway's restart policy is the retry mechanism. Note this
+// interacts with the /health honesty follow-up (#138): once /health reflects
+// worker state, a degraded-but-listening mode becomes a real option and this
+// decision is worth revisiting.
 const syncEngine = await buildSyncEngine();
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);

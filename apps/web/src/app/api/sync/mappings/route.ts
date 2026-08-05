@@ -68,14 +68,59 @@ interface PersistedMappingConfig {
     labelRules?: typeof DEFAULT_LABEL_RULES;
 }
 
-async function readPersistedConfig(): Promise<PersistedMappingConfig | null> {
+/**
+ * Outcome of reading the persisted mapping config.
+ *
+ * `absent` and `corrupt` are deliberately distinct. Collapsing both to null made
+ * a row that exists but cannot be used indistinguishable from "never configured":
+ * GET served the code defaults, the dashboard rendered them as if they were the
+ * saved settings, and an admin's configuration appeared to silently revert with
+ * nothing in the logs. This endpoint exists partly because the old one accepted
+ * edits and threw them away — the same failure shape must not return on the read
+ * path.
+ */
+type PersistedConfigRead =
+    | { status: 'absent' }
+    | { status: 'corrupt'; reason: string }
+    | { status: 'ok'; config: PersistedMappingConfig };
+
+async function readPersistedConfig(): Promise<PersistedConfigRead> {
     const row = await prisma.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
-    if (!row) return null;
+    if (!row) return { status: 'absent' };
+
+    let parsed: unknown;
     try {
-        return JSON.parse(row.value) as PersistedMappingConfig;
-    } catch {
-        return null;
+        parsed = JSON.parse(row.value);
+    } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        console.error(
+            `[sync/mappings] SystemConfig row "${MAPPING_CONFIG_KEY}" is not valid JSON — ` +
+                `serving code defaults and IGNORING the persisted config: ${reason}`,
+        );
+        return { status: 'corrupt', reason: 'row is not valid JSON' };
     }
+
+    // The PUT path validates before writing, but a row written by an older
+    // version of this code — or hand-edited in the database — reaches the worker
+    // unvalidated. Re-validate on read rather than trusting the cast.
+    if (
+        !isValidMappingShape(
+            (parsed as PersistedMappingConfig)?.statusMappings,
+            Object.values(TicketStatus),
+        ) ||
+        !isValidMappingShape(
+            (parsed as PersistedMappingConfig)?.priorityMappings,
+            Object.values(TicketPriority),
+        )
+    ) {
+        console.error(
+            `[sync/mappings] SystemConfig row "${MAPPING_CONFIG_KEY}" parsed but does not match the ` +
+                'expected mapping shape — serving code defaults and IGNORING the persisted config.',
+        );
+        return { status: 'corrupt', reason: 'row does not match the expected mapping shape' };
+    }
+
+    return { status: 'ok', config: parsed as PersistedMappingConfig };
 }
 
 /**
@@ -104,12 +149,17 @@ export async function GET() {
     }));
 
     const persisted = await readPersistedConfig();
+    const config = persisted.status === 'ok' ? persisted.config : null;
 
     return NextResponse.json({
-        statusMappings: persisted?.statusMappings ?? DEFAULT_STATUS_MAPPINGS,
-        priorityMappings: persisted?.priorityMappings ?? DEFAULT_PRIORITY_MAPPINGS,
+        statusMappings: config?.statusMappings ?? DEFAULT_STATUS_MAPPINGS,
+        priorityMappings: config?.priorityMappings ?? DEFAULT_PRIORITY_MAPPINGS,
         identityMappings,
-        labelRules: persisted?.labelRules ?? DEFAULT_LABEL_RULES,
+        labelRules: config?.labelRules ?? DEFAULT_LABEL_RULES,
+        // Tells the caller these ARE the code defaults and why, so the dashboard
+        // can say so instead of presenting them as the saved configuration.
+        configSource: persisted.status === 'ok' ? 'persisted' : 'defaults',
+        ...(persisted.status === 'corrupt' ? { configError: persisted.reason } : {}),
     });
 }
 
