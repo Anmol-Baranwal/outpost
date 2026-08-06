@@ -26,16 +26,33 @@ const DEFAULT_STATUS_MAPPINGS: Record<
     ],
 };
 
+/**
+ * Priority mapping defaults.
+ *
+ * `externalPriority` MUST be the value the adapter actually receives, because the
+ * dashboard PUTs back whatever GET served — so anything cosmetic in this key gets
+ * persisted as a real lookup key and silently stops matching.
+ *
+ * For Linear that is the raw numeric priority: `LinearAdapter` maps with
+ * `String(data.priority ?? '0')` (adapters/linear.ts:138) and
+ * `createLinearPriorityMap()` is keyed '0'-'4' (priority-map.ts:71). These keys
+ * previously read '0 (None)'-'4 (Low)', which no inbound webhook could ever
+ * match: one save from the dashboard persisted a PriorityMap that matched nothing
+ * and every inbound Linear priority silently fell through to MEDIUM.
+ *
+ * Human-readable text belongs in `label`, which is display-only — the editor
+ * renders it and the loaders ignore it.
+ */
 const DEFAULT_PRIORITY_MAPPINGS: Record<
     string,
-    Array<{ externalPriority: string; outpostPriority: string }>
+    Array<{ externalPriority: string; outpostPriority: string; label?: string }>
 > = {
     linear: [
-        { externalPriority: '0 (None)', outpostPriority: 'MEDIUM' },
-        { externalPriority: '1 (Urgent)', outpostPriority: 'CRITICAL' },
-        { externalPriority: '2 (High)', outpostPriority: 'HIGH' },
-        { externalPriority: '3 (Medium)', outpostPriority: 'MEDIUM' },
-        { externalPriority: '4 (Low)', outpostPriority: 'LOW' },
+        { externalPriority: '0', outpostPriority: 'MEDIUM', label: 'None' },
+        { externalPriority: '1', outpostPriority: 'CRITICAL', label: 'Urgent' },
+        { externalPriority: '2', outpostPriority: 'HIGH', label: 'High' },
+        { externalPriority: '3', outpostPriority: 'MEDIUM', label: 'Medium' },
+        { externalPriority: '4', outpostPriority: 'LOW', label: 'Low' },
     ],
     github: [
         { externalPriority: 'critical', outpostPriority: 'CRITICAL' },
@@ -63,16 +80,26 @@ const DEFAULT_LABEL_RULES: Record<
 const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
 
 interface PersistedMappingConfig {
-    statusMappings: typeof DEFAULT_STATUS_MAPPINGS;
-    priorityMappings: typeof DEFAULT_PRIORITY_MAPPINGS;
+    // Optional because the read path strips any section that fails validation and
+    // lets the caller fall back per section. Previously these were non-optional
+    // and the strip was a type assertion over a field the type said was always
+    // present — it worked only because every reader used `?? DEFAULT`.
+    statusMappings?: typeof DEFAULT_STATUS_MAPPINGS;
+    priorityMappings?: typeof DEFAULT_PRIORITY_MAPPINGS;
     labelRules?: typeof DEFAULT_LABEL_RULES;
 }
 
 /**
  * Outcome of reading the persisted mapping config.
  *
- * `absent` and `corrupt` are deliberately distinct. Collapsing both to null made
- * a row that exists but cannot be used indistinguishable from "never configured":
+ * `absent` and `corrupt` are deliberately distinct. `corrupt` covers a row whose
+ * JSON does not parse; a row that parses but whose SECTIONS fail validation comes
+ * back as `ok` with those sections stripped and named in `invalidSections`, so the
+ * good half survives. Callers decide "am I showing saved settings or defaults?"
+ * from whether anything survived, not from `status` alone.
+ *
+ * Collapsing everything to null made a row that exists but cannot be used
+ * indistinguishable from "never configured":
  * GET served the code defaults, the dashboard rendered them as if they were the
  * saved settings, and an admin's configuration appeared to silently revert with
  * nothing in the logs. This endpoint exists partly because the old one accepted
@@ -110,10 +137,24 @@ async function readPersistedConfig(): Promise<PersistedConfigRead> {
     const candidate = parsed as PersistedMappingConfig;
     const bad: string[] = [];
 
-    if (!isValidMappingShape(candidate?.statusMappings, Object.values(TicketStatus))) {
+    if (
+        !isValidMappingShape(
+            candidate?.statusMappings,
+            Object.values(TicketStatus),
+            'externalStatus',
+            'outpostStatus',
+        )
+    ) {
         bad.push('statusMappings');
     }
-    if (!isValidMappingShape(candidate?.priorityMappings, Object.values(TicketPriority))) {
+    if (
+        !isValidMappingShape(
+            candidate?.priorityMappings,
+            Object.values(TicketPriority),
+            'externalPriority',
+            'outpostPriority',
+        )
+    ) {
         bad.push('priorityMappings');
     }
 
@@ -124,15 +165,11 @@ async function readPersistedConfig(): Promise<PersistedConfigRead> {
         );
     }
 
-    return {
-        status: 'ok',
-        config: {
-            ...candidate,
-            ...(bad.includes('statusMappings') ? { statusMappings: undefined } : {}),
-            ...(bad.includes('priorityMappings') ? { priorityMappings: undefined } : {}),
-        } as PersistedMappingConfig,
-        invalidSections: bad,
-    };
+    const usable: PersistedMappingConfig = { ...candidate };
+    if (bad.includes('statusMappings')) delete usable.statusMappings;
+    if (bad.includes('priorityMappings')) delete usable.priorityMappings;
+
+    return { status: 'ok', config: usable, invalidSections: bad };
 }
 
 /**
@@ -162,21 +199,29 @@ export async function GET() {
 
     const persisted = await readPersistedConfig();
     const config = persisted.status === 'ok' ? persisted.config : null;
+    const invalidSections = persisted.status === 'ok' ? persisted.invalidSections : [];
+
+    // 'persisted' means at least one saved section survived validation. Deriving
+    // it from `status === 'ok'` alone was wrong: a row whose JSON parsed but whose
+    // every section failed reported 'persisted' with no configError, which is
+    // precisely the "defaults presented as saved settings" case this field exists
+    // to prevent.
+    const anythingPersisted =
+        persisted.status === 'ok' &&
+        (config?.statusMappings !== undefined ||
+            config?.priorityMappings !== undefined ||
+            config?.labelRules !== undefined);
 
     return NextResponse.json({
         statusMappings: config?.statusMappings ?? DEFAULT_STATUS_MAPPINGS,
         priorityMappings: config?.priorityMappings ?? DEFAULT_PRIORITY_MAPPINGS,
         identityMappings,
         labelRules: config?.labelRules ?? DEFAULT_LABEL_RULES,
-        // Tells the caller these ARE the code defaults and why, so the dashboard
-        // can say so instead of presenting them as the saved configuration.
-        configSource: persisted.status === 'ok' ? 'persisted' : 'defaults',
+        configSource: anythingPersisted ? 'persisted' : 'defaults',
         ...(persisted.status === 'corrupt' ? { configError: persisted.reason } : {}),
-        // Names the sections that fell back, so the dashboard can mark those as
-        // defaults instead of presenting them as saved settings.
-        ...(persisted.status === 'ok' && persisted.invalidSections.length > 0
-            ? { invalidSections: persisted.invalidSections }
-            : {}),
+        // Names the sections serving code defaults, so the dashboard can mark
+        // those rather than presenting them as saved settings.
+        ...(invalidSections.length > 0 ? { invalidSections } : {}),
     });
 }
 
@@ -186,7 +231,12 @@ export async function GET() {
  * `{ externalStatus: string; outpostStatus: <one of validOutpostValues> }`
  * (or the priority equivalent, keyed `externalPriority`/`outpostPriority`).
  */
-function isValidMappingShape(value: unknown, validOutpostValues: string[]): boolean {
+function isValidMappingShape(
+    value: unknown,
+    validOutpostValues: string[],
+    externalKey: 'externalStatus' | 'externalPriority' = 'externalStatus',
+    outpostKey: 'outpostStatus' | 'outpostPriority' = 'outpostStatus',
+): boolean {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return false;
     }
@@ -210,13 +260,23 @@ function isValidMappingShape(value: unknown, validOutpostValues: string[]): bool
         return entries.every((entry) => {
             if (typeof entry !== 'object' || entry === null) return false;
             const record = entry as Record<string, unknown>;
-            const externalKey = 'externalStatus' in record ? 'externalStatus' : 'externalPriority';
-            const outpostKey = 'externalStatus' in record ? 'outpostStatus' : 'outpostPriority';
+
+            // Validate against the key pair this SECTION requires, not whichever
+            // key the entry happens to carry. Picking the pair from the entry let
+            // a priority-shaped row sit inside statusMappings and pass PUT, only
+            // for loadStatusMap to drop it for having no externalStatus — the
+            // accept-then-discard behaviour this endpoint exists to remove, moved
+            // one layer down.
+            const external = record[externalKey];
+            const outpost = record[outpostKey];
 
             return (
-                typeof record[externalKey] === 'string' &&
-                typeof record[outpostKey] === 'string' &&
-                validOutpostValues.includes(record[outpostKey] as string)
+                typeof external === 'string' &&
+                // Non-blank: the loaders test truthiness, so '' would pass here
+                // and then be discarded there.
+                external.trim().length > 0 &&
+                typeof outpost === 'string' &&
+                validOutpostValues.includes(outpost)
             );
         });
     });
@@ -277,14 +337,28 @@ export async function PUT(request: NextRequest) {
         );
     }
 
-    if (!isValidMappingShape(body.statusMappings, Object.values(TicketStatus))) {
+    if (
+        !isValidMappingShape(
+            body.statusMappings,
+            Object.values(TicketStatus),
+            'externalStatus',
+            'outpostStatus',
+        )
+    ) {
         return NextResponse.json(
             { error: 'statusMappings has invalid shape or unknown outpostStatus value' },
             { status: 400 },
         );
     }
 
-    if (!isValidMappingShape(body.priorityMappings, Object.values(TicketPriority))) {
+    if (
+        !isValidMappingShape(
+            body.priorityMappings,
+            Object.values(TicketPriority),
+            'externalPriority',
+            'outpostPriority',
+        )
+    ) {
         return NextResponse.json(
             { error: 'priorityMappings has invalid shape or unknown outpostPriority value' },
             { status: 400 },

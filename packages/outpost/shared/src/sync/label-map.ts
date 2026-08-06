@@ -30,9 +30,17 @@ export class LabelMapper {
 
     constructor(config: LabelMapperConfig) {
         this.rules = config.rules;
-        this.excludeSet = new Set(
-            (config.exclude ?? []).map((l) => l.toLowerCase()),
-        );
+        this.excludeSet = new Set((config.exclude ?? []).map((l) => l.toLowerCase()));
+    }
+
+    /**
+     * The labels this mapper excludes, lowercased.
+     *
+     * Exposed so a mapper rebuilt from persisted config can inherit the factory's
+     * exclusions instead of silently dropping them.
+     */
+    getExcludeList(): string[] {
+        return [...this.excludeSet];
     }
 
     /**
@@ -186,12 +194,19 @@ export async function loadLabelMapper(
 
     const rules: LabelPrefixRule[] = [];
     for (const entry of entries) {
-        if (
-            typeof entry?.externalPrefix === 'string' &&
-            typeof entry?.outpostPrefix === 'string'
-        ) {
-            rules.push({ externalPrefix: entry.externalPrefix, outpostPrefix: entry.outpostPrefix });
+        if (typeof entry?.externalPrefix === 'string' && typeof entry?.outpostPrefix === 'string') {
+            rules.push({
+                externalPrefix: entry.externalPrefix,
+                outpostPrefix: entry.outpostPrefix,
+            });
         }
     }
-    return rules.length > 0 ? new LabelMapper({ rules }) : fallback;
+    if (rules.length === 0) return fallback;
+
+    // Carry the factory's `exclude` list across. Persisting only `rules` meant the
+    // first save silently dropped GitHub's wontfix/duplicate/invalid exclusions —
+    // the operator changed a prefix and lost label filtering with nothing logged.
+    // The persisted shape has no `exclude` field yet, so the factory default is
+    // the authority; when it gains one, prefer the persisted value here.
+    return new LabelMapper({ rules, exclude: fallback.getExcludeList() });
 }

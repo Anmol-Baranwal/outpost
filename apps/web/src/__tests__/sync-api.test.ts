@@ -616,7 +616,9 @@ describe('POST /api/sync/force', () => {
         expect(body).toEqual({ queued: 1, jobs: 2 });
         expect(mockTicketExternalLinkFindMany).toHaveBeenCalledWith({
             where: { plugin: 'linear', ticketId: 't-1' },
-            include: { ticket: true },
+            // Narrowed from `include: { ticket: true }`: the route only reads
+            // id/status/priority, so it no longer pulls whole ticket rows.
+            select: { ticket: { select: { id: true, status: true, priority: true } } },
         });
     });
 

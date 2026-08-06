@@ -47,15 +47,17 @@ export async function POST(request: NextRequest) {
 
     const links = await prisma.ticketExternalLink.findMany({
         where: ticketId ? { plugin, ticketId } : { plugin },
-        include: { ticket: true },
+        // Only the three columns the payloads use, not whole ticket rows.
+        select: { ticket: { select: { id: true, status: true, priority: true } } },
     });
 
-    // Enqueued in parallel rather than 2xN sequential round-trips: a plugin with
-    // many linked tickets made this a long chain that could brush the route
-    // timeout on a large workspace.
+    // Enqueued in BOUNDED batches. Sequential 2xN round-trips could brush the
+    // route timeout on a large workspace; an unbounded Promise.all over 2N inserts
+    // just trades that for Prisma pool-acquisition timeouts, which is the same
+    // outage with a less obvious error. Chunks keep both bounded.
     //
-    // Promise.all, NOT allSettled: a failed enqueue must still propagate so the
-    // route 500s. That behaviour is deliberate and pinned by
+    // Promise.all within each chunk, NOT allSettled: a failed enqueue must still
+    // propagate so the route 500s. That is deliberate and pinned by
     // sync-api.test.ts ("does not mislabel a mid-loop DB/queue error") — a DB or
     // queue failure disguised as a 4xx was the bug this endpoint's error handling
     // was narrowed to fix.
@@ -63,27 +65,36 @@ export async function POST(request: NextRequest) {
     // This operation is therefore NOT atomic, by conscious choice: if one insert
     // fails, jobs already enqueued stay enqueued and a retry re-enqueues from
     // scratch, producing duplicate TRACKER_SYNC jobs. Acceptable here because the
-    // handler is idempotent in effect (it pushes current ticket state, so a
-    // duplicate write is a no-op) and this is a manual admin action, not an
-    // automated path.
-    const jobs = (
+    // handler pushes current ticket state, so a duplicate write is a no-op in
+    // effect, and this is a manual admin action rather than an automated path.
+    const ENQUEUE_CHUNK_SIZE = 50;
+
+    const payloads = links.flatMap((link: (typeof links)[number]) => [
+        {
+            ticketId: link.ticket.id,
+            targetPlugin: plugin,
+            action: 'status_change',
+            changeData: { status: link.ticket.status },
+        },
+        {
+            ticketId: link.ticket.id,
+            targetPlugin: plugin,
+            action: 'priority_change',
+            changeData: { priority: link.ticket.priority },
+        },
+    ]);
+
+    for (let i = 0; i < payloads.length; i += ENQUEUE_CHUNK_SIZE) {
         await Promise.all(
-            links.flatMap((link: (typeof links)[number]) => [
-                createJob(JobType.TRACKER_SYNC, {
-                    ticketId: link.ticket.id,
-                    targetPlugin: plugin,
-                    action: 'status_change',
-                    changeData: { status: link.ticket.status },
-                }),
-                createJob(JobType.TRACKER_SYNC, {
-                    ticketId: link.ticket.id,
-                    targetPlugin: plugin,
-                    action: 'priority_change',
-                    changeData: { priority: link.ticket.priority },
-                }),
-            ]),
-        )
-    ).length;
+            payloads
+                .slice(i, i + ENQUEUE_CHUNK_SIZE)
+                .map((payload) => createJob(JobType.TRACKER_SYNC, payload)),
+        );
+    }
+
+    // Every payload either enqueued or the loop above threw, so this is exact
+    // rather than a count accumulated as we went.
+    const jobs = payloads.length;
 
     return NextResponse.json({ queued: links.length, jobs });
 }

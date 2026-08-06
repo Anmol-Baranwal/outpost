@@ -6,8 +6,16 @@ import { PageHeader } from '@/components/page-header';
 import { MappingEditor } from '@/components/sync/mapping-editor';
 import type { MappingConfig } from '@/lib/mock-sync';
 
+/** Provenance the mappings API reports alongside the config it serves. */
+interface ConfigProvenance {
+    configSource?: 'persisted' | 'defaults';
+    configError?: string;
+    invalidSections?: string[];
+}
+
 export default function MappingsPage() {
     const [config, setConfig] = useState<MappingConfig | null>(null);
+    const [provenance, setProvenance] = useState<ConfigProvenance>({});
     const [saving, setSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
@@ -17,6 +25,11 @@ export default function MappingsPage() {
                 const res = await fetch('/api/sync/mappings');
                 const data = await res.json();
                 setConfig(data);
+                setProvenance({
+                    configSource: data.configSource,
+                    configError: data.configError,
+                    invalidSections: data.invalidSections,
+                });
             } catch {
                 // noop
             }
@@ -53,11 +66,34 @@ export default function MappingsPage() {
                 title="Mapping Configuration"
                 description="Configure how statuses, priorities, identities, and labels map between systems."
                 icon={Settings2}
-                breadcrumbs={[
-                    { label: 'Sync', href: '/sync' },
-                    { label: 'Mappings' },
-                ]}
+                breadcrumbs={[{ label: 'Sync', href: '/sync' }, { label: 'Mappings' }]}
             />
+
+            {/*
+             * Say when what is on screen is NOT the saved configuration. The API
+             * reports this, and without surfacing it the page renders code
+             * defaults identically to persisted settings — so an admin whose row
+             * is unusable sees no difference and re-saves the defaults over it.
+             */}
+            {provenance.configSource === 'defaults' && (
+                <div
+                    data-testid="config-defaults-notice"
+                    className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-foreground"
+                >
+                    Showing built-in defaults — no saved mapping configuration is in effect.
+                    {provenance.configError ? ` (${provenance.configError})` : ''}
+                </div>
+            )}
+
+            {provenance.invalidSections && provenance.invalidSections.length > 0 && (
+                <div
+                    data-testid="config-invalid-sections-notice"
+                    className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-foreground"
+                >
+                    Using built-in defaults for {provenance.invalidSections.join(', ')} — the saved
+                    values could not be read. Saving will overwrite them.
+                </div>
+            )}
 
             {saveMessage && (
                 <div

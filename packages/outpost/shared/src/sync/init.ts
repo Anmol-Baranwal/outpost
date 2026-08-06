@@ -18,7 +18,10 @@ import type { IdentityMapperDeps } from './identity-map.js';
 // ─── Configuration ──────────────────────────────────────────────────────
 
 interface InitOptions {
-    /** Override for dependency injection (testing). */
+    /**
+     * Prisma + createJob the engine runs against. REQUIRED — despite the wording
+     * this replaces, it is not a testing-only override; production passes it too.
+     */
     deps: SyncEngineDeps;
     /** Override for identity mapper deps (testing). */
     identityDeps?: IdentityMapperDeps;
@@ -55,6 +58,19 @@ export function initializeSyncEngine(options: InitOptions): SyncEngine {
         const identityMapper = options.identityDeps
             ? new IdentityMapper(options.identityDeps)
             : null;
+
+        if (!identityMapper) {
+            // Both env vars are set, so the operator intended Linear sync — but
+            // without identityDeps no adapter is registered and TRACKER_SYNC jobs
+            // fail with "Plugin is not registered". Silence here reproduces the
+            // exact invisible non-registration this function was extracted to fix,
+            // so it is loud instead.
+            console.error(
+                '[SyncEngine] LINEAR_API_KEY and LINEAR_TEAM_ID are set but identityDeps was not ' +
+                    'provided — the Linear adapter is NOT registered and outbound Linear sync will ' +
+                    'fail. Pass identityDeps to initializeSyncEngine().',
+            );
+        }
 
         if (identityMapper) {
             const adapter = new LinearAdapter({

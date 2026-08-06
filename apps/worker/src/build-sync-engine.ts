@@ -25,6 +25,29 @@ import {
     type IdentityMapperDeps,
 } from '@copilotkit/outpost/shared';
 
+/**
+ * Wraps a db so repeated `systemConfig.findUnique` calls for the same key share
+ * one round-trip. Scoped to a single buildSyncEngine() call, so there is no
+ * staleness window — the cache dies with the function.
+ */
+function singleReadConfigDb(db: StatusMapDb): StatusMapDb {
+    const inFlight = new Map<string, Promise<{ key: string; value: string } | null>>();
+
+    return {
+        systemConfig: {
+            findUnique: (args: { where: { key: string } }) => {
+                const key = args.where.key;
+                let promise = inFlight.get(key);
+                if (!promise) {
+                    promise = db.systemConfig.findUnique(args);
+                    inFlight.set(key, promise);
+                }
+                return promise;
+            },
+        },
+    } as unknown as StatusMapDb;
+}
+
 export async function buildSyncEngine(): Promise<SyncEngine> {
     // Load all three persisted mapping configs (status / priority / label),
     // each falling back to its hardcoded default when nothing is persisted.
@@ -34,10 +57,17 @@ export async function buildSyncEngine(): Promise<SyncEngine> {
     // direction. Asserting to the NAMED contract rather than `as never` keeps the
     // intent legible and — unlike `never`, which is assignable to everything —
     // breaks loudly if any of these contracts gains a required member.
+    // One read, three builders. Each loader takes a db and does its own
+    // findUnique, so calling all three fetched the SAME SystemConfig row three
+    // times on every worker boot. A tiny in-memory cache in front of them keeps
+    // the loaders' signatures (and their independent fallbacks) unchanged while
+    // collapsing it to a single query.
+    const cachedDb = singleReadConfigDb(prisma as unknown as StatusMapDb);
+
     const [statusMap, priorityMap, labelMapper] = await Promise.all([
-        loadStatusMap('linear', prisma as unknown as StatusMapDb),
-        loadPriorityMap('linear', prisma as unknown as PriorityMapDb),
-        loadLabelMapper('linear', prisma as unknown as LabelMapperDb),
+        loadStatusMap('linear', cachedDb as unknown as StatusMapDb),
+        loadPriorityMap('linear', cachedDb as unknown as PriorityMapDb),
+        loadLabelMapper('linear', cachedDb as unknown as LabelMapperDb),
     ]);
 
     return initializeSyncEngine({
