@@ -227,12 +227,17 @@ export const MOCK_MAPPING_CONFIG: MappingConfig = {
         ],
     },
     priorityMappings: {
+        // Keys are the adapter's real lookup values — LinearAdapter maps with
+        // String(data.priority), i.e. '0'..'4'. The human text lives in `label`. The
+        // previous fixture used '0 (None)'-style keys, which is the unmatchable-key shape
+        // #95 fixed on the persistence side; leaving it here would have re-canonicalized
+        // the bug and left the editor's label rendering uncovered.
         linear: [
-            { externalPriority: '0 (None)', outpostPriority: 'MEDIUM' },
-            { externalPriority: '1 (Urgent)', outpostPriority: 'CRITICAL' },
-            { externalPriority: '2 (High)', outpostPriority: 'HIGH' },
-            { externalPriority: '3 (Medium)', outpostPriority: 'MEDIUM' },
-            { externalPriority: '4 (Low)', outpostPriority: 'LOW' },
+            { externalPriority: '0', outpostPriority: 'MEDIUM', label: 'None' },
+            { externalPriority: '1', outpostPriority: 'CRITICAL', label: 'Urgent' },
+            { externalPriority: '2', outpostPriority: 'HIGH', label: 'High' },
+            { externalPriority: '3', outpostPriority: 'MEDIUM', label: 'Medium' },
+            { externalPriority: '4', outpostPriority: 'LOW', label: 'Low' },
         ],
         github: [
             { externalPriority: 'critical', outpostPriority: 'CRITICAL' },
