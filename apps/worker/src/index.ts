@@ -32,22 +32,25 @@ import {
     createTrackerSyncHandler,
     handleJobCleanup,
     handleGithubReactionPoll,
-    createJob,
 } from '@copilotkit/outpost/queue';
-import { SyncEngine } from '@copilotkit/outpost/shared';
-import type { SyncEngineDeps } from '@copilotkit/outpost/shared';
+import { buildSyncEngine } from './build-sync-engine.js';
 
 // ─── Build SyncEngine for TRACKER_SYNC handler ────────────────────────────
 
-// SyncEngineDeps describes only the slice of Prisma the engine needs, using loose
-// Record<string, unknown> argument shapes. The real PrismaClient and createJob have
-// narrower signatures, so they are not assignable in the strict direction — the
-// coercion is deliberate. Asserting to the named dep types rather than `any` keeps
-// that intent explicit and makes the cast break loudly if SyncEngineDeps changes.
-const syncEngine = new SyncEngine({
-    prisma: prisma as unknown as SyncEngineDeps['prisma'],
-    createJob: createJob as SyncEngineDeps['createJob'],
-});
+// BOOT SEMANTICS — deliberate change. This is a top-level await that performs
+// three database reads (the persisted status / priority / label mapping configs)
+// before this module finishes evaluating. If the database is unreachable at boot
+// the import throws, so the process exits BEFORE the health server below starts
+// listening: the container crash-loops with no /health at all rather than coming
+// up and reporting itself degraded.
+//
+// Fail-fast is the intent — a worker running with silently-defaulted mappings is
+// worse than one that is visibly down, since TRACKER_SYNC would then write wrong
+// statuses to Linear. Railway's restart policy is the retry mechanism. Note this
+// interacts with the /health honesty follow-up (#138): once /health reflects
+// worker state, a degraded-but-listening mode becomes a real option and this
+// decision is worth revisiting.
+const syncEngine = await buildSyncEngine();
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);
 

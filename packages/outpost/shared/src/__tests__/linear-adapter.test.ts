@@ -123,13 +123,15 @@ describe('LinearAdapter', () => {
             });
             const { adapter } = makeAdapter(client);
 
-            await expect(adapter.pushNewIssue({
-                id: 'ticket-1',
-                title: 'Fail Issue',
-                description: '',
-                status: TicketStatus.OPEN,
-                priority: TicketPriority.MEDIUM,
-            })).rejects.toThrow('Failed to create Linear issue');
+            await expect(
+                adapter.pushNewIssue({
+                    id: 'ticket-1',
+                    title: 'Fail Issue',
+                    description: '',
+                    status: TicketStatus.OPEN,
+                    priority: TicketPriority.MEDIUM,
+                }),
+            ).rejects.toThrow('Failed to create Linear issue');
         });
 
         it('maps CRITICAL priority to Linear 1 (Urgent)', async () => {
@@ -181,6 +183,40 @@ describe('LinearAdapter', () => {
             expect(issue.update).toHaveBeenCalledWith({ stateId: 'ws-inprogress' });
         });
 
+        it.each([TicketStatus.WAITING_ON_CUSTOMER, TicketStatus.WAITING_ON_TEAM])(
+            'skips the push for %s rather than guessing a Linear state',
+            async (status) => {
+                // createLinearStatusMap covers four of TicketStatus's six values, and
+                // StatusMap.fromOutpost falls back to its FIRST entry — 'Triage'. Without
+                // this guard, moving a ticket to a waiting state silently drags the Linear
+                // issue back to Triage and reports a successful sync.
+                const { adapter, client } = makeAdapter();
+                const link = makeLink();
+                const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+                await adapter.pushStatusChange(link, status);
+
+                expect(client.issue).not.toHaveBeenCalled();
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining(status));
+
+                warn.mockRestore();
+            },
+        );
+
+        it('still pushes every status the map does cover', async () => {
+            // Guards against the fix over-reaching into a silent no-sync.
+            const covered = [
+                [TicketStatus.OPEN, 'ws-triage'],
+                [TicketStatus.IN_PROGRESS, 'ws-inprogress'],
+            ] as const;
+
+            for (const [status] of covered) {
+                const { adapter, client } = makeAdapter();
+                await adapter.pushStatusChange(makeLink(), status);
+                expect(client.issue).toHaveBeenCalledWith('lin-issue-1');
+            }
+        });
+
         it('throws when no workflow state found', async () => {
             const client = makeMockClient();
             (client.workflowStates as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -189,9 +225,9 @@ describe('LinearAdapter', () => {
             const { adapter } = makeAdapter(client);
             const link = makeLink();
 
-            await expect(
-                adapter.pushStatusChange(link, TicketStatus.IN_PROGRESS),
-            ).rejects.toThrow('No Linear workflow state found');
+            await expect(adapter.pushStatusChange(link, TicketStatus.IN_PROGRESS)).rejects.toThrow(
+                'No Linear workflow state found',
+            );
         });
     });
 
@@ -216,9 +252,9 @@ describe('LinearAdapter', () => {
             const { adapter } = makeAdapter(client);
             const link = makeLink();
 
-            await expect(
-                adapter.pushComment(link, 'fail'),
-            ).rejects.toThrow('Failed to create Linear comment');
+            await expect(adapter.pushComment(link, 'fail')).rejects.toThrow(
+                'Failed to create Linear comment',
+            );
         });
     });
 

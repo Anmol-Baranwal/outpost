@@ -93,3 +93,64 @@ export function createGitHubPriorityMap(): PriorityMap {
         low: TicketPriority.LOW,
     });
 }
+
+// ─── Persisted Config Loading ─────────────────────────────────────────────
+
+/** Must match the key used by apps/web/src/app/api/sync/mappings/route.ts. */
+const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
+
+/** Minimal Prisma subset needed to load a persisted mapping config. */
+export interface PriorityMapDb {
+    systemConfig: {
+        findUnique(args: {
+            where: { key: string };
+        }): Promise<{ key: string; value: string } | null>;
+    };
+}
+
+interface PersistedPriorityMappingEntry {
+    externalPriority: string;
+    outpostPriority: TicketPriority;
+}
+
+/**
+ * Build a PriorityMap for `plugin`, preferring the persisted SystemConfig
+ * row (written by the /api/sync/mappings dashboard) over the hardcoded
+ * factory defaults. Falls back to the hardcoded default whenever the
+ * config row is missing, malformed, or has no entry for this plugin.
+ *
+ * Mirrors loadStatusMap in status-map.ts.
+ */
+export async function loadPriorityMap(
+    plugin: 'linear' | 'github',
+    db: PriorityMapDb,
+): Promise<PriorityMap> {
+    const fallback = plugin === 'linear' ? createLinearPriorityMap() : createGitHubPriorityMap();
+
+    const row = await db.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
+    if (!row) return fallback;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(row.value);
+    } catch {
+        return fallback;
+    }
+
+    const entries = (
+        parsed as { priorityMappings?: Record<string, PersistedPriorityMappingEntry[]> }
+    )?.priorityMappings?.[plugin];
+    if (!Array.isArray(entries) || entries.length === 0) return fallback;
+
+    const config: PriorityMappingConfig = {};
+    for (const entry of entries) {
+        if (
+            entry?.externalPriority &&
+            entry?.outpostPriority &&
+            Object.values(TicketPriority).includes(entry.outpostPriority as TicketPriority)
+        ) {
+            config[entry.externalPriority] = entry.outpostPriority;
+        }
+    }
+    return Object.keys(config).length > 0 ? new PriorityMap(config) : fallback;
+}

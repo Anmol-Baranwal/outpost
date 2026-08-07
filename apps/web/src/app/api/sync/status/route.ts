@@ -2,11 +2,18 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
+import { supportsOutboundSync } from '@copilotkit/outpost/shared';
 
 /**
  * GET /api/sync/status
  *
  * Returns per-plugin sync health metrics derived from SyncEvent data.
+ *
+ * Each system carries `canForceSync`, so the dashboard can hide the force-sync
+ * control for plugins the worker has no outbound adapter for. Resolved here
+ * rather than in the client because the capability list lives in the shared
+ * sync package alongside the registration it mirrors, and duplicating it into
+ * a client component is how it would drift.
  */
 export async function GET() {
     const session = await getServerSession(authOptions);
@@ -68,6 +75,7 @@ export async function GET() {
                 lastSuccessfulSync: lastSuccess?.createdAt.toISOString() ?? null,
                 pendingCount,
                 failedCount,
+                canForceSync: supportsOutboundSync(plugin),
             };
         }),
     );

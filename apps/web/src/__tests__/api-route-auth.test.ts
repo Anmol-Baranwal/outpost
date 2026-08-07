@@ -13,6 +13,7 @@ const mockAccountCreate = vi.fn();
 const mockAccountFindMany = vi.fn();
 const mockTicketGroupBy = vi.fn();
 const mockExternalIdentityFindMany = vi.fn();
+const mockSystemConfigFindUnique = vi.fn().mockResolvedValue(null);
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
@@ -25,6 +26,9 @@ vi.mock('@copilotkit/outpost/db', () => ({
         },
         externalIdentity: {
             findMany: (...args: unknown[]) => mockExternalIdentityFindMany(...args),
+        },
+        systemConfig: {
+            findUnique: (...args: unknown[]) => mockSystemConfigFindUnique(...args),
         },
     },
 }));
