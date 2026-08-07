@@ -99,22 +99,36 @@ export default function SyncPage() {
                     <div className="flex items-center justify-between mb-3">
                         <h2 className="text-sm font-semibold text-foreground">System Health</h2>
                         <div className="flex items-center gap-2">
-                            {systems.map((sys) => (
-                                <button
-                                    key={sys.plugin}
-                                    data-testid={`force-sync-${sys.plugin}`}
-                                    disabled={forcing !== null}
-                                    onClick={() => handleForceSync(sys.plugin)}
-                                    className={cn(
-                                        'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                                        'border border-border bg-background text-foreground hover:bg-muted',
-                                        'disabled:opacity-50',
-                                    )}
-                                >
-                                    <RefreshCw className={cn('h-3 w-3', forcing === sys.plugin && 'animate-spin')} />
-                                    Force {sys.plugin.charAt(0).toUpperCase() + sys.plugin.slice(1)}
-                                </button>
-                            ))}
+                            {/*
+                             * Only plugins the worker can actually sync to get a
+                             * button. A plugin can appear in System Health (it has
+                             * sync events) while having no registered outbound
+                             * adapter — forcing one of those just floods the DLQ.
+                             */}
+                            {systems
+                                .filter((sys) => sys.canForceSync)
+                                .map((sys) => (
+                                    <button
+                                        key={sys.plugin}
+                                        data-testid={`force-sync-${sys.plugin}`}
+                                        disabled={forcing !== null}
+                                        onClick={() => handleForceSync(sys.plugin)}
+                                        className={cn(
+                                            'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                                            'border border-border bg-background text-foreground hover:bg-muted',
+                                            'disabled:opacity-50',
+                                        )}
+                                    >
+                                        <RefreshCw
+                                            className={cn(
+                                                'h-3 w-3',
+                                                forcing === sys.plugin && 'animate-spin',
+                                            )}
+                                        />
+                                        Force{' '}
+                                        {sys.plugin.charAt(0).toUpperCase() + sys.plugin.slice(1)}
+                                    </button>
+                                ))}
                         </div>
                     </div>
                     <SyncHealthCards systems={systems} />

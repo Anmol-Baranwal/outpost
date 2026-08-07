@@ -45,6 +45,11 @@ interface InitOptions {
  *
  * Required env vars per adapter:
  * - Linear: LINEAR_API_KEY, LINEAR_TEAM_ID
+ *
+ * Whatever this function can register must also be listed in
+ * OUTBOUND_SYNC_PLUGINS (capabilities.ts) — callers gate on that list before
+ * enqueuing TRACKER_SYNC work, so the two drifting apart means either jobs the
+ * engine will reject, or a plugin the dashboard refuses to sync.
  */
 export function initializeSyncEngine(options: InitOptions): SyncEngine {
     const env = options.env ?? process.env;

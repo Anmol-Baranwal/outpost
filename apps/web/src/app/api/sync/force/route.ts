@@ -1,16 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob, JobType } from '@copilotkit/outpost/queue';
+import {
+    loadPriorityMap,
+    loadStatusMap,
+    supportsOutboundSync,
+    TicketPriority,
+    TicketStatus,
+} from '@copilotkit/outpost/shared';
 import { requireAdmin } from '@/lib/require-admin';
 
 /**
  * POST /api/sync/force
  *
- * Trigger a force sync for a specific system plugin. Unconditionally
- * enqueues status_change and priority_change TRACKER_SYNC jobs (no
- * change detection) for every ticket currently linked to that plugin,
- * or just one ticket when `ticketId` is given. Ticket has no
- * tags/labels field, so label_change is not part of a resync.
+ * Trigger a force sync for a specific system plugin. Enqueues status_change
+ * and priority_change TRACKER_SYNC jobs (no change detection) for every ticket
+ * currently linked to that plugin, or just one ticket when `ticketId` is given.
+ * Ticket has no tags/labels field, so label_change is not part of a resync.
+ *
+ * Two things are deliberately NOT enqueued:
+ *
+ *  - plugins with no registered outbound adapter (see supportsOutboundSync)
+ *  - individual changes whose Outpost value has no reverse mapping for this
+ *    plugin (see the mappable-value filter below)
+ *
+ * Both would otherwise produce jobs that fail or, worse, succeed with a wrong
+ * value. Skipped work is reported in the response rather than dropped quietly.
  *
  * Body: { plugin: string, ticketId?: string }
  */
@@ -45,6 +60,23 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Unknown plugin: ${plugin}` }, { status: 404 });
     }
 
+    // The plugin exists here (it has sync events or links) but that does not
+    // mean the worker can sync TO it. github-app writes TicketExternalLink rows
+    // and SyncEvent rows, so 'github' clears the probes above — while
+    // buildSyncEngine registers Linear only. Without this gate a "Force Github"
+    // click enqueues 2N jobs that each fail "Plugin is not registered", exhaust
+    // their retries, and land in the DLQ. Checked after the 404 probes so the
+    // two cases stay distinguishable: 404 = no such plugin, 400 = real plugin,
+    // no outbound adapter.
+    if (!supportsOutboundSync(plugin)) {
+        return NextResponse.json(
+            {
+                error: `Plugin "${plugin}" has no outbound sync adapter registered, so there is nothing to force a sync to.`,
+            },
+            { status: 400 },
+        );
+    }
+
     const links = await prisma.ticketExternalLink.findMany({
         where: ticketId ? { plugin, ticketId } : { plugin },
         // Only the three columns the payloads use, not whole ticket rows.
@@ -69,20 +101,70 @@ export async function POST(request: NextRequest) {
     // effect, and this is a manual admin action rather than an automated path.
     const ENQUEUE_CHUNK_SIZE = 50;
 
-    const payloads = links.flatMap((link: (typeof links)[number]) => [
-        {
-            ticketId: link.ticket.id,
-            targetPlugin: plugin,
-            action: 'status_change',
-            changeData: { status: link.ticket.status },
-        },
-        {
-            ticketId: link.ticket.id,
-            targetPlugin: plugin,
-            action: 'priority_change',
-            changeData: { priority: link.ticket.priority },
-        },
+    // Only enqueue changes that survive the round trip.
+    //
+    // The adapter converts each Outpost value back to an external one with
+    // StatusMap/PriorityMap.fromOutpost, which falls back to the FIRST entry of
+    // its config when a value has no reverse mapping. TicketStatus has six
+    // values and createLinearStatusMap covers four, so WAITING_ON_CUSTOMER and
+    // WAITING_ON_TEAM both resolve to 'Triage'. Enqueuing those unconditionally
+    // means one "Force Linear" click moves every waiting ticket's Linear issue
+    // to Triage and records each as a successful sync — a silent, bulk,
+    // hard-to-reverse write. Priority is fully covered by the Linear defaults,
+    // but a persisted custom map need not be, so it gets the same guard.
+    //
+    // These are the same loaders the worker uses, so this reflects the mapping
+    // actually in effect rather than the hardcoded defaults.
+    const [statusMap, priorityMap] = await Promise.all([
+        loadStatusMap(plugin, prisma),
+        loadPriorityMap(plugin, prisma),
     ]);
+
+    const payloads: {
+        ticketId: string;
+        targetPlugin: string;
+        action: string;
+        changeData: Record<string, string>;
+    }[] = [];
+    const skipped: string[] = [];
+
+    for (const link of links) {
+        const { id, status, priority } = link.ticket;
+
+        if (statusMap.hasOutpost(status as TicketStatus)) {
+            payloads.push({
+                ticketId: id,
+                targetPlugin: plugin,
+                action: 'status_change',
+                changeData: { status },
+            });
+        } else {
+            skipped.push(`status:${status}`);
+        }
+
+        if (priorityMap.hasOutpost(priority as TicketPriority)) {
+            payloads.push({
+                ticketId: id,
+                targetPlugin: plugin,
+                action: 'priority_change',
+                changeData: { priority },
+            });
+        } else {
+            skipped.push(`priority:${priority}`);
+        }
+    }
+
+    // Distinct rather than per-ticket: the operator needs to know WHICH values
+    // have no mapping (so they can add one), not which of 10k tickets held them.
+    const unmappable = Array.from(new Set(skipped)).sort();
+
+    if (skipped.length > 0) {
+        console.warn(
+            `[sync/force] Skipped ${skipped.length} change(s) for plugin "${plugin}" with no ` +
+                `reverse mapping: ${unmappable.join(', ')}. Add mappings for these on ` +
+                `/sync/mappings, or they will stay out of sync.`,
+        );
+    }
 
     for (let i = 0; i < payloads.length; i += ENQUEUE_CHUNK_SIZE) {
         await Promise.all(
@@ -96,5 +178,5 @@ export async function POST(request: NextRequest) {
     // rather than a count accumulated as we went.
     const jobs = payloads.length;
 
-    return NextResponse.json({ queued: links.length, jobs });
+    return NextResponse.json({ queued: links.length, jobs, skipped: skipped.length, unmappable });
 }

@@ -33,6 +33,12 @@ export interface SystemSyncStatus {
     lastSuccessfulSync: string;
     pendingCount: number;
     failedCount: number;
+    /**
+     * Whether the worker has a registered outbound adapter for this plugin.
+     * Served by /api/sync/status; gates the force-sync control. Optional so the
+     * mock fixtures below stay valid — treat a missing value as "not syncable".
+     */
+    canForceSync?: boolean;
     /** Average round-trip latency in milliseconds */
     p50LatencyMs: number;
     p95LatencyMs: number;
