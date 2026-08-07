@@ -79,7 +79,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
      - `REDDIT_RETRIEVE_POST_COMMENTS` — for high-signal / debatable threads; pass the **bare base36 article id** (no `t3_`). Top comments are the sentiment.
    - **Relevance filter:** keep only genuine CopilotKit/AG-UI posts. Drop false positives (e.g. the `jscpd` tool listing CopilotKit in a scanned-repo list) and ambiguous `ag-ui` matches — but still record their ids in the ledger.
    - **Classify per post** 👍 good / 🙂 mixed-positive / 😐 neutral / 🫤 mixed-negative / 👎 pain, from post + top comments. Flag competitor comparisons (LangGraph, Vercel AI SDK, assistant-ui, Vapi…) and recurring comment themes (e.g. "how is AG-UI different from Google A2UI?").
-   - **For scoring (v2), fetch each distinct subreddit's recent `new` feed** (`REDDIT_RETRIEVE_REDDIT_POST` sort=new, ~30) → median of `(upvotes + 2·comments)` = the room baseline `M`. Needed for the reach weight + reception ratio (see "Reddit Pulse scoring algorithm").
+   - **For scoring, fetch each distinct subreddit's recent `new` feed** (`REDDIT_RETRIEVE_REDDIT_POST` sort=new, ~30) → median of `(upvotes + 2·comments)` = the room baseline `M`. Needed for the reach weight + reception ratio (see "Reddit Pulse scoring algorithm").
    - **Split by community subject** (see "Reddit Pulse section") and **score each page 0–100** (see "Reddit Pulse scoring algorithm").
    Returns, per community: scored post list (`👍/🙂/😐/🫤/👎 · [title](permalink) · r/<sub> · ⬆score 💬comments · one-line`), the computed Pulse Score + band, an overall-vibe sentence, competitor + recurring-theme notes, and the list of ids to add to the ledger.
 
@@ -139,7 +139,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    **Findings feed BACK into the report — always.** If this pass uncovers a discrepancy (wrong resolved class/date, wrong attribution, stale version, a rank whose inputs don't add up, a "fixed" with no merged PR), **correct the report item first, then the defense reflects the corrected state** — the Report Sources page never sits next to a report it just proved wrong. Loop until zero entries contradict the report. (Precedent: the sources pass caught `ag-ui#2048` listed as `FIX_PR_MERGED / 07-01` when it was `CLOSED COMPLETED 2026-06-29` with no linked PR → the Resolved row was corrected, then defended.)
    **This pass also writes the `Gaps & follow-ups` items** — it returns a short plain-human checklist of what's unresolved, which the orchestrator drops into the report's Gaps section. Written so the reader can't tell it came from an evidence pass (no lawyer voice, no citations) — see `report-sources`.
 
-15. **Generate the Loom walkthrough script + remind Nathan to record it — every report, no exceptions.** As the LAST step, invoke the `loom-walkthrough` skill to produce the 5–7 min radio-show script from the finished report (plain English, sounds ad-libbed, includes the CEO-level Pain read) so recording is painless. Then remind him to record. When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
+15. **Generate the Loom walkthrough script + remind Nathan to record it — every report, no exceptions.** As the LAST step, invoke the `loom-walkthrough` skill to produce the ≤10-minute plain-spoken walkthrough briefing from the finished report (plain English, factual — a briefing, not a radio show; includes the CEO-level Pain read) so recording is painless. Then remind him to record. When he shares the link: add a `**Loom:** [Walkthrough](url)` line to the main page header (directly under the `**Week:**` line) and a `🎥 Walkthrough → <url|Loom>` line to the Slack message above the "Full report" link. Don't let the Slack message go out without asking about the Loom first.
 
 16. **Update the ledger + the rules.** Write the run's surfaced + noise post ids into `docs/community-signal/reddit-pulse-seen.json`. And per the meta-rule at the top: if anything about the format changed this run, update these skill files in the same pass.
 
@@ -177,6 +177,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 💢 Pain                                  ← plain `###` header, each item a `#### {toggle}` card (What/Impact/Fix plan)
    ### 📚 Docs                                  ← standing weekly section; plain `###` header, each item a `#### {toggle}` card (see "Docs section")
    ### ✅ Resolved this week                    ← XML table
+   ### 🌱 Early signals                         ← CONDITIONAL — `<details><summary>` block; singletons / one-off low-volume items not yet a pattern (step 7 routes them here). Tables / one-liners, NOT full cards. Omit when there are none.
 ---
 
 ## 🟠 Reddit Pulse — CopilotKit · <band> NN/100 {toggle="true"}   ← CopilotKit-subject Reddit posts only, scored. Collapsible; score+band in the heading. (see "Reddit Pulse section")
@@ -210,6 +211,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ### 🔥 Demand                                ← plain `###` header, each item a `#### {toggle}` card
    ### 📚 Docs                                  ← plain `###` header, each item a `#### {toggle}` card
    ### ✅ Resolved this week
+   ### 🌱 Early signals                         ← CONDITIONAL — `<details><summary>` block; AG-UI singletons not yet a pattern. Tables / one-liners, not full cards. Omit when there are none.
 ---
 
 ## 🟠 Reddit Pulse — AG-UI · <band> NN/100 {toggle="true"}   ← AG-UI-subject Reddit posts only, scored. (see "Reddit Pulse section")
@@ -272,8 +274,7 @@ Sections that do NOT use this card format: ✅ Resolved (XML table), 🟠 Reddit
 **Every item on the report carries a source link — no link, it does not get published.** This is a hard rule, not a preference. It applies to every Top-issue card, Demand/Pain bullet, Docs bullet, Resolved row, Reddit Pulse thread, Enterprise reporter, and every named entity in Patterns.
 
 - The link points to the **canonical source**: GitHub issue/PR URL, the Discord forum-thread URL, or the Reddit permalink — wherever the claim originated.
-- If you have an observation but no sourceable link, **do not write it as a bare claim**. Find the link, or leave it out. A claim with no source is flagged by the review agent (Subagent F, step 14) and either gets a link retrieved or is removed before publish.
-- This is what the step-14 review pass enforces: it walks the finished pages, flags every linkless item, retrieves the missing link via search, and deletes anything that still can't be sourced.
+- If you have an observation but no sourceable link, **do not write it as a bare claim** — find the link, or leave it out. The step-14 review pass (Subagent F) enforces this: it walks the finished pages, flags every linkless item, retrieves the missing link via search, and deletes anything that still can't be sourced.
 
 ## Top issues of the week (the lead body section)
 
@@ -366,7 +367,7 @@ Reddit Pulse is the outside-the-walls read: what people say about CopilotKit / A
 **Each section is a collapsible toggle** (`## 🟠 Reddit Pulse — <community> · <band> NN/100 {toggle="true"}`) with the 0–100 Pulse Score + band in the heading (so it reads while collapsed). Inside, tab-indented:
 - the window/dedup note + a one-line link to the algo child page ("How this is scored → 🟠 Reddit Pulse scoring algorithm");
 - a **Vibe** sentence (overall sentiment);
-- scored post groups (**👍 Good** / **😐 Neutral / awareness** / **👎 Pain**), each post one bullet: `[title](permalink) — r/<sub> ⬆score 💬comments. one-line.`;
+- scored post groups — three render buckets: **👍 Good** / **😐 Neutral / awareness** / **👎 Pain**. The scoring step classifies into five sentiment tiers (see the algorithm's `s` values); for display, **🙂 mixed-positive folds into 👍 Good and 🫤 mixed-negative into 👎 Pain**. Each post is one bullet: `[title](permalink) — r/<sub> ⬆score 💬comments. one-line.`;
 - a **🔁 Recurring** line for comment themes worth addressing (e.g. the A2UI-vs-AG-UI confusion);
 - a closing `*Net: …· Pulse Score NN/100.*` tally.
 
@@ -375,13 +376,13 @@ Rules:
 - **Cross-posts** of the same story merge into one bullet (note the copies + use max engagement).
 - **Noise** (spam, false-positive keyword hits) is dropped from the section but still recorded in the ledger so it can't resurface.
 - **Source-gated:** if there's no write-scoped `COMPOSIO_API_KEY` or no ACTIVE Reddit connected account, render "🟠 Reddit Pulse — source not configured this week." and move on — never block the report on it.
-- **Data source:** **Composio REST** (Composio's egress reaches Reddit where this machine's IP is 403-blocked on anonymous reads) — NOT the `composio` MCP (its OAuth identity can't see the dashboard connection) and NOT a default read-only API key (`tool_execution` 403). Use a **write-scoped** Composio API key (`Tools` resource = Write) in `COMPOSIO_API_KEY` (repo-root `.env`); `POST /api/v3/tools/execute/<TOOL>` with the ACTIVE Reddit `connected_account_id` from `GET /api/v3/connected_accounts?toolkit_slugs=reddit`. Tools: `REDDIT_SEARCH_ACROSS_SUBREDDITS`, `REDDIT_RETRIEVE_REDDIT_POST`, `REDDIT_RETRIEVE_POST_COMMENTS`. Scope vars `REDDIT_BRAND_TERMS` + `REDDIT_WATCHLIST` in the repo-root `.env`.
+- **Data source:** **Composio REST** with a **write-scoped** Composio API key (`Tools` resource = Write) in `COMPOSIO_API_KEY` (repo-root `.env`) — see **step 6** for the auth rationale (why not the `composio` MCP, why a read-only key 403s). Call `POST /api/v3/tools/execute/<TOOL>` with the ACTIVE Reddit `connected_account_id` from `GET /api/v3/connected_accounts?toolkit_slugs=reddit`. Tools: `REDDIT_SEARCH_ACROSS_SUBREDDITS`, `REDDIT_RETRIEVE_REDDIT_POST`, `REDDIT_RETRIEVE_POST_COMMENTS`. Scope vars `REDDIT_BRAND_TERMS` + `REDDIT_WATCHLIST` in the repo-root `.env`.
 
 ### Reddit Pulse scoring algorithm
 
 Each section's 0–100 score is **calculated, not asserted**, and published on a standing public child page (`🟠 Reddit Pulse — scoring algorithm`) linked from each section. Community is never an input — each community is scored on its own posts.
 
-**v2 (2026-06-19) — reach × reception.** v1 weighted by the post's own engagement only, so a win in a tiny sub outweighed a flop in a big one. v2 weights by the *room* and judges each post against that room's own norm:
+**Current formula — reach × reception** (introduced as v2 on 2026-06-19, corrected by v3 below; the values in this block are the current v3 values). v1 weighted by the post's own engagement only, so a win in a tiny sub outweighed a flop in a big one. This weights by the *room* and judges each post against that room's own norm:
 
 - **Sentiment per post** `s` (from post + top comments): `+1` good · `+0.5` mixed-positive · `0` neutral · `−0.5` mixed-negative · `−1` pain.
 - **Room baseline** `M` = median of `(upvotes + 2·comments)` over the subreddit's recent **`new`** posts (NOT `hot` — hot oversamples winners). Fetch ~30 per distinct sub. `M` is the room's activity proxy (quiet "<10 posts/day" sub → low `M`).
@@ -509,7 +510,7 @@ Test before publishing: read each parenthetical aloud and ask "would a non-engin
 - `enrich-reporter` — subagent for GitHub author enterprise enrichment (shallow: company field → 🏢 badge, all reporters)
 - `enrich-prospect` — subagent for DEEP enterprise-prospect enrichment (LinkedIn + company website + size; prospect shortlist only)
 - `slack-tldr` — Slack JSON format + curl command
-- `loom-walkthrough` — the 5–7 min radio-show walkthrough script, generated after every report (last step)
+- `loom-walkthrough` — the ≤10-minute plain-spoken walkthrough briefing, generated after every report (last step)
 - `report-sources` — subagent: the "Report Sources" child page defending every placement with evidence (front-door, rank, section, attribution, resolved, enterprise, maturity)
 - `enterprise` — standalone enterprise view (run separately or invoked here)
 - `topic-search` — ad-hoc cross-repo topic lookup
