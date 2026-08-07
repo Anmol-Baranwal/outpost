@@ -62,7 +62,10 @@ export const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 export function requiresCsrfValidation(request: NextRequest): boolean {
     const { pathname } = request.nextUrl;
-    if (!MUTATING_METHODS.has(request.method)) return false;
+    // Uppercased before lookup: the Fetch spec normalises only DELETE/GET/HEAD/OPTIONS/
+    // POST/PUT, so `method: 'patch'` arrives lowercase and a case-sensitive check would
+    // return false here — skipping CSRF validation entirely on the six PATCH routes.
+    if (!MUTATING_METHODS.has(request.method.toUpperCase())) return false;
     if (!pathname.startsWith('/api/')) return false;
     if (CSRF_EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) return false;
     return true;

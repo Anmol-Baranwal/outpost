@@ -3,11 +3,7 @@
  *
  * A mutating `/api/*` request is rejected unless it carries both the `csrf` cookie and a
  * matching `X-CSRF-Token` header (src/middleware.ts -> requiresCsrfValidation ->
- * validateCsrfToken). That header was previously each caller's job via `csrfHeaders()`,
- * which nothing used, so dashboard writes 403'd. Routes that kept working did so for two
- * different reasons worth keeping straight: `/api/setup`, `/api/auth`, `/api/webhooks`
- * and `/api/health` are in `CSRF_EXEMPT_PREFIXES`, while `/api/team/invite/accept`
- * survives via `PUBLIC_PATHS` in the middleware, which returns before CSRF runs at all.
+ * validateCsrfToken), except on `PUBLIC_PATHS`, which return before CSRF runs.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { apiFetch, MUTATING_METHODS } from '@/lib/api-fetch';
@@ -61,6 +57,22 @@ describe('apiFetch', () => {
 
         expect([...MUTATING_METHODS].sort()).toEqual([...serverSet].sort());
     });
+
+    it.each([...MUTATING_METHODS].flatMap((m) => [m, m.toLowerCase()]))(
+        'the middleware still demands CSRF for method %s',
+        async (method) => {
+            // Set equality is not enough. The Fetch spec normalises only DELETE/GET/HEAD/
+            // OPTIONS/POST/PUT, so `patch` reaches the server lowercase; a case-sensitive
+            // lookup there would skip validation while this set still matched.
+            const { requiresCsrfValidation } = await import('@/lib/csrf');
+            const request = {
+                method,
+                nextUrl: { pathname: '/api/tickets/abc' },
+            } as unknown as Parameters<typeof requiresCsrfValidation>[0];
+
+            expect(requiresCsrfValidation(request)).toBe(true);
+        },
+    );
 
     it.each(['GET', 'HEAD', 'OPTIONS'])(
         'does not attach the token on %s, which the middleware never checks',
