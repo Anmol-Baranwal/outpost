@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Users, Plus, RefreshCw, Trash2, Shield, UserMinus, Send } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface TeamMember {
     id: string;
@@ -36,7 +37,7 @@ export default function TeamPage() {
 
     const fetchMembers = useCallback(async () => {
         try {
-            const res = await fetch('/api/team');
+            const res = await apiFetch('/api/team');
             if (res.status === 403) {
                 router.replace('/dashboard');
                 return;
@@ -66,7 +67,7 @@ export default function TeamPage() {
         setInviteError(null);
 
         try {
-            const res = await fetch('/api/team/invite', {
+            const res = await apiFetch('/api/team/invite', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
@@ -89,7 +90,7 @@ export default function TeamPage() {
     };
 
     const handleChangeRole = async (memberId: string, newRole: string) => {
-        await fetch(`/api/team/${memberId}`, {
+        await apiFetch(`/api/team/${memberId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ role: newRole }),
@@ -99,7 +100,7 @@ export default function TeamPage() {
 
     const handleToggleStatus = async (memberId: string, currentStatus: string) => {
         const newStatus = currentStatus === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
-        await fetch(`/api/team/${memberId}`, {
+        await apiFetch(`/api/team/${memberId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: newStatus }),
@@ -109,12 +110,12 @@ export default function TeamPage() {
 
     const handleRemoveMember = async (memberId: string) => {
         if (!confirm('Are you sure you want to remove this member?')) return;
-        await fetch(`/api/team/${memberId}`, { method: 'DELETE' });
+        await apiFetch(`/api/team/${memberId}`, { method: 'DELETE' });
         await fetchMembers();
     };
 
     const handleResendInvite = async (memberId: string) => {
-        await fetch('/api/team/invite/resend', {
+        await apiFetch('/api/team/invite/resend', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ memberId }),
@@ -122,7 +123,7 @@ export default function TeamPage() {
     };
 
     const handleRevokeInvite = async (memberId: string) => {
-        await fetch(`/api/team/invite/${memberId}`, { method: 'DELETE' });
+        await apiFetch(`/api/team/invite/${memberId}`, { method: 'DELETE' });
         await fetchMembers();
     };
 

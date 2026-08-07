@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Video, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-fetch';
 
 function isValidLoomUrl(url: string): boolean {
     try {
@@ -47,7 +48,7 @@ export function LoomImport({ categoryId, onArticleGenerated }: LoomImportProps) 
             setState('generating');
             setProgress(30);
 
-            const res = await fetch('/api/docs/import-loom', {
+            const res = await apiFetch('/api/docs/import-loom', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url, categoryId }),

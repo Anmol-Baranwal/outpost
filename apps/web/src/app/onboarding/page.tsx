@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface OnboardingMember {
     id: string;
@@ -67,8 +68,8 @@ export default function OnboardingPage() {
             const qs = params.toString() ? `?${params.toString()}` : '';
 
             const [membersRes, metricsRes] = await Promise.all([
-                fetch(`/api/onboarding/members${qs}`),
-                fetch(`/api/onboarding/metrics${qs}`),
+                apiFetch(`/api/onboarding/members${qs}`),
+                apiFetch(`/api/onboarding/metrics${qs}`),
             ]);
 
             const membersData = await membersRes.json();
@@ -89,7 +90,7 @@ export default function OnboardingPage() {
 
     async function advanceStage(memberId: string, nextStage: string) {
         try {
-            await fetch(`/api/onboarding/members/${memberId}`, {
+            await apiFetch(`/api/onboarding/members/${memberId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ funnelStage: nextStage }),
