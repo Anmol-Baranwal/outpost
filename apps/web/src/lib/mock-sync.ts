@@ -52,6 +52,14 @@ export interface StatusMappingEntry {
 export interface PriorityMappingEntry {
     externalPriority: string;
     outpostPriority: string;
+    /**
+     * Display-only human text for `externalPriority`. #95 split the display text out
+     * of the persisted key, so the key is now the raw adapter value ('0'–'4') and this
+     * carries what an operator recognises ('Urgent', 'High', …). Not persisted-critical
+     * and not editable — the editor renders it beside the key so the priority tab does
+     * not show bare numbers.
+     */
+    label?: string;
 }
 
 export interface IdentityMappingEntry {

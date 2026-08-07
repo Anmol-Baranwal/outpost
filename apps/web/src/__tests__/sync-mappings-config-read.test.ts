@@ -106,4 +106,35 @@ describe('GET /api/sync/mappings — persisted config read path', () => {
         expect(errorSpy.mock.calls.flat().join(' ')).toContain('statusMappings');
         errorSpy.mockRestore();
     });
+
+    it('validates labelRules on read instead of passing a malformed value through', async () => {
+        // labelRules used to be served raw: a malformed value reached LabelRulesPanel,
+        // which calls ruleList.map(...) on it, and it was absent from invalidSections
+        // so nothing reported the problem.
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        mockSystemConfigFindUnique.mockResolvedValue({
+            value: JSON.stringify({
+                ...VALID_CONFIG,
+                labelRules: { linear: 'not-an-array' },
+            }),
+        });
+
+        const body = await (await GET()).json();
+
+        expect(body.invalidSections).toContain('labelRules');
+        expect(body.labelRules).not.toEqual({ linear: 'not-an-array' });
+        // The good sections are untouched.
+        expect(body.statusMappings).toEqual(VALID_CONFIG.statusMappings);
+        expect(errorSpy.mock.calls.flat().join(' ')).toContain('labelRules');
+        errorSpy.mockRestore();
+    });
+
+    it('treats an absent labelRules as valid, since the section is optional', async () => {
+        mockSystemConfigFindUnique.mockResolvedValue({ value: JSON.stringify(VALID_CONFIG) });
+
+        const body = await (await GET()).json();
+
+        expect(body.invalidSections ?? []).not.toContain('labelRules');
+        expect(body.configSource).not.toBe('defaults');
+    });
 });

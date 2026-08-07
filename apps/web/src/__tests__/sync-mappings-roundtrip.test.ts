@@ -125,3 +125,78 @@ describe('mappings round-trip: GET defaults -> PUT -> load as the worker does', 
         expect(loaded.toOutpost(['wontfix'])).toEqual([]);
     });
 });
+
+describe('PUT /api/sync/mappings — labelRules preservation and empty-array rejection', () => {
+    const VALID_STATUS = { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] };
+    const VALID_PRIORITY = { linear: [{ externalPriority: '1', outpostPriority: 'CRITICAL' }] };
+    const SAVED_LABEL_RULES = { github: [{ externalPrefix: 'bug', outpostPrefix: 'defect' }] };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockExternalIdentityFindMany.mockResolvedValue([]);
+        mockSystemConfigUpsert.mockResolvedValue({});
+    });
+
+    function put(body: Record<string, unknown>) {
+        return PUT(
+            new Request('http://localhost:3000/api/sync/mappings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            }) as never,
+        );
+    }
+
+    function persistedValue() {
+        return JSON.parse(mockSystemConfigUpsert.mock.calls[0][0].update.value);
+    }
+
+    it('carries forward existing labelRules when the PUT omits the key', async () => {
+        // The upsert replaces the whole row, so omitting labelRules used to drop
+        // previously persisted rules — a silent wipe reachable through a door the
+        // `labelRules: {}` rejection did not cover.
+        mockSystemConfigFindUnique.mockResolvedValue({
+            value: JSON.stringify({
+                statusMappings: VALID_STATUS,
+                priorityMappings: VALID_PRIORITY,
+                labelRules: SAVED_LABEL_RULES,
+            }),
+        });
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: VALID_PRIORITY,
+        });
+
+        expect(res.status).toBe(200);
+        expect(persistedValue().labelRules).toEqual(SAVED_LABEL_RULES);
+    });
+
+    it('rejects an empty per-plugin labelRules array, as the sibling validator does', async () => {
+        // loadLabelMapper treats [] as "nothing persisted, use defaults", so saving
+        // it would show an empty list while the worker kept applying built-in rules.
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: VALID_PRIORITY,
+            labelRules: { linear: [] },
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
+    it('still writes an explicitly supplied labelRules value', async () => {
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: VALID_PRIORITY,
+            labelRules: SAVED_LABEL_RULES,
+        });
+
+        expect(res.status).toBe(200);
+        expect(persistedValue().labelRules).toEqual(SAVED_LABEL_RULES);
+    });
+});

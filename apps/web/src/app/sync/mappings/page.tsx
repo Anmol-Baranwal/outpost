@@ -48,6 +48,11 @@ export default function MappingsPage() {
             });
             if (res.ok) {
                 setConfig(updatedConfig);
+                // A successful PUT means a saved configuration is now in effect, so the
+                // "no saved mapping configuration" / "using built-in defaults for …"
+                // notices no longer describe reality. Without this they sit on screen
+                // next to "Mappings saved successfully", contradicting it.
+                setProvenance({});
                 setSaveMessage('Mappings saved successfully.');
             } else {
                 setSaveMessage('Failed to save mappings.');

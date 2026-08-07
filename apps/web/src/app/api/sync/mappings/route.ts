@@ -157,6 +157,13 @@ async function readPersistedConfig(): Promise<PersistedConfigRead> {
     ) {
         bad.push('priorityMappings');
     }
+    // labelRules is optional, so absence is valid — but a PRESENT value must be
+    // validated like the other two. Passing it through raw let a malformed row
+    // reach LabelRulesPanel, which does `ruleList.map(...)` on it, and it was
+    // omitted from invalidSections so nothing reported the problem.
+    if (candidate?.labelRules !== undefined && !isValidLabelRulesShape(candidate.labelRules)) {
+        bad.push('labelRules');
+    }
 
     if (bad.length > 0) {
         console.error(
@@ -168,6 +175,7 @@ async function readPersistedConfig(): Promise<PersistedConfigRead> {
     const usable: PersistedMappingConfig = { ...candidate };
     if (bad.includes('statusMappings')) delete usable.statusMappings;
     if (bad.includes('priorityMappings')) delete usable.priorityMappings;
+    if (bad.includes('labelRules')) delete usable.labelRules;
 
     return { status: 'ok', config: usable, invalidSections: bad };
 }
@@ -301,6 +309,13 @@ function isValidLabelRulesShape(value: unknown): boolean {
     return Object.values(value as Record<string, unknown>).every((entries) => {
         if (!Array.isArray(entries)) return false;
 
+        // Same reasoning as isValidMappingShape: `loadLabelMapper` treats an empty
+        // array as "nothing persisted, use the defaults", so saving `{ linear: [] }`
+        // would show an empty rule list in the dashboard while the worker kept
+        // applying the built-in rules. A save must not be able to produce a state
+        // where the UI and the engine disagree about what is in effect.
+        if (entries.length === 0) return false;
+
         return entries.every((entry) => {
             if (typeof entry !== 'object' || entry === null) return false;
             const record = entry as Record<string, unknown>;
@@ -369,12 +384,27 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ error: 'labelRules has invalid shape' }, { status: 400 });
     }
 
+    // The upsert replaces the whole row, so omitting labelRules would drop any
+    // previously persisted rules — the same silent wipe the `labelRules: {}`
+    // rejection above exists to prevent, reachable through a different door.
+    // A PUT without the key means "leave label rules alone", so carry forward
+    // whatever is already stored. Clearing them requires an explicit, valid value.
+    let carriedLabelRules: PersistedMappingConfig['labelRules'] | undefined;
+    if (body.labelRules === undefined) {
+        const existing = await readPersistedConfig();
+        if (existing.status === 'ok') {
+            carriedLabelRules = existing.config.labelRules;
+        }
+    }
+
     const config: PersistedMappingConfig = {
         statusMappings: body.statusMappings as PersistedMappingConfig['statusMappings'],
         priorityMappings: body.priorityMappings as PersistedMappingConfig['priorityMappings'],
         ...(body.labelRules
             ? { labelRules: body.labelRules as PersistedMappingConfig['labelRules'] }
-            : {}),
+            : carriedLabelRules
+              ? { labelRules: carriedLabelRules }
+              : {}),
     };
     const value = JSON.stringify(config);
 
