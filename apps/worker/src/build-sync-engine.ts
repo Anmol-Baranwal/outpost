@@ -18,35 +18,13 @@ import {
     loadLabelMapper,
     initializeSyncEngine,
     type SyncEngine,
+    singleReadConfigDb,
     type SyncEngineDeps,
     type StatusMapDb,
     type PriorityMapDb,
     type LabelMapperDb,
     type IdentityMapperDeps,
 } from '@copilotkit/outpost/shared';
-
-/**
- * Wraps a db so repeated `systemConfig.findUnique` calls for the same key share
- * one round-trip. Scoped to a single buildSyncEngine() call, so there is no
- * staleness window — the cache dies with the function.
- */
-function singleReadConfigDb(db: StatusMapDb): StatusMapDb {
-    const inFlight = new Map<string, Promise<{ key: string; value: string } | null>>();
-
-    return {
-        systemConfig: {
-            findUnique: (args: { where: { key: string } }) => {
-                const key = args.where.key;
-                let promise = inFlight.get(key);
-                if (!promise) {
-                    promise = db.systemConfig.findUnique(args);
-                    inFlight.set(key, promise);
-                }
-                return promise;
-            },
-        },
-    } as unknown as StatusMapDb;
-}
 
 export async function buildSyncEngine(): Promise<SyncEngine> {
     // Load all three persisted mapping configs (status / priority / label),

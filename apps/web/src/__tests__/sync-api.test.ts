@@ -122,6 +122,27 @@ describe('GET /api/sync/status', () => {
         expect(Array.isArray(body.systems)).toBe(true);
     });
 
+    it('marks only plugins with a registered outbound adapter as force-syncable', async () => {
+        // Drives the dashboard's force-sync control: github appears in System
+        // Health because it has sync events, but the worker cannot sync to it.
+        mockSyncEventFindMany.mockResolvedValue([
+            { sourcePlugin: 'github', targetPlugin: 'outpost' },
+            { sourcePlugin: 'outpost', targetPlugin: 'linear' },
+        ]);
+        mockSyncEventFindFirst.mockResolvedValue({ createdAt: new Date() });
+        mockSyncEventCount.mockResolvedValue(0);
+
+        const body = await (await getStatus()).json();
+        const byPlugin = Object.fromEntries(
+            body.systems.map((s: { plugin: string; canForceSync: boolean }) => [
+                s.plugin,
+                s.canForceSync,
+            ]),
+        );
+
+        expect(byPlugin).toEqual({ github: false, linear: true });
+    });
+
     it('returns empty when no sync events exist', async () => {
         mockSyncEventFindMany.mockResolvedValue([]);
 
@@ -566,7 +587,7 @@ describe('POST /api/sync/force', () => {
         const body = await res.json();
 
         expect(res.status).toBe(200);
-        expect(body).toEqual({ queued: 2, jobs: 4 });
+        expect(body).toEqual({ queued: 2, jobs: 4, skipped: 0, unmappable: [] });
         expect(mockCreateJob).toHaveBeenCalledTimes(4);
         expect(mockCreateJob).toHaveBeenCalledWith('TRACKER_SYNC', {
             ticketId: 't-1',
@@ -591,7 +612,7 @@ describe('POST /api/sync/force', () => {
         const body = await res.json();
 
         expect(res.status).toBe(200);
-        expect(body).toEqual({ queued: 0, jobs: 0 });
+        expect(body).toEqual({ queued: 0, jobs: 0, skipped: 0, unmappable: [] });
         expect(mockCreateJob).not.toHaveBeenCalled();
     });
 
@@ -613,7 +634,7 @@ describe('POST /api/sync/force', () => {
         const body = await res.json();
 
         expect(res.status).toBe(200);
-        expect(body).toEqual({ queued: 1, jobs: 2 });
+        expect(body).toEqual({ queued: 1, jobs: 2, skipped: 0, unmappable: [] });
         expect(mockTicketExternalLinkFindMany).toHaveBeenCalledWith({
             where: { plugin: 'linear', ticketId: 't-1' },
             // Narrowed from `include: { ticket: true }`: the route only reads
@@ -649,7 +670,123 @@ describe('POST /api/sync/force', () => {
         const body = await res.json();
 
         expect(res.status).toBe(200);
-        expect(body).toEqual({ queued: 1, jobs: 2 });
+        expect(body).toEqual({ queued: 1, jobs: 2, skipped: 0, unmappable: [] });
+    });
+
+    it('does not push a status with no reverse mapping, and says which', async () => {
+        // WAITING_ON_CUSTOMER / WAITING_ON_TEAM are real TicketStatus values that
+        // createLinearStatusMap does not cover. StatusMap.fromOutpost falls back to
+        // its first entry ('Triage'), so enqueuing these would silently move every
+        // waiting ticket's Linear issue to Triage and report success.
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'WAITING_ON_CUSTOMER', priority: 'HIGH' },
+            },
+            {
+                ticketId: 't-2',
+                plugin: 'linear',
+                ticket: { id: 't-2', status: 'OPEN', priority: 'LOW' },
+            },
+        ]);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        const res = await forceSync(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        // t-1 contributes priority only; t-2 contributes both.
+        expect(body).toEqual({
+            queued: 2,
+            jobs: 3,
+            skipped: 1,
+            unmappable: ['status:WAITING_ON_CUSTOMER'],
+        });
+        expect(mockCreateJob).toHaveBeenCalledTimes(3);
+        expect(mockCreateJob).not.toHaveBeenCalledWith('TRACKER_SYNC', {
+            ticketId: 't-1',
+            targetPlugin: 'linear',
+            action: 'status_change',
+            changeData: { status: 'WAITING_ON_CUSTOMER' },
+        });
+        // The rest of the resync still goes through.
+        expect(mockCreateJob).toHaveBeenCalledWith('TRACKER_SYNC', {
+            ticketId: 't-1',
+            targetPlugin: 'linear',
+            action: 'priority_change',
+            changeData: { priority: 'HIGH' },
+        });
+    });
+
+    it('collapses repeated unmappable values instead of listing every ticket', async () => {
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'WAITING_ON_TEAM', priority: 'HIGH' },
+            },
+            {
+                ticketId: 't-2',
+                plugin: 'linear',
+                ticket: { id: 't-2', status: 'WAITING_ON_TEAM', priority: 'LOW' },
+            },
+        ]);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        const body = await (await forceSync(req as never)).json();
+
+        expect(body.skipped).toBe(2);
+        expect(body.unmappable).toEqual(['status:WAITING_ON_TEAM']);
+    });
+
+    it('reads the mapping config once, not once per loader', async () => {
+        // loadStatusMap and loadPriorityMap each look up the same
+        // sync.mappingConfig row; they share one read via singleReadConfigDb.
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
+        ]);
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        await forceSync(req as never);
+
+        expect(mockSystemConfigFindUnique).toHaveBeenCalledTimes(1);
+    });
+
+    it('loads no mapping config at all when nothing is linked', async () => {
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([]);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        await forceSync(req as never);
+
+        expect(mockSystemConfigFindUnique).not.toHaveBeenCalled();
+    });
+
+    it('refuses a known plugin that has no registered outbound adapter', async () => {
+        // github-app writes SyncEvent and TicketExternalLink rows, so 'github'
+        // clears the existence probes — but buildSyncEngine registers Linear only.
+        // Enqueuing here would produce 2N jobs that each fail "Plugin is not
+        // registered" and retry into the DLQ.
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindFirst.mockResolvedValue({ id: 'link-1', plugin: 'github' });
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'github' });
+        const res = await forceSync(req as never);
+        const body = await res.json();
+
+        expect(res.status).toBe(400);
+        expect(body.error).toContain('no outbound sync adapter');
+        expect(mockTicketExternalLinkFindMany).not.toHaveBeenCalled();
+        expect(mockCreateJob).not.toHaveBeenCalled();
     });
 
     it('rejects when plugin is missing', async () => {
