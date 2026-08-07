@@ -1,32 +1,33 @@
 /**
- * `apiFetch` is the reason mutating requests reach the API at all.
+ * `apiFetch` is what lets mutating requests clear the middleware.
  *
- * The middleware rejects a mutating `/api/*` request unless it carries BOTH the `csrf`
- * cookie and a matching `X-CSRF-Token` header (src/middleware.ts ->
- * requiresCsrfValidation -> validateCsrfToken). That header was previously the caller's
- * responsibility via `csrfHeaders()`, which no client used — so dashboard writes 403'd,
- * except on routes under `CSRF_EXEMPT_PREFIXES` (`/api/setup`, `/api/auth`,
- * `/api/webhooks`, `/api/health`). These tests pin the behaviour that makes attaching
- * the header the default, so the regression cannot return via a newly written fetch.
+ * A mutating `/api/*` request is rejected unless it carries both the `csrf` cookie and a
+ * matching `X-CSRF-Token` header (src/middleware.ts -> requiresCsrfValidation ->
+ * validateCsrfToken). That header was previously each caller's job via `csrfHeaders()`,
+ * which nothing used, so dashboard writes 403'd. Routes that kept working did so for two
+ * different reasons worth keeping straight: `/api/setup`, `/api/auth`, `/api/webhooks`
+ * and `/api/health` are in `CSRF_EXEMPT_PREFIXES`, while `/api/team/invite/accept`
+ * survives via `PUBLIC_PATHS` in the middleware, which returns before CSRF runs at all.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { apiFetch } from '@/lib/api-fetch';
+import { apiFetch, MUTATING_METHODS } from '@/lib/api-fetch';
 
 const TOKEN = 'test-csrf-token';
 
 function headersOf(call: unknown): Headers {
-    const init = (call as [string, RequestInit])[1];
-    return new Headers(init.headers);
+    return new Headers((call as [string, RequestInit])[1].headers);
+}
+
+function initOf(call: unknown): RequestInit {
+    return (call as [string, RequestInit])[1];
 }
 
 describe('apiFetch', () => {
     let fetchMock: ReturnType<typeof vi.fn>;
-    // jsdom defines `document.cookie` as an accessor. Overwriting it with a data
-    // property destroys that accessor for the rest of the file, so capture the
-    // original descriptor and put it back in afterEach rather than leaking a broken
-    // `document` into every later test.
-    const originalCookie = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
 
+    // jsdom serves `document.cookie` from a prototype accessor. Defining an own property
+    // on the instance SHADOWS it (it does not destroy it), so the repair is deleting the
+    // own property in afterEach — after which the accessor is reachable again.
     function setCookie(value: string) {
         Object.defineProperty(document, 'cookie', {
             value,
@@ -44,26 +45,48 @@ describe('apiFetch', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
-        // Remove the data property so the prototype accessor is reachable again.
         delete (document as unknown as Record<string, unknown>).cookie;
-        if (originalCookie) {
-            Object.defineProperty(Document.prototype, 'cookie', originalCookie);
-        }
     });
 
-    it.each(['POST', 'PUT', 'PATCH', 'DELETE'])(
-        'attaches the CSRF token on %s',
-        async (method) => {
-            await apiFetch('/api/sync/mappings', { method, body: '{}' });
+    it.each([...MUTATING_METHODS])('attaches the CSRF token on %s', async (method) => {
+        await apiFetch('/api/sync/mappings', { method, body: '{}' });
 
-            expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
+        expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
+    });
+
+    it('stays in sync with the middleware’s own method set', async () => {
+        // The set is duplicated because csrf.ts pulls in `next/server` and cannot be
+        // imported client-side. Drift would silently drop CSRF coverage for a method.
+        const { MUTATING_METHODS: serverSet } = await import('@/lib/csrf');
+
+        expect([...MUTATING_METHODS].sort()).toEqual([...serverSet].sort());
+    });
+
+    it.each(['GET', 'HEAD', 'OPTIONS'])(
+        'does not attach the token on %s, which the middleware never checks',
+        async (method) => {
+            await apiFetch('/api/sync/mappings', { method });
+
+            expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBeNull();
         },
     );
 
-    it('does not attach the token on GET, which the middleware never checks', async () => {
-        await apiFetch('/api/sync/mappings');
+    it('normalises a lowercase method before deciding it is mutating', async () => {
+        await apiFetch('/api/x', { method: 'post', body: '{}' });
+
+        expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
+    });
+
+    it('does not send the token to a cross-origin URL', async () => {
+        await apiFetch('https://evil.example.com/collect', { method: 'POST', body: '{}' });
 
         expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBeNull();
+    });
+
+    it('does send the token to an absolute same-origin URL', async () => {
+        await apiFetch(`${location.origin}/api/tickets`, { method: 'POST', body: '{}' });
+
+        expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
     });
 
     it('does not clobber a caller-supplied token', async () => {
@@ -76,63 +99,56 @@ describe('apiFetch', () => {
         expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe('caller-token');
     });
 
-    it('defaults Content-Type to JSON when a body is sent', async () => {
+    it('never sets Content-Type — the caller owns it', async () => {
+        // An earlier version defaulted it to JSON, which mislabelled URLSearchParams,
+        // Blob and plain-text bodies. The wrapper now has exactly one job.
         await apiFetch('/api/tickets', { method: 'POST', body: '{}' });
 
-        expect(headersOf(fetchMock.mock.calls[0]).get('Content-Type')).toBe('application/json');
-    });
-
-    it.each([
-        ['URLSearchParams', () => new URLSearchParams({ a: 'b' })],
-        ['Blob', () => new Blob(['x'], { type: 'text/csv' })],
-        ['ArrayBuffer', () => new ArrayBuffer(4)],
-    ])('does not stamp JSON onto a %s body, which carries its own encoding', async (_n, make) => {
-        await apiFetch('/api/x', { method: 'POST', body: make() as BodyInit });
-
-        expect(headersOf(fetchMock.mock.calls[0]).get('Content-Type')).toBeNull();
-        // The token is still required regardless of body type.
-        expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
-    });
-
-    it('does not stamp JSON onto a null body', async () => {
-        await apiFetch('/api/x', { method: 'POST', body: null });
-
         expect(headersOf(fetchMock.mock.calls[0]).get('Content-Type')).toBeNull();
     });
 
-    it('normalises a lowercase method before deciding it is mutating', async () => {
-        await apiFetch('/api/x', { method: 'post', body: '{}' });
-
-        expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
-    });
-
-    it('leaves FormData alone so the browser can set the multipart boundary', async () => {
-        const body = new FormData();
-        body.append('file', 'x');
-
-        await apiFetch('/api/docs/upload', { method: 'POST', body });
-
-        expect(headersOf(fetchMock.mock.calls[0]).get('Content-Type')).toBeNull();
-        // The token is still required for the request to survive the middleware.
-        expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
-    });
-
-    it('respects an explicit Content-Type', async () => {
+    it('preserves a caller-supplied Content-Type', async () => {
         await apiFetch('/api/x', {
             method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: 'hi',
+            headers: { 'Content-Type': 'text/csv' },
+            body: 'a,b',
         });
 
-        expect(headersOf(fetchMock.mock.calls[0]).get('Content-Type')).toBe('text/plain');
+        expect(headersOf(fetchMock.mock.calls[0]).get('Content-Type')).toBe('text/csv');
     });
 
-    it('sends no token when the cookie is absent, rather than sending an empty one', async () => {
-        Object.defineProperty(document, 'cookie', {
-            value: '',
-            configurable: true,
-            writable: true,
+    it('passes the rest of init through untouched', async () => {
+        const signal = new AbortController().signal;
+
+        await apiFetch('/api/x', {
+            method: 'POST',
+            body: '{"a":1}',
+            signal,
+            credentials: 'include',
+            cache: 'no-store',
         });
+
+        const init = initOf(fetchMock.mock.calls[0]);
+        expect(fetchMock.mock.calls[0][0]).toBe('/api/x');
+        expect(init.body).toBe('{"a":1}');
+        expect(init.signal).toBe(signal);
+        expect(init.credentials).toBe('include');
+        expect(init.cache).toBe('no-store');
+    });
+
+    it('accepts a Headers instance and lowercase header names', async () => {
+        await apiFetch('/api/x', {
+            method: 'POST',
+            headers: new Headers({ 'x-csrf-token': 'caller-token' }),
+            body: '{}',
+        });
+
+        // Header names are case-insensitive, so the caller's value must still win.
+        expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe('caller-token');
+    });
+
+    it('sends no token when the cookie is absent, rather than an empty one', async () => {
+        setCookie('');
 
         await apiFetch('/api/tickets', { method: 'POST', body: '{}' });
 

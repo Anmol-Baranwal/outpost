@@ -51,7 +51,10 @@ const CSRF_EXEMPT_PREFIXES = [
     '/api/setup',
 ];
 
-const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// Exported so api-fetch.test.ts can assert its client-side copy has not drifted. The
+// copy exists because this module imports `next/server` and cannot reach the client
+// bundle; a method present in one set and not the other silently drops CSRF coverage.
+export const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
  * Returns `true` when the request is a mutating API call that needs CSRF
