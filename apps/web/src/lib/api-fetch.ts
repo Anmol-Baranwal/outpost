@@ -1,21 +1,25 @@
 /**
  * Client-side fetch wrapper for Outpost's own API.
  *
- * Every mutating request to `/api/*` must carry an `X-CSRF-Token` header: the
- * middleware calls `requiresCsrfValidation()` and rejects with 403 when the header
- * is missing (`src/middleware.ts`, `src/lib/csrf.ts`). Attaching it used to be the
- * caller's job via `csrfHeaders()`, and every caller forgot — 19 client files issued
- * mutating fetches and none sent the header, so no authenticated write in the
- * dashboard could persist. This wrapper exists so the correct behaviour is the
- * default rather than something each new `fetch` has to remember.
+ * Mutating requests to `/api/*` must carry an `X-CSRF-Token` header: the middleware
+ * calls `requiresCsrfValidation()` and rejects with 403 when it is missing
+ * (`src/middleware.ts`, `src/lib/csrf.ts`). Attaching it used to be the caller's job
+ * via `csrfHeaders()` and every caller forgot, so dashboard writes 403'd. Routes under
+ * `CSRF_EXEMPT_PREFIXES` (`/api/setup`, `/api/auth`, `/api/webhooks`, `/api/health`)
+ * were unaffected — which is why setup, login and invite-accept kept working. This
+ * wrapper makes the correct behaviour the default rather than something each new
+ * `fetch` has to remember.
  *
- * Use it for same-origin calls to Outpost's API. It is deliberately thin: it does
- * not parse the body, throw on non-2xx, or retry — callers keep full control of the
- * Response, so migrating an existing `fetch` is a one-line change.
+ * Use it for same-origin calls to Outpost's API — an absolute cross-origin URL would
+ * send the token to that origin. It is deliberately thin: it does not parse the body,
+ * throw on non-2xx, or retry, so callers keep full control of the Response.
  */
 
 import { csrfHeaders } from './csrf-client';
 
+// Mirrors MUTATING_METHODS in ./csrf.ts. Duplicated rather than imported because
+// csrf.ts pulls in `next/server`, which must not reach the client bundle. Keep the two
+// in sync — a method listed in one and not the other silently drops CSRF coverage.
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
@@ -25,7 +29,7 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * chosen its own — so `FormData` uploads, which need the browser to generate a
  * multipart boundary, are left alone.
  */
-export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
     const method = (init.method ?? 'GET').toUpperCase();
 
     // GET/HEAD are not rejected by the middleware, so leave them untouched rather
@@ -37,12 +41,17 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
     const headers = new Headers(init.headers);
 
     for (const [key, value] of Object.entries(csrfHeaders())) {
-        // Do not clobber a caller-supplied token; tests set one explicitly.
         if (!headers.has(key)) headers.set(key, value);
     }
 
-    const isFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
-    if (init.body !== undefined && !isFormData && !headers.has('Content-Type')) {
+    // Only a string body gets a default Content-Type. Every other BodyInit carries its
+    // own encoding that fetch derives correctly on its own — FormData needs a generated
+    // multipart boundary, URLSearchParams is form-urlencoded, a Blob has its own `type`,
+    // and ArrayBuffer/TypedArray have none. Stamping `application/json` over any of those
+    // would misdescribe the payload and break server-side parsing.
+    const shouldDefaultJson =
+        typeof init.body === 'string' && init.body !== '' && !headers.has('Content-Type');
+    if (shouldDefaultJson) {
         headers.set('Content-Type', 'application/json');
     }
 

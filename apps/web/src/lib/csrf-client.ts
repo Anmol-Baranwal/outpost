@@ -4,14 +4,10 @@
  * Reads the `csrf` cookie set by middleware and returns the value so callers
  * can attach it as an `X-CSRF-Token` header on mutating fetch requests.
  *
- * Prefer `apiFetch` from '@/lib/api-fetch' over calling this directly — it attaches
- * the header for you on mutating requests. This helper existed as the opt-in way to
- * do that and every caller forgot, which left no authenticated write in the dashboard
- * able to persist. Reach for it only when you need the raw header value.
- *
- * Usage:
- *   import { apiFetch } from '@/lib/api-fetch';
- *   apiFetch('/api/tickets', { method: 'POST', body });
+ * Prefer `apiFetch` from '@/lib/api-fetch' — it attaches the header for you on mutating
+ * requests. This helper was the opt-in way to do that and every caller forgot, which
+ * left dashboard writes 403ing on all non-exempt routes. Reach for it directly only
+ * when you need the raw header value.
  */
 
 function getCsrfCookie(): string | undefined {
