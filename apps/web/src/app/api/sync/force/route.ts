@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob, JobType } from '@copilotkit/outpost/queue';
 import {
-    loadPriorityMap,
     loadStatusMap,
     singleReadConfigDb,
     supportsOutboundSync,
-    TicketPriority,
     TicketStatus,
 } from '@copilotkit/outpost/shared';
 import { requireAdmin } from '@/lib/require-admin';
@@ -22,11 +20,11 @@ import { requireAdmin } from '@/lib/require-admin';
  * Two things are deliberately NOT enqueued:
  *
  *  - plugins with no registered outbound adapter (see supportsOutboundSync)
- *  - individual changes whose Outpost value has no reverse mapping for this
- *    plugin (see the mappable-value filter below)
+ *  - status changes whose value has no reverse mapping for this plugin
  *
- * Both would otherwise produce jobs that fail or, worse, succeed with a wrong
- * value. Skipped work is reported in the response rather than dropped quietly.
+ * The first would produce jobs that fail and retry to the DLQ. The second would
+ * produce jobs that no-op in the adapter — enqueuing them would just hide the
+ * missing mapping, so they are skipped and named in the response instead.
  *
  * Body: { plugin: string, ticketId?: string }
  */
@@ -108,30 +106,25 @@ export async function POST(request: NextRequest) {
     // effect, and this is a manual admin action rather than an automated path.
     const ENQUEUE_CHUNK_SIZE = 50;
 
-    // Only enqueue changes that survive the round trip.
+    // Only enqueue status changes that survive the round trip.
     //
-    // The adapter converts each Outpost value back to an external one with
-    // StatusMap/PriorityMap.fromOutpost, which falls back to the FIRST entry of
-    // its config when a value has no reverse mapping. TicketStatus has six
-    // values and createLinearStatusMap covers four, so WAITING_ON_CUSTOMER and
-    // WAITING_ON_TEAM both resolve to 'Triage'. Enqueuing those unconditionally
-    // means one "Force Linear" click moves every waiting ticket's Linear issue
-    // to Triage and records each as a successful sync — a silent, bulk,
-    // hard-to-reverse write. Priority is fully covered by the Linear defaults,
-    // but a persisted custom map need not be, so it gets the same guard.
+    // StatusMap.fromOutpost falls back to the FIRST entry of its config for any
+    // Outpost status with no reverse mapping. TicketStatus has six values and
+    // createLinearStatusMap covers four, so WAITING_ON_CUSTOMER and
+    // WAITING_ON_TEAM would both resolve to 'Triage'.
     //
-    // These are the same loaders the worker uses, so this reflects the mapping
-    // actually in effect rather than the hardcoded defaults.
+    // LinearAdapter.pushStatusChange refuses to guess for exactly this reason, so
+    // an unmappable status is already safe on the push side. This filter is not
+    // the safety net — it is the operator-facing half: skipping here means the
+    // response can name which values have no mapping, instead of enqueuing jobs
+    // that quietly no-op. Uses the same loader the worker uses, so it reflects
+    // the mapping actually in effect rather than the hardcoded defaults.
     //
-    // Both loaders read the SAME sync.mappingConfig row, so they go through the
-    // shared read-once facade rather than issuing two identical queries — the
-    // same collapse buildSyncEngine already does for its three loaders.
+    // Read through the shared read-once facade: one row, however many loaders
+    // end up asking for it (buildSyncEngine does the same for its three).
     const configDb = singleReadConfigDb(prisma);
 
-    const [statusMap, priorityMap] = await Promise.all([
-        loadStatusMap(plugin, configDb),
-        loadPriorityMap(plugin, configDb),
-    ]);
+    const statusMap = await loadStatusMap(plugin, configDb);
 
     const payloads: {
         ticketId: string;
@@ -155,16 +148,18 @@ export async function POST(request: NextRequest) {
             skipped.push(`status:${status}`);
         }
 
-        if (priorityMap.hasOutpost(priority as TicketPriority)) {
-            payloads.push({
-                ticketId: id,
-                targetPlugin: plugin,
-                action: 'priority_change',
-                changeData: { priority },
-            });
-        } else {
-            skipped.push(`priority:${priority}`);
-        }
+        // Priority is NOT filtered. Linear's outbound priority goes through
+        // LinearAdapter.outpostPriorityToLinearNumber — an exhaustive switch over
+        // all four TicketPriority values — not through the PriorityMap, which is
+        // inbound-only until #96 wires the persisted priority config into the
+        // worker. Filtering on a map the push path never consults would skip
+        // priority changes the adapter handles perfectly well.
+        payloads.push({
+            ticketId: id,
+            targetPlugin: plugin,
+            action: 'priority_change',
+            changeData: { priority },
+        });
     }
 
     // Distinct rather than per-ticket: the operator needs to know WHICH values

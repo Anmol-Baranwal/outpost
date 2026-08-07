@@ -48,10 +48,7 @@ export interface LinearClientLike {
         priority?: number;
     }): Promise<{ success: boolean; issue: Promise<{ id: string }> }>;
 
-    createComment(input: {
-        issueId: string;
-        body: string;
-    }): Promise<{ success: boolean }>;
+    createComment(input: { issueId: string; body: string }): Promise<{ success: boolean }>;
 
     workflowStates(filter: {
         team: { id: { eq: string } };
@@ -85,7 +82,8 @@ export class LinearAdapter implements InternalTracker {
     private labelCache: Map<string, string> | null = null;
 
     constructor(config: LinearAdapterConfig, client?: LinearClientLike) {
-        this.client = client ?? new LinearClient({ apiKey: config.apiKey }) as unknown as LinearClientLike;
+        this.client =
+            client ?? (new LinearClient({ apiKey: config.apiKey }) as unknown as LinearClientLike);
         this.teamId = config.teamId;
         this.statusMap = config.statusMap;
         this.priorityMap = config.priorityMap;
@@ -133,7 +131,7 @@ export class LinearAdapter implements InternalTracker {
                     title: data.title as string | undefined,
                     description: data.description as string | undefined,
                     status: this.mapStatusToOutpost(
-                        (data.state as Record<string, unknown>)?.name as string ?? 'Triage',
+                        ((data.state as Record<string, unknown>)?.name as string) ?? 'Triage',
                     ),
                     priority: this.mapPriorityToOutpost(String(data.priority ?? '0')),
                 };
@@ -145,7 +143,9 @@ export class LinearAdapter implements InternalTracker {
 
                 // Status change
                 if (updatedFrom.stateId !== undefined) {
-                    const stateName = (data.state as Record<string, unknown>)?.name as string | undefined;
+                    const stateName = (data.state as Record<string, unknown>)?.name as
+                        | string
+                        | undefined;
                     if (stateName) {
                         return {
                             externalId: issueId,
@@ -205,9 +205,7 @@ export class LinearAdapter implements InternalTracker {
         status: TicketStatus;
         priority: TicketPriority;
     }): Promise<string> {
-        const stateId = await this.resolveWorkflowStateId(
-            this.mapStatusFromOutpost(ticket.status),
-        );
+        const stateId = await this.resolveWorkflowStateId(this.mapStatusFromOutpost(ticket.status));
 
         const priorityNumber = this.outpostPriorityToLinearNumber(ticket.priority);
 
@@ -228,6 +226,28 @@ export class LinearAdapter implements InternalTracker {
     }
 
     async pushStatusChange(link: TicketExternalLinkRef, status: TicketStatus): Promise<void> {
+        // Refuse to guess. StatusMap.fromOutpost falls back to the FIRST entry of
+        // its config for any Outpost status with no reverse mapping, and
+        // createLinearStatusMap covers four of TicketStatus's six values — so
+        // WAITING_ON_CUSTOMER and WAITING_ON_TEAM would both resolve to 'Triage'
+        // and quietly move the issue there. Writing a wrong state is worse than
+        // writing none, and it reports as a successful sync.
+        //
+        // GitHubAdapter.mapStatusFromOutpost handles every enum value explicitly;
+        // this adapter delegates to the map, so it needs the guard instead.
+        //
+        // Returning rather than throwing is deliberate: an unmapped status is a
+        // configuration gap, not a transient fault, so retrying to the DLQ would
+        // just be noise. Add a mapping on /sync/mappings to make it push.
+        if (!this.statusMap.hasOutpost(status)) {
+            console.warn(
+                `[LinearAdapter] No Linear state mapped for Outpost status "${status}" — ` +
+                    `skipping status push for issue ${link.externalId}. Add a mapping on ` +
+                    `/sync/mappings so this status can sync.`,
+            );
+            return;
+        }
+
         const stateName = this.mapStatusFromOutpost(status);
         const stateId = await this.resolveWorkflowStateId(stateName);
         if (!stateId) {
@@ -311,11 +331,16 @@ export class LinearAdapter implements InternalTracker {
      */
     private outpostPriorityToLinearNumber(priority: TicketPriority): number {
         switch (priority) {
-            case TicketPriority.CRITICAL: return 1;
-            case TicketPriority.HIGH: return 2;
-            case TicketPriority.MEDIUM: return 3;
-            case TicketPriority.LOW: return 4;
-            default: return 3;
+            case TicketPriority.CRITICAL:
+                return 1;
+            case TicketPriority.HIGH:
+                return 2;
+            case TicketPriority.MEDIUM:
+                return 3;
+            case TicketPriority.LOW:
+                return 4;
+            default:
+                return 3;
         }
     }
 
