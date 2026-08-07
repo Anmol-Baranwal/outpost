@@ -15,6 +15,7 @@ export default function SyncPage() {
     const [events, setEvents] = useState<SyncEvent[]>([]);
     const [conflicts, setConflicts] = useState<SyncEvent[]>([]);
     const [forcing, setForcing] = useState<string | null>(null);
+    const [forceNotice, setForceNotice] = useState<string | null>(null);
 
     const fetchStatus = useCallback(async () => {
         try {
@@ -57,12 +58,29 @@ export default function SyncPage() {
 
     async function handleForceSync(plugin: string) {
         setForcing(plugin);
+        setForceNotice(null);
         try {
-            await fetch('/api/sync/force', {
+            const res = await fetch('/api/sync/force', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ plugin }),
             });
+            const data = await res.json().catch(() => null);
+
+            // A force sync that partially or wholly did nothing has to say so.
+            // The route skips changes whose value has no reverse mapping for this
+            // plugin — silently dropping that on the floor would just trade a
+            // silent wrong write for a silent no-write.
+            if (!res.ok) {
+                setForceNotice(data?.error ?? `Force sync failed (${res.status}).`);
+            } else if (data?.skipped > 0) {
+                setForceNotice(
+                    `Queued ${data.jobs} job(s). Skipped ${data.skipped} change(s) with no ` +
+                        `mapping for ${plugin}: ${data.unmappable.join(', ')}. Add mappings on ` +
+                        `the Mappings tab, or those tickets stay out of sync.`,
+                );
+            }
+
             await fetchStatus();
             await fetchEvents();
         } finally {
@@ -131,6 +149,14 @@ export default function SyncPage() {
                                 ))}
                         </div>
                     </div>
+                    {forceNotice && (
+                        <div
+                            data-testid="force-sync-notice"
+                            className="mb-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground"
+                        >
+                            {forceNotice}
+                        </div>
+                    )}
                     <SyncHealthCards systems={systems} />
                 </div>
 

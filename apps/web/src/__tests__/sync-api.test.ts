@@ -742,6 +742,35 @@ describe('POST /api/sync/force', () => {
         expect(body.unmappable).toEqual(['status:WAITING_ON_TEAM']);
     });
 
+    it('reads the mapping config once, not once per loader', async () => {
+        // loadStatusMap and loadPriorityMap each look up the same
+        // sync.mappingConfig row; they share one read via singleReadConfigDb.
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([
+            {
+                ticketId: 't-1',
+                plugin: 'linear',
+                ticket: { id: 't-1', status: 'OPEN', priority: 'HIGH' },
+            },
+        ]);
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        await forceSync(req as never);
+
+        expect(mockSystemConfigFindUnique).toHaveBeenCalledTimes(1);
+    });
+
+    it('loads no mapping config at all when nothing is linked', async () => {
+        mockSyncEventFindFirst.mockResolvedValue({ id: 'se-1' });
+        mockTicketExternalLinkFindMany.mockResolvedValue([]);
+
+        const req = makeJsonRequest('http://localhost:3000/api/sync/force', { plugin: 'linear' });
+        await forceSync(req as never);
+
+        expect(mockSystemConfigFindUnique).not.toHaveBeenCalled();
+    });
+
     it('refuses a known plugin that has no registered outbound adapter', async () => {
         // github-app writes SyncEvent and TicketExternalLink rows, so 'github'
         // clears the existence probes — but buildSyncEngine registers Linear only.

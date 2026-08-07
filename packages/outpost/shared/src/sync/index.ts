@@ -45,6 +45,7 @@ export type { ClassificationResult } from './enrichment.js';
 export { initializeSyncEngine } from './init.js';
 export { OUTBOUND_SYNC_PLUGINS, supportsOutboundSync } from './capabilities.js';
 export type { OutboundSyncPlugin } from './capabilities.js';
+export { singleReadConfigDb } from './config-cache.js';
 export { EchoGuard } from './echo-guard.js';
 export type { EchoGuardDeps, SyncEventStatus } from './echo-guard.js';
 export { ConflictDetector } from './conflict.js';

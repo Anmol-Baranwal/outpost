@@ -4,6 +4,7 @@ import { createJob, JobType } from '@copilotkit/outpost/queue';
 import {
     loadPriorityMap,
     loadStatusMap,
+    singleReadConfigDb,
     supportsOutboundSync,
     TicketPriority,
     TicketStatus,
@@ -83,6 +84,12 @@ export async function POST(request: NextRequest) {
         select: { ticket: { select: { id: true, status: true, priority: true } } },
     });
 
+    // Nothing linked: return before loading any mapping config, so a no-op
+    // resync costs zero extra reads.
+    if (links.length === 0) {
+        return NextResponse.json({ queued: 0, jobs: 0, skipped: 0, unmappable: [] });
+    }
+
     // Enqueued in BOUNDED batches. Sequential 2xN round-trips could brush the
     // route timeout on a large workspace; an unbounded Promise.all over 2N inserts
     // just trades that for Prisma pool-acquisition timeouts, which is the same
@@ -115,15 +122,21 @@ export async function POST(request: NextRequest) {
     //
     // These are the same loaders the worker uses, so this reflects the mapping
     // actually in effect rather than the hardcoded defaults.
+    //
+    // Both loaders read the SAME sync.mappingConfig row, so they go through the
+    // shared read-once facade rather than issuing two identical queries — the
+    // same collapse buildSyncEngine already does for its three loaders.
+    const configDb = singleReadConfigDb(prisma);
+
     const [statusMap, priorityMap] = await Promise.all([
-        loadStatusMap(plugin, prisma),
-        loadPriorityMap(plugin, prisma),
+        loadStatusMap(plugin, configDb),
+        loadPriorityMap(plugin, configDb),
     ]);
 
     const payloads: {
         ticketId: string;
         targetPlugin: string;
-        action: string;
+        action: 'status_change' | 'priority_change';
         changeData: Record<string, string>;
     }[] = [];
     const skipped: string[] = [];

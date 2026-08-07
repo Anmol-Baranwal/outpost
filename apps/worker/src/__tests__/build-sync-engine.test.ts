@@ -5,7 +5,11 @@ const mockLoadPriorityMap = vi.fn();
 const mockLoadLabelMapper = vi.fn();
 const mockInitializeSyncEngine = vi.fn();
 
-vi.mock('@copilotkit/outpost/shared', () => ({
+// The loaders are stubbed, but singleReadConfigDb is NOT: it comes through from
+// the real module, so the "reads the row once" assertion below exercises the
+// actual caching implementation rather than a copy of it living in this file.
+vi.mock('@copilotkit/outpost/shared', async (importActual) => ({
+    ...(await importActual<typeof import('@copilotkit/outpost/shared')>()),
     loadStatusMap: (...args: unknown[]) => mockLoadStatusMap(...args),
     loadPriorityMap: (...args: unknown[]) => mockLoadPriorityMap(...args),
     loadLabelMapper: (...args: unknown[]) => mockLoadLabelMapper(...args),
