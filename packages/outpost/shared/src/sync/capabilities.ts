@@ -13,6 +13,16 @@
  * needs an authenticated Octokit that today only lives inside apps/github-app,
  * so the worker's engine has no `github` tracker registered — see #98. Add
  * 'github' here in the same change that registers the adapter, not before.
+ *
+ * KNOWN LIMITATION: this is a static list, while registration is additionally
+ * conditional on env — initializeSyncEngine() only registers Linear when both
+ * LINEAR_API_KEY and LINEAR_TEAM_ID are set. A deployment missing those has no
+ * Linear adapter even though `supportsOutboundSync('linear')` returns true, so
+ * the DLQ flood this list exists to prevent is still reachable by
+ * misconfiguration rather than by design. Closing that properly means the
+ * worker publishing what it actually registered (a job the /health work in #138
+ * is better placed to do) rather than the web app guessing at the worker's env,
+ * since the two are separate deployments and their env can differ.
  */
 export const OUTBOUND_SYNC_PLUGINS = ['linear'] as const;
 
