@@ -36,7 +36,7 @@ The Top issues are the core of the briefing. Deliver them as a **numbered list m
 
 ## Segment flow — walk the report top to bottom
 
-**Dive straight in and follow the report's own order, top to bottom — the CopilotKit page first, then the AG-UI sub-page in the same order.** No separate "opener," no hype line, no curated narrative that reorders the page. One short orienting sentence ("This is the community signal for the week of X — I'll walk CopilotKit top to bottom, then AG-UI"), then go. Cover each section in the order it appears on the page; skip a section only when it's empty (say nothing, move on).
+**Dive straight in and follow the report's own order, top to bottom — the CopilotKit page first, then the AG-UI sub-page in the same order.** The page order IS the order — no curated narrative that reorders it (opener/hype rules live in `## Tone`). One short orienting sentence ("This is the community signal for the week of X — I'll walk CopilotKit top to bottom, then AG-UI"), then go. Cover each section in the order it appears on the page; skip a section only when it's empty (say nothing, move on).
 
 **CopilotKit page (in page order):**
 1. **Trends** — one or two sentences: heavy or quiet week, and are we keeping up. Note capped bulk-close sweeps so the resolved number isn't misread.
@@ -52,8 +52,6 @@ The Top issues are the core of the briefing. Deliver them as a **numbered list m
 Then `[SWITCH to the AG-UI sub-page]` with a plain spoken transition ("now the AG-UI page, same walk"), and cover it in the **same page order**: Trends → Top issues (numbered) → Pain (pattern read) → Demand → Docs → Resolved → Reddit Pulse.
 
 **Close** (~15s) — the week in a sentence, the one or two things the host needs the team to action, point to the linked report. Plain sign-off, no flourish.
-
-**Both pages get airtime — never skip AG-UI.** Even a thin AG-UI week gets its walk + the `[SWITCH to the AG-UI sub-page]` cue; compress, don't skip. A script that only walks the CopilotKit page is incomplete.
 
 ## Pain segment (what the CEO wants)
 
@@ -77,7 +75,7 @@ Two columns / two blocks so the host can hide the cues:
 
 - **The spoken script** — what to say, top to bottom, with `[SCROLL to …]` / `[beat]` / `[~m:ss]` cues in brackets the host reads silently. **Bold the one anchor line per segment** so a host who blanks can just read the bold and move on. Top issues appear as a numbered list, one beat each.
 - **A cue card** (≤12 lines) — scroll cues + bold anchors only, for off-screen glancing while recording. List the top issues numbered.
-- **Pacing notes** — which segment to slow down on (the Pain read), and what to cut for 5 min. No through-line/catchphrase note.
+- **Pacing notes** — which segment to slow down on (the Pain read), and which lines to cut to stay under 10 minutes (per the Length section). No through-line/catchphrase note.
 
 ## Hand-off
 
