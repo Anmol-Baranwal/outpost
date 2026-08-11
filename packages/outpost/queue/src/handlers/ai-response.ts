@@ -117,6 +117,13 @@ export async function handleAiResponse(
             `[AI Response] Ticket ${ticketId} already answered — skipping. ` +
                 `Outpost posts one response per ticket; a human owns this thread now.`,
         );
+        // Walk the ladder to 100 like every other successful exit. This job
+        // succeeded — it decided to do nothing — so anything reading job
+        // progress (dashboard, ops query) must see it finished, not parked at
+        // 20% looking hung. Failure exits deliberately leave progress where it
+        // stopped: the job row records status FAILED next to it, so a partial
+        // number is the honest reading there.
+        await context.reportProgress(100);
         return {
             success: true,
             data: { ticketId, skipped: true, reason: 'already_answered' },

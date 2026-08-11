@@ -1202,6 +1202,19 @@ describe('handleAiResponse', () => {
             expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
         });
 
+        it('drives progress to 100 so the skipped job is not left looking hung', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+            const ctx = makeContext();
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, ctx);
+
+            // The skip is a successful completion, so it must walk the ladder to
+            // 100 like the normal path. Returning after reportProgress(20) would
+            // persist a job stuck at 20% forever on the Job row.
+            expect(ctx.reportProgress).toHaveBeenCalledWith(100);
+            expect(ctx.reportProgress).toHaveBeenLastCalledWith(100);
+        });
+
         it('does not post anything to the platform for an already-answered ticket', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
 
