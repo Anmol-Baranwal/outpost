@@ -503,6 +503,139 @@ describe('InboundHandler', () => {
             // Slack tickets use composite sourceId so reply lookups match
             expect(ticketData.sourceId).toBe('C0ABCDEF1:1234567890.123456');
         });
+
+        it('stores null instead of a bare threadTs when the Slack channelId is missing', async () => {
+            const msg = makeInboundMessage({
+                source: TicketSource.SLACK,
+                threadId: '1234567890.123456',
+                channelId: undefined,
+                isThreadStart: true,
+            });
+
+            await handler.handle(msg);
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            // A bare ts is not a Slack key — the reply lookup would build
+            // "channel:ts" and never find it, so refuse to pretend otherwise.
+            expect(ticketData.sourceId).toBeNull();
+        });
+
+        it('does not search for the unmatchable "channelId:" key when a Slack reply has no threadTs', async () => {
+            const msg = makeInboundMessage({
+                source: TicketSource.SLACK,
+                threadId: undefined,
+                channelId: 'C0ABCDEF1',
+                isThreadStart: false,
+            });
+
+            await handler.handle(msg);
+
+            // The old lookup defaulted threadId to '' and queried "C0ABCDEF1:",
+            // a key nothing is ever stored under.
+            expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+        });
+
+        it('does not search by a bare threadTs when a Slack reply has no channelId', async () => {
+            const msg = makeInboundMessage({
+                source: TicketSource.SLACK,
+                threadId: '1234567890.123456',
+                channelId: undefined,
+                isThreadStart: false,
+            });
+
+            await handler.handle(msg);
+
+            expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+        });
+    });
+
+    // ── sourceId write/read symmetry ─────────────────────────────────
+    //
+    // The regression these guard: create stored `null` for a message with no
+    // threadId while the reply lookup searched for `''`. The two could never
+    // agree, so every reply in such a conversation looked like a brand-new
+    // ticket and drew its own AI answer.
+
+    describe('sourceId write/read symmetry', () => {
+        it('does not search for the empty-string key when a non-Slack reply has no threadId', async () => {
+            const msg = makeInboundMessage({
+                source: TicketSource.DISCORD,
+                threadId: undefined,
+                isThreadStart: false,
+            });
+
+            await handler.handle(msg);
+
+            expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+        });
+
+        it('stores null for a non-Slack ticket with no threadId', async () => {
+            const msg = makeInboundMessage({
+                source: TicketSource.DISCORD,
+                threadId: undefined,
+                isThreadStart: true,
+            });
+
+            await handler.handle(msg);
+
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            expect(ticketData.sourceId).toBeNull();
+        });
+
+        it('treats a threadId-less reply as a new ticket instead of matching a null-sourceId ticket', async () => {
+            // Guard against the opposite failure mode: matching on the absent
+            // key would glue unrelated threadId-less conversations together.
+            (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+                id: 'ticket-existing',
+                displayId: 'TKT-EXISTIN',
+                status: 'OPEN',
+                sourceId: null,
+                channel: 'channel-1',
+                source: 'DISCORD',
+            });
+
+            const msg = makeInboundMessage({
+                source: TicketSource.DISCORD,
+                threadId: undefined,
+                isThreadStart: false,
+            });
+            const result = await handler.handle(msg);
+
+            expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+            expect(result.isNewTicket).toBe(true);
+        });
+
+        it.each([
+            [TicketSource.DISCORD, 'thread-abc', 'channel-1'],
+            [TicketSource.SLACK, '1234567890.123456', 'C0ABCDEF1'],
+            [TicketSource.TEAMS, 'conv-xyz', undefined],
+            [TicketSource.GITHUB_ISSUE, 'owner/repo#42', undefined],
+            // The unaddressable cases: written key is null, so no lookup may
+            // happen at all. Any query here means the reader invented a key.
+            [TicketSource.DISCORD, undefined, 'channel-1'],
+            [TicketSource.TEAMS, undefined, undefined],
+            [TicketSource.SLACK, '1234567890.123456', undefined],
+            [TicketSource.SLACK, undefined, 'C0ABCDEF1'],
+        ])(
+            'writes and reads the same key for %s (threadId=%s, channelId=%s)',
+            async (source, threadId, channelId) => {
+                await handler.handle(
+                    makeInboundMessage({ source, threadId, channelId, isThreadStart: true }),
+                );
+                const written = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                    .data.sourceId;
+
+                const findFirst = prisma.ticket.findFirst as ReturnType<typeof vi.fn>;
+                await handler.handle(
+                    makeInboundMessage({ source, threadId, channelId, isThreadStart: false }),
+                );
+                // No query at all is the correct read of a null key.
+                const read =
+                    findFirst.mock.calls.length === 0 ? null : findFirst.mock.calls[0][0].where.sourceId;
+
+                expect(read).toBe(written);
+            },
+        );
     });
 
     // ── Team member detection ────────────────────────────────────────

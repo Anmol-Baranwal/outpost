@@ -1,7 +1,7 @@
 import type { App } from '@slack/bolt';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
-import { SlackAdapter, InboundHandler } from '@copilotkit/outpost/shared/platforms';
+import { SlackAdapter, InboundHandler, buildTicketSourceId } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
 
@@ -39,9 +39,17 @@ export function registerMessageHandler(app: App): void {
             // For threaded replies, ignore if the thread isn't tracked as a ticket.
             // This prevents InboundHandler from creating a new ticket for stray replies.
             if (!message.isThreadStart) {
-                const sourceId = message.channelId
-                    ? `${message.channelId}:${message.threadId}`
-                    : message.threadId ?? '';
+                // Same key builder InboundHandler writes and reads with — this
+                // used to build "C123:undefined" for a reply with no threadId,
+                // a third spelling of a key nothing was ever stored under.
+                const sourceId = buildTicketSourceId(
+                    message.source,
+                    message.threadId,
+                    message.channelId,
+                );
+                // No addressable key: no ticket can carry it, so this reply is
+                // untracked by definition.
+                if (sourceId === null) return;
                 const existingTicket = await prisma.ticket.findFirst({
                     where: { source: 'SLACK', sourceId },
                 });

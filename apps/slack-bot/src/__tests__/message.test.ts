@@ -261,6 +261,25 @@ describe('registerMessageHandler', () => {
             });
         });
 
+        it('does not query by a bare thread_ts when the reply event has no channel', async () => {
+            // The tracked-thread guard used to fall back to the bare thread_ts
+            // (and to "C123:undefined" when the ts was missing) — keys no Slack
+            // ticket is ever stored under. Without a channel there is no
+            // addressable key, so the reply must be dropped, not looked up.
+            await messageHandler({
+                event: {
+                    user: 'U_EXTERNAL',
+                    text: 'Reply with no channel',
+                    ts: '1234567891.000000',
+                    thread_ts: '1234567890.123456',
+                },
+            });
+
+            expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+            expect(prisma.message.create).not.toHaveBeenCalled();
+            expect(prisma.ticket.create).not.toHaveBeenCalled();
+        });
+
         it('ignores threaded replies in untracked threads', async () => {
             vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
 

@@ -15,6 +15,7 @@ import type { InboundMessage, InboundResult, TicketRef } from './types.js';
 import { generateTicketId, truncate } from '../utils.js';
 import { reopensOnCustomerReply } from '../constants.js';
 import { TicketSource } from '../types.js';
+import { buildTicketSourceId } from './source-id.js';
 
 /**
  * Prisma client interface — the subset of PrismaClient we actually call.
@@ -139,12 +140,16 @@ export class InboundHandler {
         const displayId = generateTicketId();
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
 
-        // Build sourceId — Slack uses a composite "channelId:threadTs" key
-        // so that reply lookups match the same format.
-        let sourceId = message.threadId ?? null;
-        if (message.source === TicketSource.SLACK && message.channelId && message.threadId) {
-            sourceId = `${message.channelId}:${message.threadId}`;
-        }
+        // Build sourceId through the SAME helper handleReply's lookup uses, so
+        // the stored key and the searched-for key cannot drift apart. null here
+        // means "this thread is not addressable" (no threadId, or Slack with no
+        // channelId) — the ticket is still created so the report is not dropped,
+        // but it will never be matched by a later reply.
+        const sourceId = buildTicketSourceId(
+            message.source,
+            message.threadId,
+            message.channelId,
+        );
 
         // Find-or-create the User row for the message sender so the ticket
         // can be linked to them (needed for reporter-identity lookups like
@@ -213,12 +218,18 @@ export class InboundHandler {
      * Handle a reply to an existing ticket thread.
      */
     private async handleReply(message: InboundMessage): Promise<InboundResult> {
-        // Look up the existing ticket by source + threadId
-        const ticket = await this.findTicketBySourceAndThread(
+        // Derive the lookup key with the same helper handleNewTicket stores
+        // with. A null key means no ticket could ever carry it, so skip the
+        // query entirely rather than searching for a synthesized placeholder.
+        const sourceId = buildTicketSourceId(
             message.source,
-            message.threadId ?? '',
+            message.threadId,
             message.channelId,
         );
+
+        const ticket = sourceId === null
+            ? null
+            : await this.findTicketBySourceId(message.source, sourceId);
 
         if (!ticket) {
             // No existing ticket found for this thread — treat as a new ticket.
@@ -281,24 +292,16 @@ export class InboundHandler {
     }
 
     /**
-     * Find an existing ticket by its source platform and thread/conversation ID.
+     * Find an existing ticket by source platform + an already-built sourceId.
      *
-     * For Slack, the sourceId is "channelId:threadTs" so we use channelId
-     * to reconstruct the composite key. For other platforms, sourceId is
-     * the threadId directly.
+     * Deliberately takes the finished key rather than (threadId, channelId):
+     * key construction lives in buildTicketSourceId alone, so this method
+     * cannot disagree with what handleNewTicket stored.
      */
-    private async findTicketBySourceAndThread(
+    private async findTicketBySourceId(
         source: TicketSource,
-        threadId: string,
-        channelId?: string,
+        sourceId: string,
     ): Promise<TicketRef | null> {
-        let sourceId = threadId;
-
-        // Slack uses a composite sourceId: "channelId:threadTs"
-        if (source === TicketSource.SLACK && channelId) {
-            sourceId = `${channelId}:${threadId}`;
-        }
-
         const ticket = await this.prisma.ticket.findFirst({
             where: {
                 source: source as string,
