@@ -227,6 +227,20 @@ describe('InboundHandler (GitHub-focused)', () => {
             expect(prisma.ticket.create).toHaveBeenCalledTimes(1);
         });
 
+        // An issue comment on an issue that predates Outpost lands here: no
+        // ticket exists for the thread. File it for a human, but never answer —
+        // the issue body (the message that opened the conversation) was never
+        // seen by us, and Outpost answers only the opening message.
+        it('files the orphaned comment but enqueues NO AI_RESPONSE', async () => {
+            vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+
+            const result = await handler.handle(makeFollowUpMessage());
+
+            expect(prisma.message.create).toHaveBeenCalledTimes(1);
+            expect(createJob).not.toHaveBeenCalled();
+            expect(result.aiJobEnqueued).toBe(false);
+        });
+
         it('returns isNewTicket=false for follow-ups', async () => {
             const message = makeFollowUpMessage();
             const result = await handler.handle(message);

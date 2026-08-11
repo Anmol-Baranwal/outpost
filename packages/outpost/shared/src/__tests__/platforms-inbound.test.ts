@@ -468,6 +468,68 @@ describe('InboundHandler', () => {
         });
     });
 
+    // ── Orphaned replies (reply with no matching ticket) ─────────────
+    //
+    // Outpost answers exactly ONE message per ticket: the one that OPENED it.
+    // An orphaned reply is mid-conversation, so we file it (never drop a
+    // customer's words) but must not answer it — the opening message was never
+    // seen by us. These assertions exist because the pre-existing fallback
+    // tests asserted nothing about createJob, which is how a regression here
+    // shipped: the fallback re-entered the new-ticket path and answered.
+    describe('orphaned reply fallback never answers', () => {
+        beforeEach(() => {
+            (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+        });
+
+        it('creates the ticket and message but enqueues NO AI_RESPONSE', async () => {
+            const msg = makeInboundMessage({
+                isThreadStart: false,
+                content: 'any update on this?',
+            });
+            const result = await handler.handle(msg);
+
+            expect(prisma.ticket.create).toHaveBeenCalledTimes(1);
+            expect(prisma.message.create).toHaveBeenCalledTimes(1);
+            expect(createJob).not.toHaveBeenCalled();
+            expect(result.aiJobEnqueued).toBe(false);
+            expect(result.isNewTicket).toBe(true);
+            expect(result.messageId).toBe('msg-1');
+        });
+
+        it('does not answer even when the sender is not a team member', async () => {
+            // Non-team sender is the case that WOULD have been answered by the
+            // new-ticket path — the exact hole this closes.
+            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+            (prisma.teamMember.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+            const result = await handler.handle(makeInboundMessage({ isThreadStart: false }));
+
+            expect(createJob).not.toHaveBeenCalled();
+            expect(result.aiJobEnqueued).toBe(false);
+        });
+
+        it.each([
+            [TicketSource.TEAMS, 'teams'],
+            [TicketSource.DISCORD, 'discord'],
+            [TicketSource.GITHUB_ISSUE, 'github'],
+            [TicketSource.SLACK, 'slack'],
+        ])('stays silent for an orphaned %s reply', async (source) => {
+            const result = await handler.handle(
+                makeInboundMessage({ source, isThreadStart: false, channelId: 'chan-1' }),
+            );
+
+            expect(createJob).not.toHaveBeenCalled();
+            expect(result.aiJobEnqueued).toBe(false);
+        });
+
+        it('still enqueues for a genuine thread start, so the fix is not a blanket mute', async () => {
+            const result = await handler.handle(makeInboundMessage({ isThreadStart: true }));
+
+            expect(createJob).toHaveBeenCalledTimes(1);
+            expect(result.aiJobEnqueued).toBe(true);
+        });
+    });
+
     // ── Slack composite sourceId ─────────────────────────────────────
 
     describe('Slack composite sourceId handling', () => {

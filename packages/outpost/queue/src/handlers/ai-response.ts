@@ -89,7 +89,15 @@ export async function handleAiResponse(
     // each one previously decided for itself whether a reply warranted an
     // answer. Those enqueues are gone, but a single new caller added later
     // would silently reintroduce the follow-up spam this closes. Checking the
-    // ticket's own history instead makes the invariant unroutable-around.
+    // ticket's own history catches every re-answer of a ticket we already
+    // answered.
+    //
+    // It is NOT a total gate, so do not lean on it as one. It can only see
+    // messages on the ticket, so it cannot tell a first answer from a first
+    // answer to the wrong message: a ticket freshly minted around a mid-thread
+    // message has no prior AI response and would sail through here. That case
+    // (an orphaned reply, no ticket found for the thread) is refused at the
+    // enqueue site in InboundHandler.handleReply — see the comment there.
     //
     // Success, not failure: the job did what it should — nothing. Returning an
     // error would put it through the retry ladder for a decision that will

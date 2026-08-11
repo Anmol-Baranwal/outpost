@@ -233,4 +233,26 @@ describe('InboundHandler (Teams-focused)', () => {
             expect(prisma.ticket.update).not.toHaveBeenCalled();
         });
     });
+
+    // Teams is the platform where this is most reachable: unlike the Slack bot,
+    // apps/teams-bot/src/handlers/message.ts has no untracked-thread pre-filter,
+    // and its monitored-channel gate only runs for thread starts. So a reply in
+    // a Teams conversation Outpost never saw arrives here with no ticket.
+    describe('orphaned reply (no ticket for the conversation)', () => {
+        beforeEach(() => {
+            vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+        });
+
+        it('files a ticket for a human but never answers', async () => {
+            const result = await handler.handle(
+                makeMessage({ isThreadStart: false, content: 'thanks, that worked!' }),
+            );
+
+            expect(prisma.ticket.create).toHaveBeenCalledTimes(1);
+            expect(prisma.message.create).toHaveBeenCalledTimes(1);
+            expect(createJob).not.toHaveBeenCalled();
+            expect(result.aiJobEnqueued).toBe(false);
+            expect(result.isNewTicket).toBe(true);
+        });
+    });
 });

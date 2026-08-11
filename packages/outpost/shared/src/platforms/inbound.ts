@@ -7,8 +7,11 @@
  * 2. Replies (isThreadStart=false): find existing ticket, create Message, reopen if needed.
  *    Never enqueues AI_RESPONSE — Outpost answers once per ticket, on the opening
  *    message only, and a human owns the thread after that.
- * 3. Team member detection via ExternalIdentity -> TeamMember lookup
- * 4. Sequential display ID generation (TKT-XXXXXXXX)
+ * 3. Orphaned replies (isThreadStart=false with no matching ticket): create the
+ *    Ticket + Message so the customer's words are never dropped, but do NOT
+ *    enqueue AI_RESPONSE — we never saw the message that opened the conversation.
+ * 4. Team member detection via ExternalIdentity -> TeamMember lookup
+ * 5. Sequential display ID generation (TKT-XXXXXXXX)
  */
 
 import type { InboundMessage, InboundResult, TicketRef } from './types.js';
@@ -122,21 +125,31 @@ export class InboundHandler {
     /**
      * Process an inbound message.
      *
-     * Determines whether this is a new ticket or a reply to an existing one,
-     * creates the appropriate database records, and enqueues an AI_RESPONSE
-     * job if the sender is not a team member.
+     * Determines whether this is a new ticket or a reply to an existing one and
+     * creates the appropriate database records. An AI_RESPONSE job is enqueued
+     * only for a genuine thread start from a non-team-member — never for a
+     * reply, and never for the orphaned-reply fallback below.
      */
     async handle(message: InboundMessage): Promise<InboundResult> {
         if (message.isThreadStart) {
-            return this.handleNewTicket(message);
+            return this.handleNewTicket(message, { answer: true });
         }
         return this.handleReply(message);
     }
 
     /**
      * Create a new ticket from a thread-start message.
+     *
+     * `answer` is an explicit decision made by the caller, never inferred from
+     * the message: `true` for a genuine thread start (the opening message is
+     * the one message Outpost is allowed to answer), `false` for the orphaned-
+     * reply fallback in `handleReply`, where we are creating a ticket around a
+     * mid-conversation message we must not answer.
      */
-    private async handleNewTicket(message: InboundMessage): Promise<InboundResult> {
+    private async handleNewTicket(
+        message: InboundMessage,
+        { answer }: { answer: boolean },
+    ): Promise<InboundResult> {
         const displayId = generateTicketId();
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
 
@@ -192,11 +205,10 @@ export class InboundHandler {
             messageId = msg.id;
         }
 
-        // Check if sender is a team member — they still get a ticket but skip AI
-        const isTeam = await this.isTeamMember(message.platformUserId, message.source);
-
+        // Team members still get a ticket but no AI answer. Only consulted when
+        // the caller allowed an answer at all — otherwise the lookup is wasted.
         let aiJobEnqueued = false;
-        if (!isTeam) {
+        if (answer && !(await this.isTeamMember(message.platformUserId, message.source))) {
             await this.createJob(this.aiResponseJobType, {
                 ticketId: ticket.id,
                 threadId: message.threadId,
@@ -232,10 +244,24 @@ export class InboundHandler {
             : await this.findTicketBySourceId(message.source, sourceId);
 
         if (!ticket) {
-            // No existing ticket found for this thread — treat as a new ticket.
-            // This handles edge cases where a reply arrives before the thread-start
-            // event, or the original ticket was deleted.
-            return this.handleNewTicket({ ...message, isThreadStart: true });
+            // Orphaned reply: a mid-thread message whose thread we have no ticket
+            // for — the thread predates Outpost, the platform delivered the reply
+            // before the thread-start event, or the original ticket was deleted.
+            //
+            // We still create a ticket and persist the message: dropping a
+            // customer's words is worse than filing an oddly-titled ticket, and a
+            // human can pick it up from the dashboard.
+            //
+            // We do NOT answer it. ASSUMPTION, stated so it is reviewable: the
+            // message that opened the real conversation was never seen by us, so
+            // this reply is not "the message that opened the ticket" in the
+            // product sense even though it is the ticket's first message. Outpost
+            // answers exactly one message per ticket — the opening one — and this
+            // is not it. Answering here is how a follow-up ("any update?", or a
+            // community member's reply to someone else) used to get an AI reply
+            // in a thread Outpost was never part of; that routed around the
+            // one-answer-per-ticket rule entirely.
+            return this.handleNewTicket({ ...message, isThreadStart: true }, { answer: false });
         }
 
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
