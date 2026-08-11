@@ -5,7 +5,7 @@ export interface EscalationCardOptions {
 /**
  * Build an Adaptive Card for escalation notifications.
  *
- * Carries no ticket displayId \u2014 this card is shown to the reporter, and the
+ * Carries no ticket displayId — this card is shown to the reporter, and the
  * identifier is internal to the dashboard and team slash commands.
  */
 export function buildEscalationCard(options: EscalationCardOptions): Record<string, unknown> {

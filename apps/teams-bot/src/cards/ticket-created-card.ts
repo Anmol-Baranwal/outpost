@@ -5,7 +5,7 @@ export interface TicketCreatedCardOptions {
 /**
  * Build an Adaptive Card acknowledging ticket creation.
  *
- * Deliberately carries no ticket displayId. That identifier is internal \u2014 it
+ * Deliberately carries no ticket displayId. That identifier is internal — it
  * belongs in the dashboard and team slash commands, not in reporter-facing copy.
  */
 export function buildTicketCreatedCard(options: TicketCreatedCardOptions): Record<string, unknown> {
