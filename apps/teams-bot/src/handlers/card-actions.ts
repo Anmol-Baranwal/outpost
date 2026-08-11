@@ -4,9 +4,13 @@ import { createJob, JobType } from '@copilotkit/outpost/queue';
 import { findTicketByConversationId } from '../lib/tickets.js';
 import { buildEscalationCard } from '../cards/escalation-card.js';
 
+/**
+ * Submit payload from an Adaptive Card button. Only `action` is sent — the
+ * cards deliberately carry no ticket identifier, and the handlers below resolve
+ * the ticket from the conversation id instead.
+ */
 interface CardActionData {
     action: string;
-    ticketDisplayId: string;
 }
 
 /**

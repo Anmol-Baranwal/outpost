@@ -15,7 +15,6 @@ function allCardText(card: Record<string, unknown>): string {
 describe('buildResponseCard', () => {
     it('builds a card with action buttons', () => {
         const card = buildResponseCard({
-            ticketDisplayId: 'TKT-AB12',
             responseText: 'Here is the answer.',
             confidence: 0.9,
         });
@@ -35,31 +34,27 @@ describe('buildResponseCard', () => {
         expect(actions[1].data.action).toBe('need_more_help');
     });
 
-    it('never renders the internal ticket displayId into card text', () => {
+    it('carries no ticket identifier anywhere — not in text, not in action data', () => {
         const card = buildResponseCard({
-            ticketDisplayId: 'TKT-AB12',
             responseText: 'Here is the answer.',
             confidence: 0.9,
         });
 
-        expect(allCardText(card)).not.toContain('TKT-AB12');
-    });
+        expect(allCardText(card)).not.toMatch(/TKT-/);
 
-    it('still routes the displayId through action data so clicks resolve', () => {
-        const card = buildResponseCard({
-            ticketDisplayId: 'TKT-AB12',
-            responseText: 'Here is the answer.',
-            confidence: 0.9,
-        });
+        // `data` ships to the reporter's client too, so the action payloads must
+        // carry nothing but the action name.
+        const actions = card.actions as Array<{ data: Record<string, unknown> }>;
+        for (const action of actions) {
+            expect(Object.keys(action.data)).toEqual(['action']);
+        }
 
-        const actions = card.actions as Array<{ data: { ticketDisplayId: string } }>;
-        expect(actions[0].data.ticketDisplayId).toBe('TKT-AB12');
-        expect(actions[1].data.ticketDisplayId).toBe('TKT-AB12');
+        // Catch-all: no identifier-shaped field anywhere in the serialized card.
+        expect(JSON.stringify(card)).not.toMatch(/[Dd]isplayId|TKT-/);
     });
 
     it('includes a low-confidence disclaimer when confidence is below threshold', () => {
         const card = buildResponseCard({
-            ticketDisplayId: 'TKT-AB12',
             responseText: 'Not sure about this.',
             confidence: 0.5,
         });
@@ -71,7 +66,6 @@ describe('buildResponseCard', () => {
 
     it('does not include disclaimer when confidence is high', () => {
         const card = buildResponseCard({
-            ticketDisplayId: 'TKT-AB12',
             responseText: 'Confident answer.',
             confidence: 0.85,
         });
