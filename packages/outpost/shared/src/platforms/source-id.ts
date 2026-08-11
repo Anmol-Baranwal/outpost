@@ -5,9 +5,10 @@
  * `Ticket.sourceId` is the platform-thread key Outpost uses to decide whether
  * an inbound message opens a new ticket or belongs to an existing one. It is
  * written once (on ticket create) and read on every reply. Those two sites MUST
- * derive the key identically or every reply looks like a brand-new ticket and
- * gets its own AI answer — the exact bug this module exists to make
- * unrepresentable. Do not inline `${channelId}:${threadId}` anywhere; call
+ * derive the key identically: if they disagree, every reply misses the ticket it
+ * belongs to and is filed as a separate untracked one, so the real ticket loses
+ * the reply (no message appended, no reopen) and the dashboard fills with
+ * duplicate stubs. Do not inline `${channelId}:${threadId}` anywhere; call
  * `buildTicketSourceId`.
  */
 

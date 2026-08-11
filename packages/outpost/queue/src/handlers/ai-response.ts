@@ -2,14 +2,20 @@
  * AI_RESPONSE job handler.
  *
  * The most critical handler in Outpost. Processes AI_RESPONSE jobs by:
- *   1. Loading the ticket and its messages from the database
- *   2. Running the AI pipeline to generate a support response
- *   3. Classifying the ticket inline (priority, type, tags)
- *   4. Formatting the response for the source platform
- *   5. Persisting the AI response as a Message record
- *   6. Enqueuing an ESCALATION job if confidence is too low, if the pipeline
- *      suppressed an ungrounded draft, or if the response never reached the
- *      reporter because platform delivery failed
+ *   1.  Loading the ticket and its messages from the database
+ *   1b. Finishing immediately, as a success, if the ticket already holds an AI
+ *       response — one response per ticket (see the gate below)
+ *   2.  Running the AI pipeline to generate a support response
+ *   3.  Classifying the ticket inline (priority, type, tags)
+ *   4.  Formatting the response for the source platform
+ *   5.  Persisting the AI response as a Message record, and the formatted text
+ *       on the ticket as suggestedResponse
+ *   5b. Posting the response back to the source platform through its adapter —
+ *       except under SHADOW_MODE=true, where the response is instead logged as a
+ *       SYSTEM message on the ticket and nothing is posted anywhere
+ *   6.  Enqueuing an ESCALATION job if confidence is too low, if the pipeline
+ *       suppressed an ungrounded draft, or if the response never reached the
+ *       reporter because platform delivery failed
  *
  * Delivery failure is escalated rather than swallowed because of the guard in
  * step 1b (one response per ticket): once the BOT Message row exists, a retry or
@@ -82,7 +88,7 @@ export async function handleAiResponse(
 
     await context.reportProgress(20);
 
-    // 1b. ONE RESPONSE PER TICKET — hard invariant, enforced here.
+    // 1b. ONE RESPONSE PER TICKET — RE-ANSWER guard.
     //
     // Outpost answers exactly one message per ticket: the one that opened it.
     // Every later message in that thread gets no AI reply, no matter who sent
@@ -90,21 +96,24 @@ export async function handleAiResponse(
     // a first line of defence and a human owns the thread from the moment the
     // first response lands.
     //
-    // The gate lives in the handler rather than at the enqueue sites on
-    // purpose. Five separate code paths could enqueue AI_RESPONSE (Discord,
-    // Slack, Teams, the GitHub comment webhook, the Postmark reply webhook) and
-    // each one previously decided for itself whether a reply warranted an
-    // answer. Those enqueues are gone, but a single new caller added later
-    // would silently reintroduce the follow-up spam this closes. Checking the
-    // ticket's own history catches every re-answer of a ticket we already
-    // answered.
+    // What this gate does and does not do, because the distinction matters:
     //
-    // It is NOT a total gate, so do not lean on it as one. It can only see
-    // messages on the ticket, so it cannot tell a first answer from a first
-    // answer to the wrong message: a ticket freshly minted around a mid-thread
-    // message has no prior AI response and would sail through here. That case
-    // (an orphaned reply, no ticket found for the thread) is refused at the
-    // enqueue site in InboundHandler.handleReply — see the comment there.
+    // The invariant is enforced at the enqueue sites, not here. Three of them
+    // exist — InboundHandler.handleNewTicket (Discord, Slack and Teams all
+    // funnel through it), handleShadowThreadCreate in the Discord bot's
+    // shadow-mode path, and the Postmark webhook's new-email branch — and every
+    // one enqueues only for a message that opens a ticket. Their refusal to
+    // enqueue for anything else is what holds the rule.
+    //
+    // This gate catches the second answer to a ticket that already has one: a
+    // retried job, a manual re-enqueue, or a caller added later that does not
+    // respect the rule. It CANNOT stand in for those refusals, so do not lean
+    // on it as if it could. It only sees messages on the ticket, so it cannot
+    // tell a first answer from a first answer to the wrong message: a ticket
+    // freshly minted around a mid-thread reply carries no prior AI response and
+    // sails straight through here. That case (an orphaned reply, no ticket found
+    // for the thread) is refused where the ticket is created — see
+    // InboundHandler.handleReply.
     //
     // Success, not failure: the job did what it should — nothing. Returning an
     // error would put it through the retry ladder for a decision that will

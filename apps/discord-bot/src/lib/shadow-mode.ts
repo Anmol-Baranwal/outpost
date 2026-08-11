@@ -27,7 +27,7 @@ export interface ShadowResponse {
 
 /**
  * Log a shadow response for later quality comparison.
- * Stored as a NOTE-type message on the ticket with metadata in attachments.
+ * Stored as a SYSTEM-type message on the ticket with metadata in attachments.
  */
 export async function logShadowResponse(response: ShadowResponse): Promise<void> {
     await prisma.message.create({
@@ -91,8 +91,10 @@ export async function handleShadowThreadCreate(
             });
         }
 
-        // Enqueue AI response — the worker should check shadow mode
-        // and call logShadowResponse instead of posting to Discord
+        // Enqueue the one AI response this ticket gets. The handler reads
+        // SHADOW_MODE itself and, when it is set, logs the generated response as
+        // a SYSTEM message on the ticket instead of posting it to Discord (it
+        // writes that row inline — it does not call logShadowResponse below).
         await createJob(JobType.AI_RESPONSE, {
             ticketId: ticket.id,
             threadId: thread.id,

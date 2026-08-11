@@ -94,8 +94,10 @@ export async function POST(request: Request) {
                 }
 
                 // No AI response on a reply — Outpost answers the opening email
-                // once and a human handles the rest of the thread. The
-                // AI_RESPONSE handler enforces the same invariant server-side.
+                // once and a human handles the rest of the thread. Not enqueuing
+                // here is what enforces that; the AI_RESPONSE handler's
+                // already-answered gate only backstops re-answering a ticket that
+                // already holds an AI response.
 
                 return NextResponse.json({ status: 'message_appended', ticketId: existingTicket.displayId });
             }

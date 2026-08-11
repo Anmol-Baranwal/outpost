@@ -78,10 +78,10 @@ export async function handleIssueComment(
             }
         } else {
             // No AI response on comments — Outpost answers the issue body once and
-            // then stays out of the thread, whoever comments next. This previously
-            // enqueued an AI_RESPONSE for every non-team commenter, so the bot kept
-            // replying to follow-ups on issues a human had already picked up.
-            // The AI_RESPONSE handler enforces the same invariant server-side.
+            // then stays out of the thread, whoever comments next. Not enqueuing
+            // here is what enforces that; the AI_RESPONSE handler's
+            // already-answered gate only backstops re-answering a ticket that
+            // already holds an AI response.
 
             // Reopen a dormant ticket so a human sees the follow-up. The status
             // set lives in @copilotkit/outpost/shared so this path, the shared

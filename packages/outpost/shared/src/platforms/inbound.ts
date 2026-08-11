@@ -3,10 +3,13 @@
  * a raw platform event into an InboundMessage.
  *
  * Handles:
- * 1. New tickets (isThreadStart=true): create Ticket + first Message + enqueue AI_RESPONSE
- * 2. Replies (isThreadStart=false): find existing ticket, create Message, reopen if needed.
- *    Never enqueues AI_RESPONSE — Outpost answers once per ticket, on the opening
- *    message only, and a human owns the thread after that.
+ * 1. New tickets (isThreadStart=true): create Ticket + first Message, and enqueue
+ *    AI_RESPONSE unless the sender is a team member. This is the only path here
+ *    that ever enqueues.
+ * 2. Replies (isThreadStart=false): find existing ticket, create Message, reopen if
+ *    needed. Never enqueues AI_RESPONSE, whoever sent the reply — Outpost answers
+ *    once per ticket, on the opening message only, and a human owns the thread
+ *    after that.
  * 3. Orphaned replies (isThreadStart=false with no matching ticket): create the
  *    Ticket + Message so the customer's words are never dropped, but do NOT
  *    enqueue AI_RESPONSE — we never saw the message that opened the conversation.
@@ -257,10 +260,13 @@ export class InboundHandler {
             // this reply is not "the message that opened the ticket" in the
             // product sense even though it is the ticket's first message. Outpost
             // answers exactly one message per ticket — the opening one — and this
-            // is not it. Answering here is how a follow-up ("any update?", or a
-            // community member's reply to someone else) used to get an AI reply
-            // in a thread Outpost was never part of; that routed around the
-            // one-answer-per-ticket rule entirely.
+            // is not it.
+            //
+            // Refusing here is the only thing that stops it. The ticket we are
+            // about to create carries no prior AI response, so the
+            // already-answered gate in the AI_RESPONSE handler would wave it
+            // straight through and answer a mid-thread "any update?" in a
+            // conversation Outpost was never part of.
             return this.handleNewTicket({ ...message, isThreadStart: true }, { answer: false });
         }
 
@@ -281,15 +287,16 @@ export class InboundHandler {
         //
         // Outpost answers the message that opens a ticket and nothing after it.
         // Replies only move ticket state; the thread belongs to a human from
-        // the first response onward. This used to enqueue an AI_RESPONSE for
-        // every non-team sender, which meant the bot chimed in on follow-up
-        // questions between community members and even summarised a human's
-        // answer back at them.
+        // the first response onward. Enqueuing here is what made the bot chime
+        // in on follow-up questions between community members and summarise a
+        // human's answer back at them.
         //
-        // The invariant is also enforced in the AI_RESPONSE handler
-        // (packages/outpost/queue/src/handlers/ai-response.ts) against the
-        // ticket's own message history. Not enqueuing here is the cheap arm —
-        // it avoids paying for a job that would be dropped on arrival.
+        // This refusal is what enforces the invariant. The already-answered
+        // gate in the AI_RESPONSE handler
+        // (packages/outpost/queue/src/handlers/ai-response.ts) is a backstop
+        // against re-answering a ticket that already holds an AI response, not
+        // a substitute: a reply on a ticket Outpost never answered — one opened
+        // by a team member, say — would pass that gate untouched.
         const isTeam = await this.isTeamMember(message.platformUserId, message.source);
 
         if (isTeam) {
