@@ -1,16 +1,74 @@
 import { describe, it, expect } from 'vitest';
 import { buildResponseCard } from '../cards/response-card.js';
-import { buildTicketCreatedCard } from '../cards/ticket-created-card.js';
-import { buildEscalationCard } from '../cards/escalation-card.js';
+import {
+    buildTicketCreatedCard,
+    type TicketCreatedCardOptions,
+} from '../cards/ticket-created-card.js';
+import { buildEscalationCard, type EscalationCardOptions } from '../cards/escalation-card.js';
 
 /**
- * Every text block in a card body, flattened. Used by the leak assertions
- * below so a displayId can't reappear in a block index nobody checks.
+ * Key whose value is an Action.Submit payload: sent back to the bot on click,
+ * never displayed. Everything else in a card is potentially rendered, so the
+ * leak guards below look at all of it.
  */
-function allCardText(card: Record<string, unknown>): string {
-    const body = card.body as Array<{ text?: string }>;
-    return body.map((b) => b.text ?? '').join('\n');
+const SUBMIT_PAYLOAD_KEY = 'data';
+
+/**
+ * Every string a Teams client could put on screen for this card, at any nesting
+ * depth: `body[].text`, text inside nested containers/columns/sets, and
+ * `actions[].title` — plus any other string field a future card shape adds.
+ *
+ * Deliberately a denylist (skip `data`) rather than an allowlist of known
+ * rendered keys, so a displayId reintroduced into a field this test has never
+ * heard of still trips the guard.
+ */
+function visibleCardStrings(value: unknown): string[] {
+    if (typeof value === 'string') return [value];
+    if (Array.isArray(value)) return value.flatMap(visibleCardStrings);
+    if (value !== null && typeof value === 'object') {
+        return Object.entries(value as Record<string, unknown>)
+            .filter(([key]) => key !== SUBMIT_PAYLOAD_KEY)
+            .flatMap(([, nested]) => visibleCardStrings(nested));
+    }
+    return [];
 }
+
+/** The visible strings joined, for substring/regex assertions. */
+function visibleCardText(card: Record<string, unknown>): string {
+    return visibleCardStrings(card).join('\n');
+}
+
+describe('visibleCardStrings (the leak guards depend on this)', () => {
+    it('finds text nested inside containers and action titles, and skips submit payloads', () => {
+        const card = {
+            type: 'AdaptiveCard',
+            body: [
+                { type: 'TextBlock', text: 'top-level' },
+                {
+                    type: 'Container',
+                    items: [
+                        { type: 'TextBlock', text: 'nested-once' },
+                        { type: 'ColumnSet', columns: [{ items: [{ text: 'nested-twice' }] }] },
+                    ],
+                },
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: 'action-title',
+                    data: { ticketDisplayId: 'TKT-INPAYLOAD' },
+                },
+            ],
+        };
+
+        const found = visibleCardStrings(card);
+        expect(found).toContain('top-level');
+        expect(found).toContain('nested-once');
+        expect(found).toContain('nested-twice');
+        expect(found).toContain('action-title');
+        expect(found).not.toContain('TKT-INPAYLOAD');
+    });
+});
 
 describe('buildResponseCard', () => {
     it('builds a card with action buttons', () => {
@@ -34,22 +92,38 @@ describe('buildResponseCard', () => {
         expect(actions[1].data.action).toBe('need_more_help');
     });
 
-    it('carries no ticket identifier anywhere — not in text, not in action data', () => {
+    // The card no longer accepts a displayId at all, so the leak-carrying input
+    // has to arrive through a field that still exists. `responseText` is the
+    // pipeline's own output, which is exactly where a stray identifier could
+    // come from in practice.
+    it.each([
+        ['high confidence', 0.9],
+        ['low confidence (extra disclaimer block)', 0.5],
+    ])('renders no identifier-shaped string anywhere visible — %s', (_label, confidence) => {
+        const card = buildResponseCard({
+            responseText: 'Here is the answer.',
+            confidence,
+        });
+
+        expect(visibleCardText(card)).not.toMatch(/TKT-/);
+    });
+
+    it('carries nothing but the action name in its submit payloads', () => {
+        // `data` ships to the reporter's client too. It used to carry the ticket
+        // displayId on the claim that clicks needed it to resolve; card-actions.ts
+        // ignores `data` entirely and resolves by conversation id, so the field
+        // was dead payload. This pins it staying gone.
         const card = buildResponseCard({
             responseText: 'Here is the answer.',
             confidence: 0.9,
         });
 
-        expect(allCardText(card)).not.toMatch(/TKT-/);
-
-        // `data` ships to the reporter's client too, so the action payloads must
-        // carry nothing but the action name.
         const actions = card.actions as Array<{ data: Record<string, unknown> }>;
         for (const action of actions) {
             expect(Object.keys(action.data)).toEqual(['action']);
         }
 
-        // Catch-all: no identifier-shaped field anywhere in the serialized card.
+        // Catch-all across the whole serialized card, submit payloads included.
         expect(JSON.stringify(card)).not.toMatch(/[Dd]isplayId|TKT-/);
     });
 
@@ -87,10 +161,28 @@ describe('buildTicketCreatedCard', () => {
         expect(body[2].text).toContain('AI assistant');
     });
 
-    it('never renders a ticket displayId — the option does not exist', () => {
-        const card = buildTicketCreatedCard({ title: 'Help with integration' });
+    it('ignores a ticketDisplayId even when one is handed to it', () => {
+        // The regression this guards: someone re-adds a displayId to the options
+        // and renders it into reporter-facing copy. Passing the leak-carrying
+        // property today is a no-op; the day the builder reads it, this fails.
+        const card = buildTicketCreatedCard({
+            title: 'Help with integration',
+            ticketDisplayId: 'TKT-LEAK01',
+        } as TicketCreatedCardOptions);
 
-        expect(allCardText(card)).not.toMatch(/TKT-/);
+        expect(visibleCardText(card)).not.toContain('TKT-LEAK01');
+        expect(visibleCardText(card)).not.toMatch(/TKT-/);
+    });
+
+    it('echoes the caller-supplied title verbatim', () => {
+        // Documented boundary: `title` is the reporter's own message text
+        // (handlers/message.ts passes truncate(message.content)), so it is
+        // rendered as-is. Callers must never put an internal displayId here —
+        // this builder does not sanitize, and this test pins that contract.
+        const card = buildTicketCreatedCard({ title: 'my ref is TKT-USERTYPED' });
+
+        const body = card.body as Array<{ text: string }>;
+        expect(body[1].text).toBe('my ref is TKT-USERTYPED');
     });
 });
 
@@ -106,9 +198,23 @@ describe('buildEscalationCard', () => {
         expect(body[2].text).toContain('team member');
     });
 
-    it('never renders a ticket displayId — the option does not exist', () => {
-        const card = buildEscalationCard({ reason: 'User needs more help.' });
+    it('ignores a ticketDisplayId even when one is handed to it', () => {
+        const card = buildEscalationCard({
+            reason: 'User needs more help.',
+            ticketDisplayId: 'TKT-LEAK02',
+        } as EscalationCardOptions);
 
-        expect(allCardText(card)).not.toMatch(/TKT-/);
+        expect(visibleCardText(card)).not.toContain('TKT-LEAK02');
+        expect(visibleCardText(card)).not.toMatch(/TKT-/);
+    });
+
+    it('echoes the caller-supplied reason verbatim', () => {
+        // Same boundary as the ack card: `reason` is rendered as-is (the only
+        // call site passes a static literal), so callers own keeping displayIds
+        // out of it.
+        const card = buildEscalationCard({ reason: 'escalated from TKT-CALLERTEXT' });
+
+        const body = card.body as Array<{ text: string }>;
+        expect(body[1].text).toBe('escalated from TKT-CALLERTEXT');
     });
 });
