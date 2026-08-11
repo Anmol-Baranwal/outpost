@@ -745,6 +745,187 @@ describe('handleAiResponse', () => {
         expect(mockPostResponse).not.toHaveBeenCalled();
     });
 
+    // ── Undelivered responses always end up with a human ──────────────────
+    //
+    // The one-response-per-ticket guard reads the BOT Message row, which is
+    // committed BEFORE the platform post-back. So once generation has happened,
+    // no retry and no manual re-enqueue can ever deliver that answer — the guard
+    // skips them all, correctly. The consequence is that every path where the
+    // answer failed to reach the reporter has to hand the thread to a human
+    // right here, in this run, or the reporter is silently abandoned while the
+    // database claims they were answered.
+    //
+    // These tests pin that: a delivery failure always produces an ESCALATION
+    // job, the pre-post-back writes can never abort the job before delivery is
+    // attempted, and the one outcome with neither delivery nor escalation is
+    // reported as a job failure instead of a success.
+    describe('delivery failures escalate to a human', () => {
+        /** Reject only the suggestedResponse write, not the classification one. */
+        function failSuggestedResponseWrite(message: string): void {
+            mockPrismaTicket.update.mockImplementation(
+                async (args: { data: Record<string, unknown> }) => {
+                    if (args.data.suggestedResponse !== undefined) {
+                        throw new Error(message);
+                    }
+                    return {};
+                },
+            );
+        }
+
+        /** The single ESCALATION job payload, asserting exactly one was created. */
+        function escalationPayload(): Record<string, unknown> {
+            const calls = mockPrismaJob.create.mock.calls.filter(
+                (call: Array<{ data: { type: string } }>) => call[0].data.type === 'ESCALATION',
+            );
+            expect(calls).toHaveLength(1);
+            return calls[0][0].data.payload as Record<string, unknown>;
+        }
+
+        it('enqueues an ESCALATION job when post-back throws', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.escalated).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(true);
+            expect(escalationPayload()).toEqual(
+                expect.objectContaining({
+                    ticketId: 'tkt-1',
+                    reason: expect.stringContaining('not delivered'),
+                }),
+            );
+            // The reason has to name the delivery failure so the human picking it
+            // up knows the answer exists but never landed.
+            expect(escalationPayload().reason).toContain('Discord API 503');
+        });
+
+        it('enqueues an ESCALATION job when the adapter cannot be constructed', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGetAdapter.mockImplementation(() => {
+                throw new Error('Missing DISCORD_BOT_TOKEN');
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(true);
+            expect(escalationPayload().reason).toContain('adapter misconfigured');
+        });
+
+        it('names the delivery failure even when confidence is also low', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            // One escalation, and it reports the more actionable of the two facts.
+            expect(escalationPayload().reason).toContain('not delivered');
+        });
+
+        it('does not escalate a delivered high-confidence response', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+        });
+
+        it('still attempts post-back when the suggestedResponse write throws', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            failSuggestedResponseWrite('DB write conflict');
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // The failed write must not abort the job between the BOT row and the
+            // post-back — that is the window the guard makes unrecoverable.
+            expect(mockPostResponse).toHaveBeenCalled();
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+        });
+
+        it('escalates when the suggestedResponse write throws and there is no adapter', async () => {
+            // With no adapter, suggestedResponse IS the delivery path.
+            mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+            mockHasAdapter.mockReturnValue(false);
+            failSuggestedResponseWrite('DB write conflict');
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'web' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(true);
+            expect(escalationPayload().reason).toContain('DB write conflict');
+        });
+
+        it('does not treat a failed externalCommentId write as a delivery failure', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockResolvedValue('999888');
+            mockPrismaMessage.update.mockRejectedValueOnce(new Error('DB write conflict'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // The response reached the reporter; only the bookkeeping row failed.
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+        });
+
+        it('reports job failure when the answer was neither delivered nor escalated', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+            mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // Nothing reached the reporter and no human was pulled in; a silent
+            // success here is exactly the outcome this fix exists to prevent.
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('Discord API 503');
+            expect(result.error).toContain('queue unavailable');
+        });
+
+        it('still reports success when only a low-confidence escalation fails to enqueue', async () => {
+            // The reporter did get the answer here, so the historical fail-soft
+            // behaviour stands — the failure mode is different in kind.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(mockPostResponse).toHaveBeenCalled();
+            expect(result.success).toBe(true);
+        });
+    });
+
     it('succeeds even if shadow mode message logging fails', async () => {
         const originalShadow = process.env.SHADOW_MODE;
         try {
