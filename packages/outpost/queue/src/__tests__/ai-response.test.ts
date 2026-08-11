@@ -903,10 +903,11 @@ describe('handleAiResponse', () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
             mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+            const context = makeContext();
 
             const result = await handleAiResponse(
                 { ticketId: 'tkt-1', source: 'discord' },
-                makeContext(),
+                context,
             );
 
             // Nothing reached the reporter and no human was pulled in; a silent
@@ -914,6 +915,11 @@ describe('handleAiResponse', () => {
             expect(result.success).toBe(false);
             expect(result.error).toContain('Discord API 503');
             expect(result.error).toContain('queue unavailable');
+            // A terminal worker attempt preserves the handler's last progress
+            // value on the DEAD_LETTER row. Failure must therefore stop at the
+            // last completed phase instead of looking 100% complete.
+            expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+            expect(context.reportProgress).toHaveBeenLastCalledWith(85);
         });
 
         it('retries the escalation after delivery and escalation both fail', async () => {

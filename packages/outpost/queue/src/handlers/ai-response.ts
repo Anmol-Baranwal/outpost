@@ -622,8 +622,6 @@ export async function handleAiResponse(
         pipeline.destroy();
     }
 
-    await context.reportProgress(100);
-
     console.log(
         `[AI Response] Ticket ${ticketId}: confidence=${pipelineResult.confidenceLevel} ` +
             `(${(pipelineResult.confidenceScore * 100).toFixed(0)}%), latency=${pipelineResult.latencyMs}ms` +
@@ -649,6 +647,8 @@ export async function handleAiResponse(
                 `escalation could not be enqueued (${escalationEnqueueError}) — needs manual attention`,
         };
     }
+
+    await context.reportProgress(100);
 
     return {
         success: true,
