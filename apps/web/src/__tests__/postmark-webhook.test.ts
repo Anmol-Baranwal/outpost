@@ -296,7 +296,7 @@ describe('Postmark inbound webhook', () => {
             },
         );
 
-        it('creates new ticket when MailboxHash ticket is not found', async () => {
+        it('files an orphaned reply without enqueueing an AI response', async () => {
             mockTicketFindUnique.mockResolvedValue(null);
             mockTicketCreate.mockResolvedValue({
                 id: 'new-ticket',
@@ -314,6 +314,20 @@ describe('Postmark inbound webhook', () => {
             expect(res.status).toBe(200);
             const body = await res.json();
             expect(body.status).toBe('ticket_created');
+            expect(mockTicketCreate).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        description: 'I have a question about my invoice.',
+                        messages: expect.objectContaining({
+                            create: expect.objectContaining({
+                                content: 'I have a question about my invoice.',
+                                type: 'USER',
+                            }),
+                        }),
+                    }),
+                }),
+            );
+            expect(mockCreateJob).not.toHaveBeenCalled();
         });
 
         it('handles attachments in the payload', async () => {

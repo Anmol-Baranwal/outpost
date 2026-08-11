@@ -103,6 +103,11 @@ export async function POST(request: Request) {
             }
         }
 
+        // A parsed MailboxHash identifies a reply even when its original ticket
+        // is gone. Preserve that orphaned reply as a new ticket/message for a
+        // human, but do not spend an AI response on a mid-conversation message.
+        const isOrphanedReply = ticketIdFromHash !== null;
+
         // Create new ticket from email
         const displayId = generateTicketId();
         const ticket = await prisma.ticket.create({
@@ -135,8 +140,10 @@ export async function POST(request: Request) {
             },
         });
 
-        // Enqueue AI response for the new ticket
-        await createJob(JobType.AI_RESPONSE, { ticketId: ticket.id, source: 'web' });
+        // Only a genuinely new email gets the ticket's single AI response.
+        if (!isOrphanedReply) {
+            await createJob(JobType.AI_RESPONSE, { ticketId: ticket.id, source: 'web' });
+        }
 
         return NextResponse.json({ status: 'ticket_created', ticketId: ticket.displayId });
     } catch (err) {
