@@ -255,21 +255,22 @@ export async function handleAiResponse(
         };
     }
 
-    // 2. Build conversation history from DB messages.
+    // The question is the message that OPENED the ticket — the same message the
+    // one-response-per-ticket invariant above says we get to answer.
+    const openingUserMessage = ticket.messages.find((m: { type: string }) => m.type === 'USER');
+
+    // 2. Build conversation context from every other non-SYSTEM message.
     //
-    // Deliberately the FULL non-SYSTEM history, including any message that
-    // arrived after the one being answered. See the question selection below for
-    // why the two are allowed to disagree.
+    // AIPipeline ultimately appends `question` after `conversationHistory`, so
+    // including the opening row here would send that question twice. Keep later
+    // follow-ups as context, but let the explicit question carry the opener once.
     const conversationHistory = ticket.messages
-        .filter((m: { type: string }) => m.type !== 'SYSTEM')
+        .filter((m: { type: string }) => m.type !== 'SYSTEM' && m !== openingUserMessage)
         .map((m: { type: string; content: string }) => ({
             role: (m.type === 'USER' ? 'user' : 'assistant') as 'user' | 'assistant',
             content: m.content,
         }));
 
-    // The question is the message that OPENED the ticket — the same message the
-    // one-response-per-ticket invariant above says we get to answer.
-    //
     // `ticket.messages` is loaded `orderBy: { createdAt: 'asc' }`, so the FIRST
     // USER row is the opening message. Scanning from the other end and taking
     // the LATEST USER row was wrong: replies are still persisted as USER
@@ -287,7 +288,6 @@ export async function handleAiResponse(
     // dropping it would trade one bug for a worse answer. Suppressing it would
     // also need a second policy for the non-USER rows after the opening, with no
     // evidence behind it.
-    const openingUserMessage = ticket.messages.find((m: { type: string }) => m.type === 'USER');
     const question = openingUserMessage?.content ?? ticket.description ?? ticket.title;
 
     // Determine platform target for formatting

@@ -302,12 +302,7 @@ describe('handleAiResponse', () => {
             'How do I use CopilotKit with Next.js?',
             expect.objectContaining({
                 source: 'discord',
-                conversationHistory: expect.arrayContaining([
-                    expect.objectContaining({
-                        role: 'user',
-                        content: 'How do I use CopilotKit with Next.js?',
-                    }),
-                ]),
+                conversationHistory: [],
             }),
         );
     });
@@ -1147,7 +1142,6 @@ describe('handleAiResponse', () => {
             'Hello',
             expect.objectContaining({
                 conversationHistory: [
-                    { role: 'user', content: 'Hello' },
                     { role: 'assistant', content: 'Hi there!' },
                     { role: 'user', content: 'Follow up question' },
                 ],
@@ -1199,17 +1193,19 @@ describe('handleAiResponse', () => {
             );
         });
 
-        it('still passes the interim follow-up through as conversation context', async () => {
+        it('passes the follow-up as context without repeating the opening question', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(splitThoughtTicket);
 
             await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
-            expect(mockGenerateSupportResponse.mock.calls[0]?.[1]).toMatchObject({
-                conversationHistory: [
-                    { role: 'user', content: 'How do I use CopilotKit with Next.js?' },
-                    { role: 'user', content: 'btw I am on the app router' },
-                ],
-            });
+            expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+                'How do I use CopilotKit with Next.js?',
+                expect.objectContaining({
+                    conversationHistory: [
+                        { role: 'user', content: 'btw I am on the app router' },
+                    ],
+                }),
+            );
         });
 
         it('skips leading non-USER rows to find the opening USER message', async () => {
