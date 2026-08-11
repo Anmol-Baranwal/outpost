@@ -337,22 +337,13 @@ describe('InboundHandler', () => {
             expect(createJob).not.toHaveBeenCalled();
         });
 
-        it('skips AI_RESPONSE for team member reply', async () => {
-            (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
-                id: 'user-db-1',
-                email: 'team@example.com',
-            });
-            (prisma.teamMember.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
-                id: 'member-1',
-            });
-
-            const msg = makeInboundMessage({ isThreadStart: false });
-            const result = await handler.handle(msg);
-
-            expect(result.aiJobEnqueued).toBe(false);
-            expect(createJob).not.toHaveBeenCalled();
-        });
-
+        // There is deliberately no "skips AI_RESPONSE for a team member reply"
+        // test here. Replies never enqueue for anyone (asserted above), so such
+        // a test would pass even if team-member detection were deleted. The
+        // sender-dependent assertion lives on the new-ticket path — see 'skips
+        // AI job when sender is a team member' and the 'team member detection'
+        // block. What a team member's reply DOES change is ticket status, which
+        // the next two tests cover.
         it('transitions WAITING_ON_TEAM to WAITING_ON_CUSTOMER when team member replies', async () => {
             (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
                 ...existingTicket,

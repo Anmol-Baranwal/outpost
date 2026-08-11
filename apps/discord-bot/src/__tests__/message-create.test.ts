@@ -122,25 +122,12 @@ describe('handleMessageCreate', () => {
         expect(createJob).not.toHaveBeenCalled();
     });
 
-    it('does not enqueue AI response for team member messages', async () => {
-        // Set up as team member
-        vi.mocked(prisma.user.findFirst).mockResolvedValue({
-            id: 'u-1',
-            email: 'team@copilotkit.ai',
-        } as ReturnType<typeof prisma.user.findFirst> extends Promise<infer T> ? T : never);
-        vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
-            id: 'tm-1',
-        } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
-
-        const message = makeMessage();
-        await handleMessageCreate(message);
-
-        // Should still save the message
-        expect(prisma.message.create).toHaveBeenCalled();
-
-        // Should NOT enqueue an AI response
-        expect(createJob).not.toHaveBeenCalled();
-    });
+    // No "does not enqueue AI response for team member messages" test here:
+    // every message this handler sees is a thread reply, and replies never
+    // enqueue for any sender, so it would pass with team-member detection
+    // removed entirely. The sender-dependent assertion now lives on the
+    // new-ticket path — see 'a team member opening a thread gets a ticket but
+    // no AI response' in thread-create.test.ts.
 
     it('reopens ticket when customer replies to a resolved ticket', async () => {
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue({

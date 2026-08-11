@@ -140,6 +140,36 @@ describe('registerMessageHandler', () => {
             expect(mockPostMessage).not.toHaveBeenCalled();
         });
 
+        // The new-ticket path is the one place where the sender still decides
+        // whether an AI job is enqueued: a community reporter's message gets an
+        // answer (test above), a team member's does not. Replies never enqueue
+        // for anyone, so this assertion cannot live on the reply path.
+        it('creates a ticket but does not enqueue an AI response when a team member opens the thread', async () => {
+            vi.mocked(prisma.user.findFirst).mockResolvedValue({
+                id: 'u-1',
+                email: 'team@copilotkit.ai',
+            } as ReturnType<typeof prisma.user.findFirst> extends Promise<infer T> ? T : never);
+            vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
+                id: 'tm-1',
+            } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
+
+            await messageHandler({
+                event: {
+                    user: 'U_TEAM',
+                    text: 'Heads up, deploying a fix shortly',
+                    ts: '1234567890.123456',
+                    channel: 'C_MONITORED',
+                },
+            });
+
+            // The ticket and its first message are still recorded.
+            expect(prisma.ticket.create).toHaveBeenCalled();
+            expect(prisma.message.create).toHaveBeenCalled();
+
+            // But the bot does not answer its own team.
+            expect(createJob).not.toHaveBeenCalled();
+        });
+
         it('ignores messages in unmonitored channels', async () => {
             await messageHandler({
                 event: {
@@ -212,32 +242,11 @@ describe('registerMessageHandler', () => {
             expect(createJob).not.toHaveBeenCalled();
         });
 
-        it('does not enqueue AI response for team member replies', async () => {
-            // Set up InboundHandler's isTeamMember via prisma mocks
-            vi.mocked(prisma.user.findFirst).mockResolvedValue({
-                id: 'u-1',
-                email: 'team@copilotkit.ai',
-            } as ReturnType<typeof prisma.user.findFirst> extends Promise<infer T> ? T : never);
-            vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
-                id: 'tm-1',
-            } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
-
-            await messageHandler({
-                event: {
-                    user: 'U_TEAM',
-                    text: 'Let me help you with that',
-                    ts: '1234567891.000000',
-                    thread_ts: '1234567890.123456',
-                    channel: 'C_MONITORED',
-                },
-            });
-
-            // Should still save the message
-            expect(prisma.message.create).toHaveBeenCalled();
-
-            // Should NOT enqueue AI response
-            expect(createJob).not.toHaveBeenCalled();
-        });
+        // No team-member variant of the test above: replies never enqueue for
+        // any sender, so asserting it for a team member would pass with
+        // team-member detection removed entirely. The sender-dependent
+        // assertion lives on the new-ticket path — see 'does not enqueue an AI
+        // response when a team member opens the thread'.
 
         it('reopens ticket when customer replies to a resolved ticket', async () => {
             vi.mocked(prisma.ticket.findFirst).mockResolvedValue({
