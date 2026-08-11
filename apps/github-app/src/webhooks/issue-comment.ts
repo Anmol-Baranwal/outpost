@@ -1,6 +1,7 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 import { prisma } from '@copilotkit/outpost/db';
 import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
+import { reopensOnCustomerReply } from '@copilotkit/outpost/shared';
 import { getOctokit } from '../lib/github-client.js';
 import { findTicketBySourceId, isTeamMember } from '../lib/tickets.js';
 import { isRepoAllowed } from '../lib/repo-allowlist.js';
@@ -82,8 +83,10 @@ export async function handleIssueComment(
             // replying to follow-ups on issues a human had already picked up.
             // The AI_RESPONSE handler enforces the same invariant server-side.
 
-            // Reopen ticket if it was waiting on customer or resolved
-            if (ticket.status === 'WAITING_ON_CUSTOMER' || ticket.status === 'RESOLVED') {
+            // Reopen a dormant ticket so a human sees the follow-up. The status
+            // set lives in @copilotkit/outpost/shared so this path, the shared
+            // InboundHandler, and the Postmark webhook cannot drift apart.
+            if (reopensOnCustomerReply(ticket.status)) {
                 await prisma.ticket.update({
                     where: { id: ticket.id },
                     data: { status: 'OPEN' },

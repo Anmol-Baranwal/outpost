@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { InboundHandler } from '../platforms/inbound.js';
 import type { PrismaLike, CreateJobFn } from '../platforms/inbound.js';
 import type { InboundMessage } from '../platforms/types.js';
-import { TicketSource } from '../types.js';
+import { TicketSource, TicketStatus } from '../types.js';
+import { REOPEN_ON_CUSTOMER_REPLY_STATUSES, reopensOnCustomerReply } from '../constants.js';
 
 // ── Mock Prisma ────────────────────────────────────────────────────────
 
@@ -423,6 +424,21 @@ describe('InboundHandler', () => {
             });
         });
 
+        it('reopens ticket from CLOSED when customer replies', async () => {
+            (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+                ...existingTicket,
+                status: 'CLOSED',
+            });
+
+            const msg = makeInboundMessage({ isThreadStart: false });
+            await handler.handle(msg);
+
+            expect(prisma.ticket.update).toHaveBeenCalledWith({
+                where: { id: 'ticket-existing' },
+                data: { status: 'OPEN' },
+            });
+        });
+
         it('does NOT reopen ticket if status is OPEN or IN_PROGRESS', async () => {
             for (const status of ['OPEN', 'IN_PROGRESS']) {
                 const freshPrisma = createMockPrisma();
@@ -592,5 +608,50 @@ describe('InboundHandler', () => {
 
             expect(createJob).toHaveBeenCalledWith('CUSTOM_AI_JOB', expect.anything());
         });
+    });
+});
+
+// ── The shared reopen predicate ────────────────────────────────────────
+//
+// All three inbound reply paths (this handler, the GitHub App issue-comment
+// webhook, the Postmark inbound-email webhook) gate their reopen on this one
+// predicate. They used to each carry their own literal status list and had
+// drifted apart, which silently dropped customer follow-ups.
+
+describe('reopensOnCustomerReply', () => {
+    it('reopens exactly the three dormant statuses', () => {
+        expect(REOPEN_ON_CUSTOMER_REPLY_STATUSES).toEqual([
+            'WAITING_ON_CUSTOMER',
+            'RESOLVED',
+            'CLOSED',
+        ]);
+        for (const status of REOPEN_ON_CUSTOMER_REPLY_STATUSES) {
+            expect(reopensOnCustomerReply(status)).toBe(true);
+        }
+    });
+
+    it('leaves live statuses alone', () => {
+        for (const status of ['OPEN', 'IN_PROGRESS', 'WAITING_ON_TEAM']) {
+            expect(reopensOnCustomerReply(status)).toBe(false);
+        }
+    });
+
+    it('is safe on null/undefined/unknown status', () => {
+        expect(reopensOnCustomerReply(null)).toBe(false);
+        expect(reopensOnCustomerReply(undefined)).toBe(false);
+        expect(reopensOnCustomerReply('NOT_A_STATUS')).toBe(false);
+    });
+
+    it('covers every TicketStatus value exactly once, reopen or not', () => {
+        // Guard against a new TicketStatus being added without deciding
+        // whether a customer reply should reopen it.
+        const all = Object.values(TicketStatus) as string[];
+        const reopening = all.filter((s) => reopensOnCustomerReply(s));
+        expect(reopening.sort()).toEqual(['CLOSED', 'RESOLVED', 'WAITING_ON_CUSTOMER']);
+        expect(all.filter((s) => !reopensOnCustomerReply(s)).sort()).toEqual([
+            'IN_PROGRESS',
+            'OPEN',
+            'WAITING_ON_TEAM',
+        ]);
     });
 });

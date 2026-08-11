@@ -10,7 +10,7 @@
 import crypto from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { prisma } from '@copilotkit/outpost/db';
-import { generateTicketId } from '@copilotkit/outpost/shared';
+import { generateTicketId, reopensOnCustomerReply } from '@copilotkit/outpost/shared';
 import { createJob, JobType } from '@copilotkit/outpost/queue';
 import { extractTicketId, extractEmail, extractName } from './utils';
 import type { PostmarkInboundPayload } from './utils';
@@ -82,8 +82,11 @@ export async function POST(request: Request) {
                     },
                 });
 
-                // Re-open ticket if it was resolved or closed
-                if (existingTicket.status === 'RESOLVED' || existingTicket.status === 'CLOSED') {
+                // Re-open a dormant ticket so a human sees the reply. The status
+                // set lives in @copilotkit/outpost/shared so this path, the
+                // shared InboundHandler, and the GitHub App issue-comment
+                // webhook cannot drift apart.
+                if (reopensOnCustomerReply(existingTicket.status)) {
                     await prisma.ticket.update({
                         where: { id: existingTicket.id },
                         data: { status: 'OPEN', updatedAt: new Date() },

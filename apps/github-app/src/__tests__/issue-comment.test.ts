@@ -18,7 +18,11 @@ const mockParseInboundEvent = vi.fn().mockReturnValue({
 const mockPostSystemMessage = vi.fn().mockResolvedValue(undefined);
 const mockPostResponse = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('@copilotkit/outpost/shared', () => ({
+// The reopen predicate is deliberately NOT stubbed — this webhook and the
+// shared InboundHandler must agree on which statuses a customer reply reopens,
+// so the test exercises the real shared implementation.
+vi.mock('@copilotkit/outpost/shared', async (importActual) => ({
+    ...(await importActual<typeof import('@copilotkit/outpost/shared')>()),
     truncate: vi.fn((str: string, _len: number) => str),
 }));
 
@@ -213,6 +217,48 @@ describe('handleIssueComment', () => {
             data: { status: 'OPEN' },
         });
     });
+
+    // The three dormant statuses a customer comment must reopen. This path used
+    // to omit CLOSED, so a comment on a closed GitHub issue reached nobody:
+    // replies no longer trigger an AI response, which makes the reopen the only
+    // signal that gets a human's attention.
+    it.each(['WAITING_ON_CUSTOMER', 'RESOLVED', 'CLOSED'])(
+        'reopens a %s ticket when a customer comments',
+        async (status) => {
+            vi.mocked(prisma.ticketExternalLink.findUnique).mockResolvedValue({
+                id: 'link-1',
+                ticketId: 'ticket-1',
+                plugin: 'github',
+                externalId: 'CopilotKit/CopilotKit#42',
+                ticket: { ...TICKET, status },
+            } as unknown as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
+
+            await handleIssueComment(makeEvent());
+
+            expect(prisma.ticket.update).toHaveBeenCalledWith({
+                where: { id: 'ticket-1' },
+                data: { status: 'OPEN' },
+            });
+        },
+    );
+
+    it.each(['OPEN', 'IN_PROGRESS', 'WAITING_ON_TEAM'])(
+        'does not touch the status of a %s ticket on a customer comment',
+        async (status) => {
+            vi.mocked(prisma.ticketExternalLink.findUnique).mockResolvedValue({
+                id: 'link-1',
+                ticketId: 'ticket-1',
+                plugin: 'github',
+                externalId: 'CopilotKit/CopilotKit#42',
+                ticket: { ...TICKET, status },
+            } as unknown as ReturnType<typeof prisma.ticketExternalLink.findUnique> extends Promise<infer T> ? T : never);
+
+            await handleIssueComment(makeEvent());
+
+            expect(prisma.message.create).toHaveBeenCalled();
+            expect(prisma.ticket.update).not.toHaveBeenCalled();
+        },
+    );
 
     it('updates status when team member replies to WAITING_ON_TEAM ticket', async () => {
         const waitingTicket = { ...TICKET, status: 'WAITING_ON_TEAM' };

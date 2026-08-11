@@ -13,6 +13,7 @@
 
 import type { InboundMessage, InboundResult, TicketRef } from './types.js';
 import { generateTicketId, truncate } from '../utils.js';
+import { reopensOnCustomerReply } from '../constants.js';
 import { TicketSource } from '../types.js';
 
 /**
@@ -262,11 +263,7 @@ export class InboundHandler {
                     data: { status: 'WAITING_ON_CUSTOMER' },
                 });
             }
-        } else if (
-            ticket.status === 'WAITING_ON_CUSTOMER' ||
-            ticket.status === 'RESOLVED' ||
-            ticket.status === 'CLOSED'
-        ) {
+        } else if (reopensOnCustomerReply(ticket.status)) {
             // Customer/external reply reopens a dormant ticket so a human sees it.
             await this.prisma.ticket.update({
                 where: { id: ticket.id },

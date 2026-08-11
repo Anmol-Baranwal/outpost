@@ -68,3 +68,31 @@ export const BACKOFF_MAX_MS = 300_000;
 /** Pagination defaults */
 export const DEFAULT_PAGE_SIZE = 25;
 export const MAX_PAGE_SIZE = 100;
+
+/**
+ * Ticket statuses that a customer (non-team) reply reopens back to OPEN.
+ *
+ * Every inbound reply path must agree on this set. Since Outpost stopped
+ * answering replies (it responds to the opening message only), reopening the
+ * ticket is the ONLY signal a reply sends to a human — a path that omits a
+ * status here silently drops the customer's follow-up on the floor.
+ *
+ * Readers: the shared InboundHandler (`platforms/inbound.ts`), the GitHub App
+ * issue-comment webhook, and the Postmark inbound-email webhook. Do not inline
+ * the literal set anywhere; call `reopensOnCustomerReply` instead.
+ */
+export const REOPEN_ON_CUSTOMER_REPLY_STATUSES = [
+    'WAITING_ON_CUSTOMER',
+    'RESOLVED',
+    'CLOSED',
+] as const satisfies readonly string[];
+
+/**
+ * True when a customer reply to a ticket in `status` should reopen it.
+ *
+ * Takes a plain string (not TicketStatus) because callers read the status
+ * straight off a Prisma row, where it is typed as the DB enum / string.
+ */
+export function reopensOnCustomerReply(status: string | null | undefined): boolean {
+    return (REOPEN_ON_CUSTOMER_REPLY_STATUSES as readonly string[]).includes(status ?? '');
+}

@@ -25,7 +25,11 @@ vi.mock('@copilotkit/outpost/db', () => ({
 
 // ─── Mock generateTicketId ──────────────────────────────────────────────────
 
-vi.mock('@copilotkit/outpost/shared', () => ({
+// reopensOnCustomerReply is deliberately NOT stubbed — this webhook and the
+// shared InboundHandler must agree on which statuses a reply reopens, so the
+// test exercises the real shared implementation.
+vi.mock('@copilotkit/outpost/shared', async (importActual) => ({
+    ...(await importActual<typeof import('@copilotkit/outpost/shared')>()),
     generateTicketId: vi.fn().mockReturnValue('TKT-TESTID01'),
 }));
 
@@ -248,6 +252,49 @@ describe('Postmark inbound webhook', () => {
                 }),
             );
         });
+
+        // WAITING_ON_CUSTOMER used to be missing from this path's status list, so
+        // an email reply to a ticket that was waiting on the customer stayed out
+        // of the queue entirely — replies no longer trigger an AI response, so
+        // the reopen is the only signal that reaches a human.
+        it.each(['WAITING_ON_CUSTOMER', 'RESOLVED', 'CLOSED'])(
+            're-opens a %s ticket on a new inbound reply',
+            async (status) => {
+                mockTicketFindUnique.mockResolvedValue({
+                    id: 'dormant-ticket',
+                    displayId: 'TKT-DORMANT1',
+                    status,
+                });
+                mockMessageCreate.mockResolvedValue({ id: 'msg-reopen' });
+                mockTicketUpdate.mockResolvedValue({});
+
+                await POST(postmarkRequest(fullPayload({ MailboxHash: 'TKT-DORMANT1' })));
+
+                expect(mockTicketUpdate).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        where: { id: 'dormant-ticket' },
+                        data: expect.objectContaining({ status: 'OPEN' }),
+                    }),
+                );
+            },
+        );
+
+        it.each(['OPEN', 'IN_PROGRESS', 'WAITING_ON_TEAM'])(
+            'leaves a %s ticket status untouched on a new inbound reply',
+            async (status) => {
+                mockTicketFindUnique.mockResolvedValue({
+                    id: 'live-ticket',
+                    displayId: 'TKT-LIVE0001',
+                    status,
+                });
+                mockMessageCreate.mockResolvedValue({ id: 'msg-append' });
+
+                await POST(postmarkRequest(fullPayload({ MailboxHash: 'TKT-LIVE0001' })));
+
+                expect(mockMessageCreate).toHaveBeenCalled();
+                expect(mockTicketUpdate).not.toHaveBeenCalled();
+            },
+        );
 
         it('creates new ticket when MailboxHash ticket is not found', async () => {
             mockTicketFindUnique.mockResolvedValue(null);
