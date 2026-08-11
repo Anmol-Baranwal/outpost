@@ -135,9 +135,15 @@ const sampleTicket = {
     },
     messages: [
         {
+            // `isAiGenerated` is spelled out on every message fixture in this
+            // file: the DB column is non-nullable, so a row that omits it is a
+            // shape the handler never sees. Leaving it off let the
+            // one-response-per-ticket guard be satisfied by `undefined` instead
+            // of by a real `false`.
             id: 'msg-1',
             type: 'USER',
             content: 'How do I use CopilotKit with Next.js?',
+            isAiGenerated: false,
             createdAt: new Date('2026-04-23T10:00:00Z'),
         },
     ],
@@ -1001,24 +1007,31 @@ describe('handleAiResponse', () => {
                     id: 'msg-1',
                     type: 'USER',
                     content: 'Hello',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:00:00Z'),
                 },
                 {
+                    // A human reply sent from the dashboard: BOT row, but not
+                    // the AI's answer, so it must not trip the guard and
+                    // short-circuit this test before history is built.
                     id: 'msg-2',
                     type: 'BOT',
                     content: 'Hi there!',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:01:00Z'),
                 },
                 {
                     id: 'msg-3',
                     type: 'SYSTEM',
                     content: 'Ticket escalated',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:02:00Z'),
                 },
                 {
                     id: 'msg-4',
                     type: 'USER',
                     content: 'Follow up question',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:03:00Z'),
                 },
             ],
@@ -1271,6 +1284,39 @@ describe('handleAiResponse', () => {
         it('still answers a ticket whose only messages are from users', async () => {
             // Guard must not swallow the first, legitimate response.
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data).not.toMatchObject({ skipped: true });
+            expect(mockGenerateSupportResponse).toHaveBeenCalled();
+            expect(mockPostResponse).toHaveBeenCalled();
+        });
+
+        it('does not treat a human BOT-channel reply as the ticket answer', async () => {
+            // A teammate answering from the dashboard persists as type 'BOT'
+            // with isAiGenerated: false — the outbound channel is the bot, the
+            // author is not. That is not Outpost's one response, so the AI's
+            // own single answer must still go out.
+            //
+            // Together with the SYSTEM case below this pins both halves of the
+            // guard's predicate independently: drop `m.type === 'BOT'` and the
+            // SYSTEM test goes red; drop `&& m.isAiGenerated` and this one does.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-human',
+                        type: 'BOT',
+                        content: 'Hey, a maintainer here — can you share your version?',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:10Z'),
+                    },
+                ],
+            });
 
             const result = await handleAiResponse(
                 { ticketId: 'tkt-1', source: 'discord' },
