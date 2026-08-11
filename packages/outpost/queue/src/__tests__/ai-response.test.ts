@@ -518,6 +518,7 @@ describe('handleAiResponse', () => {
                 isAiGenerated: true,
                 confidenceScore: 0.92,
                 confidenceLevel: 'HIGH',
+                responseKey: 'PRIMARY_AI_RESPONSE',
             },
         });
     });
@@ -1213,6 +1214,55 @@ describe('handleAiResponse', () => {
             expect(result.success).toBe(true);
             expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
             expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('lets only one of two concurrent handlers post a response', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            // Hold both model calls until both handlers have passed the initial
+            // history check. This makes the check-then-insert race deterministic:
+            // neither invocation can observe the other's response in its ticket
+            // snapshot.
+            let generatorsStarted = 0;
+            let releaseGenerators!: () => void;
+            const bothGeneratorsStarted = new Promise<void>((resolve) => {
+                releaseGenerators = resolve;
+            });
+            mockGenerateSupportResponse.mockImplementation(async () => {
+                generatorsStarted += 1;
+                if (generatorsStarted === 2) releaseGenerators();
+                await bothGeneratorsStarted;
+                return highConfidenceResult;
+            });
+
+            // Model the database's unique (ticketId, responseKey) constraint.
+            // Before the production insert supplies responseKey, both writes
+            // succeed and this test fails with two platform posts.
+            let responseClaimed = false;
+            mockPrismaMessage.create.mockImplementation(
+                async (args: { data: { responseKey?: string } }) => {
+                    if (args.data.responseKey === 'PRIMARY_AI_RESPONSE') {
+                        if (responseClaimed) {
+                            throw {
+                                code: 'P2002',
+                                meta: { target: ['ticketId', 'responseKey'] },
+                            };
+                        }
+                        responseClaimed = true;
+                    }
+                    return { id: `msg-${responseClaimed ? 'winner' : 'unclaimed'}` };
+                },
+            );
+
+            const results = await Promise.all([
+                handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext()),
+                handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext()),
+            ]);
+
+            expect(generatorsStarted).toBe(2);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(results.filter((result) => result.data?.skipped)).toHaveLength(1);
+            expect(results.every((result) => result.success)).toBe(true);
         });
 
         it('drives progress to 100 so the skipped job is not left looking hung', async () => {

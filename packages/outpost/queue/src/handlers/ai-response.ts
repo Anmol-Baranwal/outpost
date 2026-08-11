@@ -39,6 +39,35 @@ import { getFeedbackCalibration } from '../feedback-calibration.js';
 import { JobType } from '../types.js';
 import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.js';
 
+const PRIMARY_AI_RESPONSE_KEY = 'PRIMARY_AI_RESPONSE';
+
+/**
+ * Identify the unique-key collision raised when another handler wins the
+ * per-ticket primary-response slot. Keep this narrow: an unrelated P2002 must
+ * still fail the job rather than being mislabeled as a harmless duplicate.
+ */
+function isPrimaryAiResponseConflict(error: unknown): boolean {
+    if (
+        typeof error !== 'object' ||
+        error === null ||
+        !('code' in error) ||
+        (error as { code?: unknown }).code !== 'P2002'
+    ) {
+        return false;
+    }
+
+    const target = (error as { meta?: { target?: unknown } }).meta?.target;
+    if (Array.isArray(target)) {
+        return target.includes('ticketId') && target.includes('responseKey');
+    }
+
+    return (
+        typeof target === 'string' &&
+        (target === 'Message_ticketId_responseKey_key' ||
+            (target.includes('ticketId') && target.includes('responseKey')))
+    );
+}
+
 /**
  * Map from TicketSource enum values (stored in DB) to PlatformTarget
  * strings used by the AI formatter. TicketSource uses uppercase enums
@@ -249,18 +278,39 @@ export async function handleAiResponse(
 
         await context.reportProgress(70);
 
-        // 5. Persist the AI-generated response as a Message record
-        const aiMessage = await prisma.message.create({
-            data: {
+        // 5. Persist the AI-generated response and atomically claim this
+        // ticket's one primary-response slot. The history check above avoids
+        // unnecessary model work in the common case, but it cannot serialize
+        // overlapping jobs: both can read the same no-response snapshot. The
+        // database unique key on (ticketId, responseKey) elects exactly one
+        // winner before either invocation reaches platform post-back.
+        let aiMessage;
+        try {
+            const aiMessageData = {
                 ticketId: ticket.id,
                 content: pipelineResult.response,
-                type: 'BOT',
+                type: 'BOT' as const,
                 author: 'Outpost AI',
                 isAiGenerated: true,
                 confidenceScore: pipelineResult.confidenceScore,
                 confidenceLevel: pipelineResult.confidenceLevel,
-            },
-        });
+                responseKey: PRIMARY_AI_RESPONSE_KEY,
+            };
+            aiMessage = await prisma.message.create({
+                data: aiMessageData,
+            });
+        } catch (error) {
+            if (!isPrimaryAiResponseConflict(error)) throw error;
+
+            console.log(
+                `[AI Response] Ticket ${ticketId} was answered by a concurrent job — skipping platform post-back.`,
+            );
+            await context.reportProgress(100);
+            return {
+                success: true,
+                data: { ticketId, skipped: true, reason: 'already_answered' },
+            };
+        }
 
         // Store the formatted response on the ticket for bots to pick up.
         //
