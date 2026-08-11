@@ -153,6 +153,7 @@ describe('buildTicketCreatedCard', () => {
     it('builds a ticket acknowledgment card', () => {
         const card = buildTicketCreatedCard({
             title: 'Help with integration',
+            aiJobEnqueued: true,
         });
 
         expect(card.type).toBe('AdaptiveCard');
@@ -167,6 +168,7 @@ describe('buildTicketCreatedCard', () => {
         // property today is a no-op; the day the builder reads it, this fails.
         const card = buildTicketCreatedCard({
             title: 'Help with integration',
+            aiJobEnqueued: true,
             ticketDisplayId: 'TKT-LEAK01',
         } as TicketCreatedCardOptions);
 
@@ -179,7 +181,10 @@ describe('buildTicketCreatedCard', () => {
         // (handlers/message.ts passes truncate(message.content)), so it is
         // rendered as-is. Callers must never put an internal displayId here —
         // this builder does not sanitize, and this test pins that contract.
-        const card = buildTicketCreatedCard({ title: 'my ref is TKT-USERTYPED' });
+        const card = buildTicketCreatedCard({
+            title: 'my ref is TKT-USERTYPED',
+            aiJobEnqueued: true,
+        });
 
         const body = card.body as Array<{ text: string }>;
         expect(body[1].text).toBe('my ref is TKT-USERTYPED');

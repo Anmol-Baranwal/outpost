@@ -198,6 +198,30 @@ describe('handleMessage', () => {
         expect(createJob).not.toHaveBeenCalled();
     });
 
+    it('does not promise AI review when an orphaned reply creates a silent ticket', async () => {
+        // No matching ticket means the shared handler preserves this reply by
+        // creating a ticket, but deliberately does not enqueue an AI response.
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+
+        const context = makeContext({ replyToId: 'missing-parent-id' });
+        await handleMessage(context);
+
+        expect(prisma.ticket.create).toHaveBeenCalled();
+        expect(createJob).not.toHaveBeenCalled();
+        expect(context.sendActivity).toHaveBeenCalledTimes(1);
+
+        const sentActivity = vi.mocked(context.sendActivity).mock.calls[0]?.[0] as {
+            attachments: Array<{ content: { body: Array<{ text?: string }> } }>;
+        };
+        const visibleText = sentActivity.attachments[0]?.content.body
+            .map((block) => block.text ?? '')
+            .join('\n');
+
+        expect(visibleText).not.toContain('AI assistant is reviewing');
+        expect(visibleText).toContain('team member');
+        expect(visibleText).not.toMatch(/TKT-/);
+    });
+
     it('does not enqueue AI response for team member follow-ups', async () => {
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(
             TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never,
