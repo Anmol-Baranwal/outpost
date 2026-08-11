@@ -290,7 +290,7 @@ describe('handleAiResponse', () => {
         expect(result.data?.confidenceScore).toBe(0.92);
         expect(result.data?.escalated).toBe(false);
 
-        // Pipeline should have been called with the latest user message
+        // Pipeline should have been called with the message that opened the ticket
         expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
             'How do I use CopilotKit with Next.js?',
             expect.objectContaining({
@@ -1027,8 +1027,10 @@ describe('handleAiResponse', () => {
 
         await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
+        // Question is the OPENING message; the later USER turn is history, not
+        // the thing being answered.
         expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
-            'Follow up question',
+            'Hello',
             expect.objectContaining({
                 conversationHistory: [
                     { role: 'user', content: 'Hello' },
@@ -1037,6 +1039,120 @@ describe('handleAiResponse', () => {
                 ],
             }),
         );
+    });
+
+    // ── The answered message is the OPENING message ───────────────────────
+    //
+    // Outpost gets exactly one response per ticket, so which message that
+    // response addresses is the whole ballgame. Replies are persisted as USER
+    // messages by design, which is why "latest USER row" is not a safe proxy for
+    // "the question": a reporter who splits a thought across two Discord
+    // messages can land a second USER row before the job dequeues.
+    describe('answers the message that opened the ticket', () => {
+        /** Reporter follow-up landed before the job ran — the classic Discord split. */
+        const splitThoughtTicket = {
+            ...sampleTicket,
+            messages: [
+                {
+                    id: 'msg-1',
+                    type: 'USER',
+                    content: 'How do I use CopilotKit with Next.js?',
+                    isAiGenerated: false,
+                    createdAt: new Date('2026-04-23T10:00:00Z'),
+                },
+                {
+                    id: 'msg-2',
+                    type: 'USER',
+                    content: 'btw I am on the app router',
+                    isAiGenerated: false,
+                    createdAt: new Date('2026-04-23T10:00:04Z'),
+                },
+            ],
+        };
+
+        it('generates against the opening message, not a later follow-up', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(splitThoughtTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[0]).toBe(
+                'How do I use CopilotKit with Next.js?',
+            );
+        });
+
+        it('still passes the interim follow-up through as conversation context', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(splitThoughtTicket);
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[1]).toMatchObject({
+                conversationHistory: [
+                    { role: 'user', content: 'How do I use CopilotKit with Next.js?' },
+                    { role: 'user', content: 'btw I am on the app router' },
+                ],
+            });
+        });
+
+        it('skips leading non-USER rows to find the opening USER message', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    {
+                        id: 'msg-0',
+                        type: 'SYSTEM',
+                        content: 'Ticket created from Discord thread',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T09:59:59Z'),
+                    },
+                    {
+                        id: 'msg-1',
+                        type: 'USER',
+                        content: 'Runtime returns 500 on /api/copilotkit',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:00Z'),
+                    },
+                    {
+                        id: 'msg-2',
+                        type: 'USER',
+                        content: 'here is the stack trace',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:06Z'),
+                    },
+                ],
+            });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[0]).toBe(
+                'Runtime returns 500 on /api/copilotkit',
+            );
+        });
+
+        it('falls back to the description when the ticket has no USER message', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    {
+                        id: 'msg-0',
+                        type: 'SYSTEM',
+                        content: 'Imported from Linear',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:00Z'),
+                    },
+                ],
+            });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[0]).toBe(
+                'I want to add AI features to my Next.js app using CopilotKit.',
+            );
+        });
     });
 
     // ── One response per ticket ───────────────────────────────────────────

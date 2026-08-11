@@ -123,7 +123,11 @@ export async function handleAiResponse(
         };
     }
 
-    // 2. Build conversation history from DB messages
+    // 2. Build conversation history from DB messages.
+    //
+    // Deliberately the FULL non-SYSTEM history, including any message that
+    // arrived after the one being answered. See the question selection below for
+    // why the two are allowed to disagree.
     const conversationHistory = ticket.messages
         .filter((m: { type: string }) => m.type !== 'SYSTEM')
         .map((m: { type: string; content: string }) => ({
@@ -131,11 +135,28 @@ export async function handleAiResponse(
             content: m.content,
         }));
 
-    // Determine the latest user message as the question
-    const latestUserMessage = [...ticket.messages]
-        .reverse()
-        .find((m: { type: string }) => m.type === 'USER');
-    const question = latestUserMessage?.content ?? ticket.description ?? ticket.title;
+    // The question is the message that OPENED the ticket — the same message the
+    // one-response-per-ticket invariant above says we get to answer.
+    //
+    // `ticket.messages` is loaded `orderBy: { createdAt: 'asc' }`, so the FIRST
+    // USER row is the opening message. Scanning from the other end and taking
+    // the LATEST USER row was wrong: replies are still persisted as USER
+    // messages (correctly — they belong in the thread's history), so a reporter
+    // who splits a thought across two Discord messages in the seconds between
+    // ticket creation and this job running had the ticket's one and only answer
+    // aimed at the follow-up fragment instead of the question that opened it.
+    // One shot, spent on the wrong sentence.
+    //
+    // The interim follow-up deliberately STAYS in `conversationHistory`. Those
+    // two inputs answer different questions: `question` is what to respond to,
+    // `conversationHistory` is what the responder knows. A follow-up is usually
+    // the same thought continued — a stack trace, a version number, "on Next 15"
+    // — and it is exactly the detail that makes the single answer good, so
+    // dropping it would trade one bug for a worse answer. Suppressing it would
+    // also need a second policy for the non-USER rows after the opening, with no
+    // evidence behind it.
+    const openingUserMessage = ticket.messages.find((m: { type: string }) => m.type === 'USER');
+    const question = openingUserMessage?.content ?? ticket.description ?? ticket.title;
 
     // Determine platform target for formatting
     const platform = payload.source ?? toPlatformTarget(ticket.source);
