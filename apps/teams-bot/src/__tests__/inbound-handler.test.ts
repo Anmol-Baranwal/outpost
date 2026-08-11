@@ -150,14 +150,11 @@ describe('InboundHandler (Teams-focused)', () => {
             });
         });
 
-        it('enqueues AI response for non-team-member messages', async () => {
+        // One response per ticket — follow-up messages are recorded, not answered.
+        it('does not enqueue an AI response for non-team-member follow-ups', async () => {
             await handler.handle(makeMessage({ isThreadStart: false }));
 
-            expect(createJob).toHaveBeenCalledWith('AI_RESPONSE', {
-                ticketId: 'existing-ticket-id',
-                threadId: 'conv-100',
-                source: 'teams',
-            });
+            expect(createJob).not.toHaveBeenCalled();
         });
 
         it('transitions WAITING_ON_TEAM to WAITING_ON_CUSTOMER for team member messages', async () => {

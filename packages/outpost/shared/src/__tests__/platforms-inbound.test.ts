@@ -302,16 +302,38 @@ describe('InboundHandler', () => {
             expect(msgData.content).toBe('Follow up question');
         });
 
-        it('enqueues AI_RESPONSE for non-team-member reply', async () => {
+        // ONE RESPONSE PER TICKET. Outpost answers the message that opens a
+        // ticket and stays out of the thread after that — no follow-up reply to
+        // anyone. Before this, every non-team reply enqueued an AI_RESPONSE, so
+        // the bot butted into follow-up questions between community members and
+        // summarised a human's answer back at them.
+        it('never enqueues AI_RESPONSE for a reply from a non-team member', async () => {
             const msg = makeInboundMessage({ isThreadStart: false });
             const result = await handler.handle(msg);
 
-            expect(result.aiJobEnqueued).toBe(true);
-            expect(createJob).toHaveBeenCalledWith('AI_RESPONSE', {
-                ticketId: 'ticket-existing',
-                threadId: 'thread-123',
-                source: 'discord',
+            expect(result.aiJobEnqueued).toBe(false);
+            expect(createJob).not.toHaveBeenCalled();
+        });
+
+        it('never enqueues AI_RESPONSE for a reply from an unrelated third party', async () => {
+            const msg = makeInboundMessage({
+                isThreadStart: false,
+                platformUserId: 'someone-else-999',
+                platformUsername: 'bystander',
+                content: 'did you ever get this working?',
             });
+            const result = await handler.handle(msg);
+
+            expect(result.aiJobEnqueued).toBe(false);
+            expect(createJob).not.toHaveBeenCalled();
+        });
+
+        it('still appends the reply as a Message even though no AI job is queued', async () => {
+            const msg = makeInboundMessage({ isThreadStart: false, content: 'any update?' });
+            await handler.handle(msg);
+
+            expect(prisma.message.create).toHaveBeenCalledTimes(1);
+            expect(createJob).not.toHaveBeenCalled();
         });
 
         it('skips AI_RESPONSE for team member reply', async () => {
@@ -469,6 +491,10 @@ describe('InboundHandler', () => {
 
     // ── Team member detection ────────────────────────────────────────
 
+    // These exercise isTeamMember through the NEW-ticket path, because that is
+    // the only path where the flag still varies. Replies never enqueue an
+    // AI_RESPONSE regardless of sender, so asserting aiJobEnqueued on a reply
+    // would pass no matter what isTeamMember returned.
     describe('team member detection', () => {
         it('identifies team member by User.externalId + TeamMember.email lookup', async () => {
             (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -479,19 +505,7 @@ describe('InboundHandler', () => {
                 id: 'member-1',
             });
 
-            const msg = makeInboundMessage({ isThreadStart: false });
-
-            // Set up existing ticket for reply
-            (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
-                id: 'ticket-1',
-                displayId: 'TKT-TEST1234',
-                status: 'OPEN',
-                sourceId: 'thread-123',
-                channel: 'channel-1',
-                source: 'DISCORD',
-            });
-
-            const result = await handler.handle(msg);
+            const result = await handler.handle(makeInboundMessage());
             expect(result.aiJobEnqueued).toBe(false);
 
             // Verify User lookup used correct source
@@ -509,34 +523,14 @@ describe('InboundHandler', () => {
                 email: null,
             });
 
-            (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
-                id: 'ticket-1',
-                displayId: 'TKT-TEST1234',
-                status: 'OPEN',
-                sourceId: 'thread-123',
-                channel: 'channel-1',
-                source: 'DISCORD',
-            });
-
-            const msg = makeInboundMessage({ isThreadStart: false });
-            const result = await handler.handle(msg);
+            const result = await handler.handle(makeInboundMessage());
             expect(result.aiJobEnqueued).toBe(true);
         });
 
         it('returns false when user not found in database', async () => {
             (prisma.user.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
-            (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
-                id: 'ticket-1',
-                displayId: 'TKT-TEST1234',
-                status: 'OPEN',
-                sourceId: 'thread-123',
-                channel: 'channel-1',
-                source: 'DISCORD',
-            });
-
-            const msg = makeInboundMessage({ isThreadStart: false });
-            const result = await handler.handle(msg);
+            const result = await handler.handle(makeInboundMessage());
             expect(result.aiJobEnqueued).toBe(true);
         });
 
@@ -547,17 +541,7 @@ describe('InboundHandler', () => {
             });
             (prisma.teamMember.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
-            (prisma.ticket.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
-                id: 'ticket-1',
-                displayId: 'TKT-TEST1234',
-                status: 'OPEN',
-                sourceId: 'thread-123',
-                channel: 'channel-1',
-                source: 'DISCORD',
-            });
-
-            const msg = makeInboundMessage({ isThreadStart: false });
-            const result = await handler.handle(msg);
+            const result = await handler.handle(makeInboundMessage());
             expect(result.aiJobEnqueued).toBe(true);
         });
     });

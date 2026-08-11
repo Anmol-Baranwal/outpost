@@ -1,6 +1,5 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob } from '@copilotkit/outpost/queue';
 import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
 import { getOctokit } from '../lib/github-client.js';
 import { findTicketBySourceId, isTeamMember } from '../lib/tickets.js';
@@ -77,11 +76,11 @@ export async function handleIssueComment(
                 });
             }
         } else {
-            // External user (likely original poster): enqueue AI response
-            await createJob('AI_RESPONSE' as Parameters<typeof createJob>[0], {
-                ticketId: ticket.id,
-                source: 'github' as const,
-            });
+            // No AI response on comments — Outpost answers the issue body once and
+            // then stays out of the thread, whoever comments next. This previously
+            // enqueued an AI_RESPONSE for every non-team commenter, so the bot kept
+            // replying to follow-ups on issues a human had already picked up.
+            // The AI_RESPONSE handler enforces the same invariant server-side.
 
             // Reopen ticket if it was waiting on customer or resolved
             if (ticket.status === 'WAITING_ON_CUSTOMER' || ticket.status === 'RESOLVED') {

@@ -147,7 +147,11 @@ describe('handleIssueComment', () => {
         });
     });
 
-    it('appends a message and enqueues AI response for non-team-member', async () => {
+    // ONE RESPONSE PER TICKET. Outpost answers the issue body and then stays out
+    // of the comment thread — including when the original reporter follows up.
+    // This used to assert the opposite, locking in the behaviour where the bot
+    // kept commenting on issues a human had already taken over.
+    it('appends a comment without enqueuing an AI response for non-team-member', async () => {
         const event = makeEvent();
         await handleIssueComment(event);
 
@@ -159,13 +163,7 @@ describe('handleIssueComment', () => {
             }),
         });
 
-        expect(createJob).toHaveBeenCalledWith(
-            'AI_RESPONSE',
-            expect.objectContaining({
-                ticketId: 'ticket-1',
-                source: 'github',
-            }),
-        );
+        expect(createJob).not.toHaveBeenCalled();
     });
 
     it('does not enqueue AI response for team member comments (static list)', async () => {

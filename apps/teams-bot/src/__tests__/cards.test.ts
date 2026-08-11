@@ -3,6 +3,15 @@ import { buildResponseCard } from '../cards/response-card.js';
 import { buildTicketCreatedCard } from '../cards/ticket-created-card.js';
 import { buildEscalationCard } from '../cards/escalation-card.js';
 
+/**
+ * Every text block in a card body, flattened. Used by the leak assertions
+ * below so a displayId can't reappear in a block index nobody checks.
+ */
+function allCardText(card: Record<string, unknown>): string {
+    const body = card.body as Array<{ text?: string }>;
+    return body.map((b) => b.text ?? '').join('\n');
+}
+
 describe('buildResponseCard', () => {
     it('builds a card with action buttons', () => {
         const card = buildResponseCard({
@@ -15,7 +24,7 @@ describe('buildResponseCard', () => {
         expect(card.version).toBe('1.4');
 
         const body = card.body as Array<{ text: string }>;
-        expect(body[0].text).toContain('TKT-AB12');
+        expect(body[0].text).toBe('AI Response');
         expect(body[1].text).toBe('Here is the answer.');
 
         const actions = card.actions as Array<{ title: string; data: { action: string } }>;
@@ -24,6 +33,28 @@ describe('buildResponseCard', () => {
         expect(actions[0].data.action).toBe('issue_solved');
         expect(actions[1].title).toBe('Need more help');
         expect(actions[1].data.action).toBe('need_more_help');
+    });
+
+    it('never renders the internal ticket displayId into card text', () => {
+        const card = buildResponseCard({
+            ticketDisplayId: 'TKT-AB12',
+            responseText: 'Here is the answer.',
+            confidence: 0.9,
+        });
+
+        expect(allCardText(card)).not.toContain('TKT-AB12');
+    });
+
+    it('still routes the displayId through action data so clicks resolve', () => {
+        const card = buildResponseCard({
+            ticketDisplayId: 'TKT-AB12',
+            responseText: 'Here is the answer.',
+            confidence: 0.9,
+        });
+
+        const actions = card.actions as Array<{ data: { ticketDisplayId: string } }>;
+        expect(actions[0].data.ticketDisplayId).toBe('TKT-AB12');
+        expect(actions[1].data.ticketDisplayId).toBe('TKT-AB12');
     });
 
     it('includes a low-confidence disclaimer when confidence is below threshold', () => {
@@ -53,29 +84,37 @@ describe('buildResponseCard', () => {
 describe('buildTicketCreatedCard', () => {
     it('builds a ticket acknowledgment card', () => {
         const card = buildTicketCreatedCard({
-            ticketDisplayId: 'TKT-CD34',
             title: 'Help with integration',
         });
 
         expect(card.type).toBe('AdaptiveCard');
         const body = card.body as Array<{ text: string }>;
-        expect(body[0].text).toContain('TKT-CD34');
         expect(body[1].text).toBe('Help with integration');
         expect(body[2].text).toContain('AI assistant');
+    });
+
+    it('never renders a ticket displayId — the option does not exist', () => {
+        const card = buildTicketCreatedCard({ title: 'Help with integration' });
+
+        expect(allCardText(card)).not.toMatch(/TKT-/);
     });
 });
 
 describe('buildEscalationCard', () => {
     it('builds an escalation notification card', () => {
         const card = buildEscalationCard({
-            ticketDisplayId: 'TKT-EF56',
             reason: 'User needs more help.',
         });
 
         expect(card.type).toBe('AdaptiveCard');
         const body = card.body as Array<{ text: string }>;
-        expect(body[0].text).toContain('TKT-EF56');
         expect(body[1].text).toBe('User needs more help.');
         expect(body[2].text).toContain('team member');
+    });
+
+    it('never renders a ticket displayId — the option does not exist', () => {
+        const card = buildEscalationCard({ reason: 'User needs more help.' });
+
+        expect(allCardText(card)).not.toMatch(/TKT-/);
     });
 });

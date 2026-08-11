@@ -104,7 +104,6 @@ async function handleNeedMoreHelp(context: TurnContext, _data: CardActionData): 
 
     // Post escalation card
     const card = buildEscalationCard({
-        ticketDisplayId: ticket.displayId,
         reason: 'User requested additional assistance.',
     });
 

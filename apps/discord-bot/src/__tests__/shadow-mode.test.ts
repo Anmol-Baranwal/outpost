@@ -230,18 +230,14 @@ describe('shadow-mode', () => {
             });
         });
 
-        it('enqueues an AI response job for the ticket', async () => {
+        // Shadow mode has to mirror production, and production answers a ticket
+        // once — on its opening message. Enqueuing on replies here would make
+        // shadow traffic look chattier than the real bot.
+        it('does not enqueue an AI response job for a reply', async () => {
             const message = makeMessage();
             await handleShadowMessage(message, 'ticket-1', 'thread-123');
 
-            expect(createJob).toHaveBeenCalledWith(
-                JobType.AI_RESPONSE,
-                expect.objectContaining({
-                    ticketId: 'ticket-1',
-                    threadId: 'thread-123',
-                    source: 'discord',
-                }),
-            );
+            expect(createJob).not.toHaveBeenCalled();
         });
     });
 });

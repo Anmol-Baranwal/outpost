@@ -102,7 +102,12 @@ describe('handleMessageCreate', () => {
         expect(prisma.message.create).not.toHaveBeenCalled();
     });
 
-    it('processes reply through InboundHandler and enqueues AI response for non-team-member', async () => {
+    // ONE RESPONSE PER TICKET. The thread starter gets an answer (see
+    // thread-create.test.ts); replies in that thread never do, whoever sends
+    // them. This test used to assert the opposite — it locked in the behaviour
+    // where the bot answered follow-up messages, including a maintainer's own
+    // reply in a Discord support thread.
+    it('appends a reply through InboundHandler without enqueuing an AI response', async () => {
         const message = makeMessage();
         await handleMessageCreate(message);
 
@@ -114,14 +119,7 @@ describe('handleMessageCreate', () => {
             }),
         });
 
-        // InboundHandler enqueues AI response via createJob wrapper
-        expect(createJob).toHaveBeenCalledWith(
-            'AI_RESPONSE',
-            expect.objectContaining({
-                ticketId: 'ticket-1',
-                source: 'discord',
-            }),
-        );
+        expect(createJob).not.toHaveBeenCalled();
     });
 
     it('does not enqueue AI response for team member messages', async () => {

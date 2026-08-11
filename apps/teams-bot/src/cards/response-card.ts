@@ -1,4 +1,9 @@
 export interface ResponseCardOptions {
+    /**
+     * Internal ticket identifier. Routed through the Action.Submit `data`
+     * payloads so button clicks resolve back to the ticket — never rendered
+     * into card text, which the reporter reads.
+     */
     ticketDisplayId: string;
     responseText: string;
     confidence: number;
@@ -16,7 +21,7 @@ export function buildResponseCard(options: ResponseCardOptions): Record<string, 
     const body: Record<string, unknown>[] = [
         {
             type: 'TextBlock',
-            text: `**${ticketDisplayId}** - AI Response`,
+            text: 'AI Response',
             weight: 'Bolder',
             size: 'Medium',
         },

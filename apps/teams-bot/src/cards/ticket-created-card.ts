@@ -1,13 +1,15 @@
 export interface TicketCreatedCardOptions {
-    ticketDisplayId: string;
     title: string;
 }
 
 /**
  * Build an Adaptive Card acknowledging ticket creation.
+ *
+ * Deliberately carries no ticket displayId. That identifier is internal \u2014 it
+ * belongs in the dashboard and team slash commands, not in reporter-facing copy.
  */
 export function buildTicketCreatedCard(options: TicketCreatedCardOptions): Record<string, unknown> {
-    const { ticketDisplayId, title } = options;
+    const { title } = options;
 
     return {
         type: 'AdaptiveCard',
@@ -16,7 +18,7 @@ export function buildTicketCreatedCard(options: TicketCreatedCardOptions): Recor
         body: [
             {
                 type: 'TextBlock',
-                text: `\uD83C\uDFAB Ticket ${ticketDisplayId} created`,
+                text: "\uD83C\uDFAB We've got your question",
                 weight: 'Bolder',
                 size: 'Medium',
             },

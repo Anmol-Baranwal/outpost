@@ -857,6 +857,144 @@ describe('handleAiResponse', () => {
             }),
         );
     });
+
+    // ── One response per ticket ───────────────────────────────────────────
+    //
+    // The invariant: Outpost answers the message that opens a ticket and never
+    // posts in that thread again, whoever speaks next. The enqueue sites no
+    // longer queue on replies, but this guard is what makes the rule hold — it
+    // reads the ticket's own history, so a caller added later cannot route
+    // around it.
+    //
+    // The pipeline is mocked at the class seam here (not driven through LLMock)
+    // on purpose: the assertion these tests exist to make is that NO model call
+    // happens at all, and `mockGenerateSupportResponse` not being called is the
+    // direct expression of that.
+    describe('one response per ticket', () => {
+        /** A ticket that already carries the AI's single answer. */
+        const answeredTicket = {
+            ...sampleTicket,
+            messages: [
+                {
+                    id: 'msg-1',
+                    type: 'USER',
+                    content: 'How do I use CopilotKit with Next.js?',
+                    isAiGenerated: false,
+                    createdAt: new Date('2026-04-23T10:00:00Z'),
+                },
+                {
+                    id: 'msg-2',
+                    type: 'BOT',
+                    content: 'Here is how to use CopilotKit with Next.js...',
+                    isAiGenerated: true,
+                    createdAt: new Date('2026-04-23T10:00:20Z'),
+                },
+            ],
+        };
+
+        it('skips generation when the ticket already has an AI response', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('does not post anything to the platform for an already-answered ticket', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.create).not.toHaveBeenCalled();
+            expect(mockPrismaTicket.update).not.toHaveBeenCalled();
+        });
+
+        it('reports success so the job is not retried forever', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // A failure verdict would put an unchangeable decision through the
+            // retry ladder. Asserting `skipped` alongside it matters: without it
+            // this test also passes on the ordinary answer path, so it would
+            // stop proving anything if the guard were removed.
+            expect(result.success).toBe(true);
+            expect(result.error).toBeUndefined();
+            expect(result.data).toMatchObject({ skipped: true });
+        });
+
+        it('skips even when a human replied after the AI response', async () => {
+            // The exact case that prompted this: a maintainer posted the real
+            // solution, and the bot answered again 14 seconds later.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...answeredTicket,
+                messages: [
+                    ...answeredTicket.messages,
+                    {
+                        id: 'msg-3',
+                        type: 'USER',
+                        content: 'Here is the actual fix, from a maintainer.',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-05-06T20:06:09Z'),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data).toMatchObject({ skipped: true });
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('still answers a ticket whose only messages are from users', async () => {
+            // Guard must not swallow the first, legitimate response.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data).not.toMatchObject({ skipped: true });
+            expect(mockGenerateSupportResponse).toHaveBeenCalled();
+            expect(mockPostResponse).toHaveBeenCalled();
+        });
+
+        it('does not treat a SYSTEM shadow-mode log as the ticket answer', async () => {
+            // Shadow mode writes SYSTEM + isAiGenerated rows alongside the BOT
+            // row. Only the BOT row means "the reporter has been answered", so a
+            // ticket carrying just a SYSTEM row must still be answerable.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-shadow',
+                        type: 'SYSTEM',
+                        content: 'shadow log',
+                        isAiGenerated: true,
+                        createdAt: new Date('2026-04-23T10:00:10Z'),
+                    },
+                ],
+            });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse).toHaveBeenCalled();
+        });
+    });
 });
 
 /**

@@ -207,14 +207,13 @@ describe('InboundHandler (GitHub-focused)', () => {
             });
         });
 
-        it('enqueues AI_RESPONSE for non-team-member follow-ups', async () => {
+        // One response per ticket: the issue body gets an answer, comments do not.
+        it('never enqueues AI_RESPONSE for follow-ups', async () => {
             const message = makeFollowUpMessage();
-            await handler.handle(message);
+            const result = await handler.handle(message);
 
-            expect(createJob).toHaveBeenCalledWith('AI_RESPONSE', expect.objectContaining({
-                ticketId: 'ticket-existing',
-                source: 'github',
-            }));
+            expect(result.aiJobEnqueued).toBe(false);
+            expect(createJob).not.toHaveBeenCalled();
         });
 
         it('creates new ticket if no existing ticket found for reply thread', async () => {

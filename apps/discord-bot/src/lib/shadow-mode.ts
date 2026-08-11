@@ -132,12 +132,10 @@ export async function handleShadowMessage(
             },
         });
 
-        // Enqueue AI response (shadow mode checked at handler level via SHADOW_MODE env)
-        await createJob(JobType.AI_RESPONSE, {
-            ticketId,
-            threadId,
-            source: 'discord' as const,
-        });
+        // No AI response on a reply — shadow mode mirrors production behaviour,
+        // and production answers a ticket once, on its opening message only.
+        // Enqueuing here would make shadow traffic look chattier than the real
+        // thing, which defeats the point of shadowing.
 
         console.log(
             `[Shadow Mode] Recorded message from ${message.author.tag} on ticket ${ticketId}`,

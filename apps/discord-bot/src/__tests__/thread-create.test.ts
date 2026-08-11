@@ -36,6 +36,7 @@ vi.mock('discord.js', async (importOriginal) => {
 import { handleThreadCreate } from '../events/thread-create.js';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
+import { PlatformDiscordAdapter } from '@copilotkit/outpost/shared/platforms';
 
 function makeThread(overrides: Record<string, unknown> = {}) {
     return {
@@ -125,6 +126,25 @@ describe('handleThreadCreate', () => {
                 source: 'discord',
             }),
         );
+    });
+
+    // The bot used to open every thread with "🎫 Ticket TKT-XXXXXXXX created…",
+    // publishing an internal identifier into a public server and spending a bot
+    // message on nothing the reporter can act on. The AI answer is the only
+    // message the bot sends.
+    it('posts no acknowledgment message and never emits the ticket displayId', async () => {
+        const postSystemMessage = vi.spyOn(
+            PlatformDiscordAdapter.prototype,
+            'postSystemMessage',
+        );
+
+        const thread = makeThread();
+        await handleThreadCreate(thread, true);
+
+        expect(postSystemMessage).not.toHaveBeenCalled();
+        expect(thread.send).not.toHaveBeenCalled();
+
+        postSystemMessage.mockRestore();
     });
 
     it('handles threads with no starter message content gracefully', async () => {

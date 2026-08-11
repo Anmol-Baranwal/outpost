@@ -193,14 +193,9 @@ describe('handleMessage', () => {
             }),
         });
 
-        // Should enqueue AI response (not a team member)
-        expect(createJob).toHaveBeenCalledWith(
-            JobType.AI_RESPONSE,
-            expect.objectContaining({
-                ticketId: 'ticket-1',
-                source: 'teams',
-            }),
-        );
+        // Should NOT enqueue an AI response — one answer per ticket, on the
+        // opening message only, whoever sends the follow-up.
+        expect(createJob).not.toHaveBeenCalled();
     });
 
     it('does not enqueue AI response for team member follow-ups', async () => {

@@ -193,11 +193,10 @@ describe('Postmark inbound webhook', () => {
             // Should NOT create a new ticket
             expect(mockTicketCreate).not.toHaveBeenCalled();
 
-            // Should enqueue AI_RESPONSE job for the reply
-            expect(mockCreateJob).toHaveBeenCalledWith(
-                'AI_RESPONSE',
-                { ticketId: 'existing-ticket-1', source: 'web' },
-            );
+            // Should NOT enqueue AI_RESPONSE for the reply — one answer per
+            // ticket, on the opening email only. A human owns the thread after
+            // the first response.
+            expect(mockCreateJob).not.toHaveBeenCalled();
         });
 
         it('uses StrippedTextReply when available', async () => {

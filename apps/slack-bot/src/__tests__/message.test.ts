@@ -133,15 +133,11 @@ describe('registerMessageHandler', () => {
                 }),
             );
 
-            // SlackAdapter posts acknowledgment via postSystemMessage.
-            // The ticket ID is generated at runtime so we match the pattern.
-            expect(mockPostMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    channel: 'C_MONITORED',
-                    thread_ts: '1234567890.123456',
-                    text: expect.stringMatching(/TKT-[A-Z0-9]+ created/),
-                }),
-            );
+            // No acknowledgment post. It used to announce "TKT-XXXXXXXX created"
+            // in-channel, leaking an internal identifier to the reporter and
+            // spending an extra bot message. The AI response is the only message
+            // the bot sends.
+            expect(mockPostMessage).not.toHaveBeenCalled();
         });
 
         it('ignores messages in unmonitored channels', async () => {
@@ -193,7 +189,8 @@ describe('registerMessageHandler', () => {
             );
         });
 
-        it('appends a message and enqueues AI response for non-team-member replies', async () => {
+        // One response per ticket — thread replies are recorded, never answered.
+        it('appends a message without enqueuing an AI response for non-team-member replies', async () => {
             await messageHandler({
                 event: {
                     user: 'U_EXTERNAL',
@@ -212,13 +209,7 @@ describe('registerMessageHandler', () => {
                 }),
             });
 
-            expect(createJob).toHaveBeenCalledWith(
-                'AI_RESPONSE',
-                expect.objectContaining({
-                    ticketId: 'ticket-1',
-                    source: 'slack',
-                }),
-            );
+            expect(createJob).not.toHaveBeenCalled();
         });
 
         it('does not enqueue AI response for team member replies', async () => {

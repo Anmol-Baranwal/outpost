@@ -90,8 +90,9 @@ export async function POST(request: Request) {
                     });
                 }
 
-                // Enqueue AI response for the reply
-                await createJob(JobType.AI_RESPONSE, { ticketId: existingTicket.id, source: 'web' });
+                // No AI response on a reply — Outpost answers the opening email
+                // once and a human handles the rest of the thread. The
+                // AI_RESPONSE handler enforces the same invariant server-side.
 
                 return NextResponse.json({ status: 'message_appended', ticketId: existingTicket.displayId });
             }

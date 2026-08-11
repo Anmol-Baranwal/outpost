@@ -75,6 +75,39 @@ export async function handleAiResponse(
 
     await context.reportProgress(20);
 
+    // 1b. ONE RESPONSE PER TICKET — hard invariant, enforced here.
+    //
+    // Outpost answers exactly one message per ticket: the one that opened it.
+    // Every later message in that thread gets no AI reply, no matter who sent
+    // it — the original reporter, a third party, or a team member. The agent is
+    // a first line of defence and a human owns the thread from the moment the
+    // first response lands.
+    //
+    // The gate lives in the handler rather than at the enqueue sites on
+    // purpose. Five separate code paths could enqueue AI_RESPONSE (Discord,
+    // Slack, Teams, the GitHub comment webhook, the Postmark reply webhook) and
+    // each one previously decided for itself whether a reply warranted an
+    // answer. Those enqueues are gone, but a single new caller added later
+    // would silently reintroduce the follow-up spam this closes. Checking the
+    // ticket's own history instead makes the invariant unroutable-around.
+    //
+    // Success, not failure: the job did what it should — nothing. Returning an
+    // error would put it through the retry ladder for a decision that will
+    // never change.
+    const priorAiResponse = ticket.messages.find(
+        (m: { type: string; isAiGenerated: boolean }) => m.type === 'BOT' && m.isAiGenerated,
+    );
+    if (priorAiResponse) {
+        console.log(
+            `[AI Response] Ticket ${ticketId} already answered — skipping. ` +
+                `Outpost posts one response per ticket; a human owns this thread now.`,
+        );
+        return {
+            success: true,
+            data: { ticketId, skipped: true, reason: 'already_answered' },
+        };
+    }
+
     // 2. Build conversation history from DB messages
     const conversationHistory = ticket.messages
         .filter((m: { type: string }) => m.type !== 'SYSTEM')

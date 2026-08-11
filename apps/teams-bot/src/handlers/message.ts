@@ -80,7 +80,6 @@ export async function handleMessage(context: TurnContext): Promise<void> {
 
             // New ticket: post acknowledgment card
             const card = buildTicketCreatedCard({
-                ticketDisplayId: result.displayId,
                 title: truncate(message.content, 200),
             });
 

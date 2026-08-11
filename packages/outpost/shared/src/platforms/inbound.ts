@@ -4,8 +4,9 @@
  *
  * Handles:
  * 1. New tickets (isThreadStart=true): create Ticket + first Message + enqueue AI_RESPONSE
- * 2. Replies (isThreadStart=false): find existing ticket, create Message, reopen if needed,
- *    enqueue AI_RESPONSE unless sender is a team member
+ * 2. Replies (isThreadStart=false): find existing ticket, create Message, reopen if needed.
+ *    Never enqueues AI_RESPONSE — Outpost answers once per ticket, on the opening
+ *    message only, and a human owns the thread after that.
  * 3. Team member detection via ExternalIdentity -> TeamMember lookup
  * 4. Sequential display ID generation (TKT-XXXXXXXX)
  */
@@ -238,10 +239,20 @@ export class InboundHandler {
             },
         });
 
-        // Check if sender is a team member
+        // NO AI RESPONSE ON REPLIES — deliberate, not an omission.
+        //
+        // Outpost answers the message that opens a ticket and nothing after it.
+        // Replies only move ticket state; the thread belongs to a human from
+        // the first response onward. This used to enqueue an AI_RESPONSE for
+        // every non-team sender, which meant the bot chimed in on follow-up
+        // questions between community members and even summarised a human's
+        // answer back at them.
+        //
+        // The invariant is also enforced in the AI_RESPONSE handler
+        // (packages/outpost/queue/src/handlers/ai-response.ts) against the
+        // ticket's own message history. Not enqueuing here is the cheap arm —
+        // it avoids paying for a job that would be dropped on arrival.
         const isTeam = await this.isTeamMember(message.platformUserId, message.source);
-
-        let aiJobEnqueued = false;
 
         if (isTeam) {
             // Team member replied: if ticket was WAITING_ON_TEAM, move to WAITING_ON_CUSTOMER
@@ -251,29 +262,23 @@ export class InboundHandler {
                     data: { status: 'WAITING_ON_CUSTOMER' },
                 });
             }
-        } else {
-            // Customer/external user replied: enqueue AI response
-            await this.createJob(this.aiResponseJobType, {
-                ticketId: ticket.id,
-                threadId: message.threadId,
-                source: toPlatformTarget(message.source),
+        } else if (
+            ticket.status === 'WAITING_ON_CUSTOMER' ||
+            ticket.status === 'RESOLVED' ||
+            ticket.status === 'CLOSED'
+        ) {
+            // Customer/external reply reopens a dormant ticket so a human sees it.
+            await this.prisma.ticket.update({
+                where: { id: ticket.id },
+                data: { status: 'OPEN' },
             });
-            aiJobEnqueued = true;
-
-            // Reopen the ticket if it was waiting on customer, resolved, or closed
-            if (ticket.status === 'WAITING_ON_CUSTOMER' || ticket.status === 'RESOLVED' || ticket.status === 'CLOSED') {
-                await this.prisma.ticket.update({
-                    where: { id: ticket.id },
-                    data: { status: 'OPEN' },
-                });
-            }
         }
 
         return {
             ticketId: ticket.id,
             displayId: ticket.displayId,
             isNewTicket: false,
-            aiJobEnqueued,
+            aiJobEnqueued: false,
             messageId: msg.id,
         };
     }

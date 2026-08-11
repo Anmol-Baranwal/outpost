@@ -3,7 +3,6 @@ import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
 import { SlackAdapter, InboundHandler } from '@copilotkit/outpost/shared/platforms';
 import type { InboundPrismaLike, CreateJobFn } from '@copilotkit/outpost/shared';
-import { TicketSource } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
 
 /**
@@ -49,21 +48,11 @@ export function registerMessageHandler(app: App): void {
                 if (!existingTicket) return;
             }
 
-            const result = await handler.handle(message);
+            await handler.handle(message);
 
-            // Post acknowledgment for newly created tickets
-            if (result.isNewTicket && result.displayId) {
-                const ticket = {
-                    id: result.ticketId,
-                    sourceId: message.threadId ? `${message.channelId}:${message.threadId}` : null,
-                    channel: message.channelId ?? null,
-                    source: TicketSource.SLACK,
-                };
-                await adapter.postSystemMessage(
-                    ticket,
-                    `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your question...`,
-                );
-            }
+            // No acknowledgment post \u2014 it leaked the internal ticket displayId to
+            // the channel and added a second bot message for no reporter benefit.
+            // See the matching change in apps/discord-bot/src/events/thread-create.ts.
         } catch (error) {
             console.error(
                 `[Slack Bot] Failed to process message in channel ${(event as { channel?: string }).channel ?? 'unknown'}:`,
