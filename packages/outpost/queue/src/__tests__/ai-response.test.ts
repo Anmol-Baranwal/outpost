@@ -1269,8 +1269,12 @@ describe('handleAiResponse', () => {
             expect(mockPrismaJob.create).toHaveBeenCalledWith({
                 data: expect.objectContaining({ type: 'ESCALATION' }),
             });
-            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
-                where: { id: 'primary-ai-row' },
+            expect(mockPrismaMessage.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 'primary-ai-row',
+                    responseKey: 'PRIMARY_AI_RESPONSE',
+                    responseState: 'PENDING',
+                },
                 data: { responseState: 'ESCALATED', responseError: null },
             });
             expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
