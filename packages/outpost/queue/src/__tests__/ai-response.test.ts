@@ -1000,12 +1000,10 @@ describe('handleAiResponse', () => {
                 responseError: 'Discord API 503',
                 createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
             };
-            mockPrismaTicket.findUnique
-                .mockResolvedValueOnce(sampleTicket)
-                .mockResolvedValueOnce({
-                    ...sampleTicket,
-                    messages: [...sampleTicket.messages, pendingResponse],
-                });
+            mockPrismaTicket.findUnique.mockResolvedValueOnce(sampleTicket).mockResolvedValueOnce({
+                ...sampleTicket,
+                messages: [...sampleTicket.messages, pendingResponse],
+            });
             mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
             mockPrismaJob.create
                 .mockRejectedValueOnce(new Error('queue unavailable'))
@@ -1045,12 +1043,10 @@ describe('handleAiResponse', () => {
                 responseError: 'Discord API 503',
                 createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
             };
-            mockPrismaTicket.findUnique
-                .mockResolvedValueOnce(sampleTicket)
-                .mockResolvedValueOnce({
-                    ...sampleTicket,
-                    messages: [...sampleTicket.messages, pendingResponse],
-                });
+            mockPrismaTicket.findUnique.mockResolvedValueOnce(sampleTicket).mockResolvedValueOnce({
+                ...sampleTicket,
+                messages: [...sampleTicket.messages, pendingResponse],
+            });
             mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
 
             let interruptAt85 = true;
@@ -1083,20 +1079,100 @@ describe('handleAiResponse', () => {
             expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
         });
 
-        it('still reports success when only a low-confidence escalation fails to enqueue', async () => {
-            // The reporter did get the answer here, so the historical fail-soft
-            // behaviour stands — the failure mode is different in kind.
-            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
-            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
-            mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+        it.each([
+            ['low-confidence', lowConfidenceResult, 'Low AI confidence'],
+            ['suppressed', suppressedResult, 'AI response withheld'],
+        ])(
+            'fails durably when a delivered %s response cannot enqueue its required escalation',
+            async (_label, pipelineResult, reasonFragment) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue(pipelineResult);
+                mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
 
-            const result = await handleAiResponse(
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-required-escalation' }),
+                );
+
+                expect(mockPostResponse).toHaveBeenCalledTimes(1);
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('queue unavailable');
+                expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                    where: { id: 'msg-new' },
+                    data: {
+                        responseError: expect.stringContaining(
+                            `ESCALATION_REQUIRED: ${reasonFragment}`,
+                        ),
+                    },
+                });
+                expect(mockPrismaMessage.update).not.toHaveBeenCalledWith({
+                    where: { id: 'msg-new' },
+                    data: { responseState: 'DELIVERED', responseError: null },
+                });
+            },
+        );
+
+        it('retries a required escalation without regenerating or reposting the delivered response', async () => {
+            const pendingRequiredEscalation = {
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-required-escalation',
+                        type: 'BOT',
+                        content: lowConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-required-escalation',
+                        responseError:
+                            'ESCALATION_REQUIRED: Low AI confidence (25%) — automated escalation',
+                        createdAt: new Date(),
+                    },
+                ],
+            };
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce(sampleTicket)
+                .mockResolvedValueOnce(pendingRequiredEscalation);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPrismaJob.create
+                .mockRejectedValueOnce(new Error('queue unavailable'))
+                .mockResolvedValueOnce({ id: 'job-required-escalation-retry' });
+
+            const context = makeContext({ jobId: 'job-required-escalation' });
+            const firstAttempt = await handleAiResponse(
                 { ticketId: 'tkt-1', source: 'discord' },
-                makeContext(),
+                context,
+            );
+            const retryAttempt = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                context,
             );
 
-            expect(mockPostResponse).toHaveBeenCalled();
-            expect(result.success).toBe(true);
+            expect(firstAttempt.success).toBe(false);
+            expect(retryAttempt.success).toBe(true);
+            expect(retryAttempt.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                reason: 'escalation_recovered',
+            });
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+
+            const escalationCalls = mockPrismaJob.create.mock.calls.filter(
+                (call: Array<{ data: { type: string } }>) => call[0].data.type === 'ESCALATION',
+            );
+            // One failed enqueue plus one successful retry; no additional job is
+            // created once the ordinary retry completes.
+            expect(escalationCalls).toHaveLength(2);
+            expect(escalationCalls[1][0].data.payload).toEqual({
+                ticketId: 'tkt-1',
+                reason: 'Low AI confidence (25%) — automated escalation',
+            });
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-required-escalation' },
+                data: { responseState: 'ESCALATED', responseError: null },
+            });
         });
     });
 
@@ -1273,9 +1349,7 @@ describe('handleAiResponse', () => {
             expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
                 'How do I use CopilotKit with Next.js?',
                 expect.objectContaining({
-                    conversationHistory: [
-                        { role: 'user', content: 'btw I am on the app router' },
-                    ],
+                    conversationHistory: [{ role: 'user', content: 'btw I am on the app router' }],
                 }),
             );
         });
