@@ -80,6 +80,11 @@ export function buildChannelGuidance(source?: PlatformTarget): string {
     ].join('\n');
 }
 
+/** Extract all text blocks from an Anthropic response in response order. */
+export function extractResponseText(content: Anthropic.ContentBlock[]): string {
+    return content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+}
+
 /**
  * Claude response generator for the AI support pipeline.
  *
@@ -119,8 +124,10 @@ export class ResponseGenerator {
                 messages,
             });
 
-            const responseText =
-                message.content[0].type === 'text' ? message.content[0].text : '';
+            const responseText = extractResponseText(message.content);
+            if (!responseText.trim()) {
+                throw new Error('Model response contained no usable text');
+            }
 
             const tokenUsage: TokenUsage = {
                 inputTokens: message.usage.input_tokens,
