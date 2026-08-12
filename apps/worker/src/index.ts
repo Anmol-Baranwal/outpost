@@ -15,6 +15,9 @@
  *   - TRACKER_SYNC:     Push changes to external trackers
  *   - JOB_CLEANUP:      Periodic cleanup of old jobs and sync events
  *   - GITHUB_REACTION_POLL: Poll GitHub reactions on AI comments (no webhook exists)
+ *
+ * BOOT ORDER: /health starts listening before anything touches the database, so a
+ * boot failure is reported rather than merely fatal. See the boot-state block below.
  */
 
 import http from 'node:http';
@@ -34,29 +37,78 @@ import {
     handleGithubReactionPoll,
 } from '@copilotkit/outpost/queue';
 import { buildSyncEngine } from './build-sync-engine.js';
+import { buildHealthResponse, type BootState } from './health.js';
+
+// ─── Boot state ───────────────────────────────────────────────────────────
+
+// Fail-fast on a bad boot is still the intent: a worker running with silently
+// defaulted sync mappings would write wrong statuses to Linear, so it must not
+// report itself healthy. What changed is that failing is no longer SILENT.
+//
+// This used to be a top-level `await buildSyncEngine()` above the health server,
+// so any boot-time database problem killed the process before anything bound the
+// port. Railway could only report "1/1 replicas never became healthy", which is
+// indistinguishable from a broken image. That cost nine days of undiagnosed
+// deploy failures when SystemConfig turned out to be missing from the production
+// database: every deploy from 2026-08-07 failed with no usable signal.
+//
+// Now the port binds first and /health answers 503 with the reason while the boot
+// is unfinished or failed. Railway still fails the deploy and keeps the previous
+// replica — same outcome, diagnosable in seconds instead of days.
+const boot: BootState = { phase: 'starting', error: null };
+
+let worker: Worker | null = null;
+let scheduler: Scheduler | null = null;
+
+// ─── Health Server ────────────────────────────────────────────────────────
+
+const port = parseInt(process.env.PORT ?? process.env.HEALTH_PORT ?? '3003', 10);
+
+const healthServer = http.createServer((req, res) => {
+    if (req.url !== '/health') {
+        res.writeHead(404);
+        res.end('Not Found');
+        return;
+    }
+
+    const { statusCode, body } = buildHealthResponse(
+        boot,
+        worker ? (worker.healthCheck() as unknown as Record<string, unknown>) : null,
+    );
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+});
+
+healthServer.listen(port, () => {
+    console.log(`[Worker] Health server listening on port ${port} (boot: ${boot.phase})`);
+});
 
 // ─── Build SyncEngine for TRACKER_SYNC handler ────────────────────────────
 
-// BOOT SEMANTICS — deliberate change. This is a top-level await that performs
-// three database reads (the persisted status / priority / label mapping configs)
-// before this module finishes evaluating. If the database is unreachable at boot
-// the import throws, so the process exits BEFORE the health server below starts
-// listening: the container crash-loops with no /health at all rather than coming
-// up and reporting itself degraded.
-//
-// Fail-fast is the intent — a worker running with silently-defaulted mappings is
-// worse than one that is visibly down, since TRACKER_SYNC would then write wrong
-// statuses to Linear. Railway's restart policy is the retry mechanism. Note this
-// interacts with the /health honesty follow-up (#138): once /health reflects
-// worker state, a degraded-but-listening mode becomes a real option and this
-// decision is worth revisiting.
-const syncEngine = await buildSyncEngine();
+// Three database reads (the persisted status / priority / label mapping configs).
+// A failure here leaves boot.phase === 'failed' and the process alive but
+// unhealthy, so the reason reaches /health and the logs instead of vanishing with
+// the process.
+let syncEngine: Awaited<ReturnType<typeof buildSyncEngine>>;
+try {
+    syncEngine = await buildSyncEngine();
+} catch (error) {
+    boot.error = error instanceof Error ? error.message : String(error);
+    boot.phase = 'failed';
+    console.error(
+        `[Worker] BOOT FAILED building the sync engine: ${boot.error}\n` +
+            `[Worker] /health is listening on ${port} and will report 503 with this reason. ` +
+            `A missing table or column here means the database does not match schema.prisma — ` +
+            `check the schema-drift guard in apps/worker/start.sh.`,
+    );
+    throw error;
+}
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);
 
 // ─── Create Worker ────────────────────────────────────────────────────────
 
-const worker = new Worker({
+worker = new Worker({
     maxConcurrency: 10,
     pollIntervalMs: 1000,
     concurrencyByType: {
@@ -89,33 +141,13 @@ worker.on(JobType.TRACKER_SYNC, handleTrackerSync);
 worker.on(JobType.JOB_CLEANUP, handleJobCleanup);
 worker.on(JobType.GITHUB_REACTION_POLL, handleGithubReactionPoll);
 
-// ─── Start Scheduler ──────────────────────────────────────────────────────
-
-const scheduler = new Scheduler();
-
-// ─── Health Server ────────────────────────────────────────────────────────
-
-const port = parseInt(process.env.PORT ?? process.env.HEALTH_PORT ?? '3003', 10);
-
-const healthServer = http.createServer((req, res) => {
-    if (req.url === '/health') {
-        const health = worker.healthCheck();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', ...health }));
-    } else {
-        res.writeHead(404);
-        res.end('Not Found');
-    }
-});
-
 // ─── Start Everything ─────────────────────────────────────────────────────
 
-healthServer.listen(port, () => {
-    console.log(`[Worker] Health server listening on port ${port}`);
-});
-
+scheduler = new Scheduler();
 scheduler.start();
 worker.start();
+
+boot.phase = 'ready';
 
 console.log('[Worker] Worker process started');
 
@@ -123,8 +155,8 @@ console.log('[Worker] Worker process started');
 
 async function shutdown(signal: string): Promise<void> {
     console.log(`[Worker] Received ${signal}, shutting down...`);
-    scheduler.stop();
-    await worker.stop();
+    scheduler?.stop();
+    await worker?.stop();
     healthServer.close();
     await prisma.$disconnect();
     console.log('[Worker] Shutdown complete');
