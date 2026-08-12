@@ -3,5 +3,5 @@
 -- rows remain valid while new primary AI responses claim one slot per ticket.
 ALTER TABLE "Message" ADD COLUMN "responseKey" TEXT;
 
-CREATE UNIQUE INDEX CONCURRENTLY "Message_ticketId_responseKey_key"
+CREATE UNIQUE INDEX "Message_ticketId_responseKey_key"
 ON "Message"("ticketId", "responseKey");
