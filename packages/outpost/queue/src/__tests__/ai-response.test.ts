@@ -1174,6 +1174,53 @@ describe('handleAiResponse', () => {
                 data: { responseState: 'ESCALATED', responseError: null },
             });
         });
+
+        it('recovers the keyed primary response when an older AI BOT row appears first', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'legacy-ai-row',
+                        type: 'BOT',
+                        content: 'Legacy AI response',
+                        isAiGenerated: true,
+                        responseKey: null,
+                        responseState: null,
+                        createdAt: new Date('2026-04-23T10:00:10Z'),
+                    },
+                    {
+                        id: 'primary-ai-row',
+                        type: 'BOT',
+                        content: lowConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-required-escalation',
+                        responseError:
+                            'ESCALATION_REQUIRED: Low AI confidence (25%) — automated escalation',
+                        createdAt: new Date('2026-04-23T10:00:20Z'),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-required-escalation' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ reason: 'escalation_recovered' });
+            expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ type: 'ESCALATION' }),
+            });
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'primary-ai-row' },
+                data: { responseState: 'ESCALATED', responseError: null },
+            });
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
     });
 
     it('succeeds even if shadow mode message logging fails', async () => {

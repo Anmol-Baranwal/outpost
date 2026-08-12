@@ -339,9 +339,15 @@ export async function handleAiResponse(
     // Success, not failure: the job did what it should — nothing. Returning an
     // error would put it through the retry ladder for a decision that will
     // never change.
-    const priorAiResponse = ticket.messages.find(
+    const generatedResponses = ticket.messages.filter(
         (m: StoredAiResponse) => m.type === 'BOT' && m.isAiGenerated,
-    ) as StoredAiResponse | undefined;
+    ) as StoredAiResponse[];
+    // Recovery metadata lives on the keyed primary response. Older AI BOT rows
+    // predate responseKey and still prove the ticket was answered, but must not
+    // shadow a newer primary row whose delivery/escalation state needs repair.
+    const priorAiResponse =
+        generatedResponses.find((m) => m.responseKey === PRIMARY_AI_RESPONSE_KEY) ??
+        generatedResponses[0];
     if (priorAiResponse) {
         if (priorAiResponse.responseState === 'PENDING' && hasConfirmedDelivery(priorAiResponse)) {
             // The platform post succeeded; only the state mirror failed. Repair
