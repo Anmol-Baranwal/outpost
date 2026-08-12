@@ -39,6 +39,7 @@ export class Worker {
     private lastPollTime: Date | null = null;
     private upSince: Date | null = null;
     private shutdownResolve: (() => void) | null = null;
+    private stopPromise: Promise<void> | null = null;
     private signalHandlers: { signal: string; handler: () => void }[] = [];
 
     constructor(options?: WorkerOptions) {
@@ -65,6 +66,7 @@ export class Worker {
         if (this.running) return;
         this.running = true;
         this.shuttingDown = false;
+        this.stopPromise = null;
         this.upSince = new Date();
         console.log('[Queue Worker] Started');
         this.registerSignalHandlers();
@@ -76,6 +78,11 @@ export class Worker {
      * Waits for all active jobs to complete before resolving.
      */
     async stop(): Promise<void> {
+        // Signal handlers and the worker app can both request shutdown. Share
+        // the same drain promise so a second caller cannot observe
+        // `running=false`, return early, and disconnect Prisma/exit while the
+        // first caller is still waiting for active jobs.
+        if (this.stopPromise) return this.stopPromise;
         if (!this.running) return;
         this.shuttingDown = true;
         this.running = false;
@@ -87,21 +94,25 @@ export class Worker {
 
         this.removeSignalHandlers();
 
-        // Wait for active jobs to finish
-        if (this.activeJobs.size > 0) {
-            console.log(`[Queue Worker] Waiting for ${this.activeJobs.size} active jobs to complete...`);
-            await new Promise<void>((resolve) => {
-                this.shutdownResolve = resolve;
-                // Check immediately in case jobs finished between the check and setting the resolver
-                if (this.activeJobs.size === 0) {
-                    this.shutdownResolve = null;
-                    resolve();
-                }
-            });
-        }
+        this.stopPromise = (async () => {
+            // Wait for active jobs to finish
+            if (this.activeJobs.size > 0) {
+                console.log(`[Queue Worker] Waiting for ${this.activeJobs.size} active jobs to complete...`);
+                await new Promise<void>((resolve) => {
+                    this.shutdownResolve = resolve;
+                    // Check immediately in case jobs finished between the check and setting the resolver
+                    if (this.activeJobs.size === 0) {
+                        this.shutdownResolve = null;
+                        resolve();
+                    }
+                });
+            }
 
-        this.upSince = null;
-        console.log('[Queue Worker] Stopped');
+            this.upSince = null;
+            console.log('[Queue Worker] Stopped');
+        })();
+
+        return this.stopPromise;
     }
 
     /**

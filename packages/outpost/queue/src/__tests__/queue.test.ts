@@ -417,6 +417,39 @@ describe('Worker', () => {
         expect(jobFinished).toBe(true);
     });
 
+    it('shares the active-job drain across repeated stop calls', async () => {
+        let jobFinished = false;
+        const jobRow = makeJobRow();
+        mockPrisma.$queryRaw.mockResolvedValueOnce([jobRow]);
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+        mockPrismaJob.update.mockResolvedValue({});
+
+        worker.on(JobType.AI_RESPONSE, async () => {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            jobFinished = true;
+            return { success: true };
+        });
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const signalStop = worker.stop();
+        let appStopResolved = false;
+        const appStop = worker.stop().then(() => {
+            appStopResolved = true;
+        });
+
+        await Promise.resolve();
+        expect(appStopResolved).toBe(false);
+        expect(jobFinished).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(300);
+        await Promise.all([signalStop, appStop]);
+
+        expect(jobFinished).toBe(true);
+        expect(appStopResolved).toBe(true);
+    });
+
     it('handler receives context with progress reporting', async () => {
         const jobRow = makeJobRow();
         mockPrisma.$queryRaw.mockResolvedValueOnce([jobRow]);
