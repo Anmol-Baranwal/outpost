@@ -41,6 +41,7 @@ import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.j
 
 const PRIMARY_AI_RESPONSE_KEY = 'PRIMARY_AI_RESPONSE';
 const RESPONSE_RECOVERY_AFTER_MS = 5 * 60 * 1000;
+const DELIVERY_CONFIRMED_MARKER = 'DELIVERY_CONFIRMED';
 
 interface StoredAiResponse {
     id: string;
@@ -97,6 +98,10 @@ function shouldRecoverPendingResponse(response: StoredAiResponse): boolean {
 
     if (!response.createdAt) return false;
     return Date.now() - response.createdAt.getTime() >= RESPONSE_RECOVERY_AFTER_MS;
+}
+
+function hasConfirmedDelivery(response: StoredAiResponse): boolean {
+    return response.responseError?.startsWith(`${DELIVERY_CONFIRMED_MARKER}:`) ?? false;
 }
 
 async function recoverPendingResponse(
@@ -284,6 +289,31 @@ export async function handleAiResponse(
         (m: StoredAiResponse) => m.type === 'BOT' && m.isAiGenerated,
     ) as StoredAiResponse | undefined;
     if (priorAiResponse) {
+        if (
+            priorAiResponse.responseState === 'PENDING' &&
+            hasConfirmedDelivery(priorAiResponse)
+        ) {
+            // The platform post succeeded; only the state mirror failed. Repair
+            // it when possible, but never route an already-answered reporter to
+            // a human merely because this bookkeeping write is still unhealthy.
+            try {
+                await prisma.message.update({
+                    where: { id: priorAiResponse.id },
+                    data: { responseState: 'DELIVERED', responseError: null },
+                });
+            } catch (error) {
+                console.error(
+                    `[AI Response] Confirmed delivery state still could not be repaired for ticket ${ticketId}:`,
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+            await context.reportProgress(100);
+            return {
+                success: true,
+                data: { ticketId, skipped: true, reason: 'already_answered' },
+            };
+        }
+
         if (shouldRecoverPendingResponse(priorAiResponse)) {
             return recoverPendingResponse(ticketId, ticket.source, priorAiResponse, context);
         }
@@ -605,11 +635,26 @@ export async function handleAiResponse(
                 });
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
-                deliveryFailure = `response was posted but its durable delivery state could not be recorded: ${message}`;
                 console.error(
                     `[AI Response] Failed to record durable delivery for ticket ${ticketId}:`,
                     message,
                 );
+                // Delivery is already a fact. Persist a separate confirmation
+                // marker so a retry can repair the state without reposting or
+                // escalating an already-answered reporter.
+                try {
+                    await prisma.message.update({
+                        where: { id: aiMessage.id },
+                        data: {
+                            responseError: `${DELIVERY_CONFIRMED_MARKER}: ${message}`,
+                        },
+                    });
+                } catch (markerError) {
+                    console.error(
+                        `[AI Response] Failed to record delivery confirmation marker for ticket ${ticketId}:`,
+                        markerError instanceof Error ? markerError.message : String(markerError),
+                    );
+                }
             }
         }
 

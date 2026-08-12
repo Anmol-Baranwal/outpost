@@ -901,6 +901,70 @@ describe('handleAiResponse', () => {
             expect(mockPrismaJob.create).not.toHaveBeenCalled();
         });
 
+        it('does not escalate when posting succeeds but DELIVERED state persistence fails', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPrismaMessage.update.mockImplementation(
+                async (args: { data: Record<string, unknown> }) => {
+                    if (args.data.responseState === 'DELIVERED') {
+                        throw new Error('DB write conflict');
+                    }
+                    return {};
+                },
+            );
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-delivered-state' }),
+            );
+
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(result.data?.escalated).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: {
+                    responseError: expect.stringContaining('DELIVERY_CONFIRMED'),
+                },
+            });
+        });
+
+        it('does not escalate or repost a confirmed delivery whose DELIVERED state write failed', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-delivered-state-failed',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-delivered-state',
+                        responseError: 'DELIVERY_CONFIRMED: DB write conflict',
+                        createdAt: new Date(),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-delivered-state' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-delivered-state-failed' },
+                data: { responseState: 'DELIVERED', responseError: null },
+            });
+        });
+
         it('reports job failure when the answer was neither delivered nor escalated', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
