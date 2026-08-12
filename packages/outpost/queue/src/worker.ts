@@ -10,6 +10,17 @@ import type {
     JobHandlerContext,
 } from './types.js';
 
+const STALE_RECOVERY_GRACE_MS = 30_000;
+
+interface ClaimedJob {
+    id: string;
+    type: string;
+    payload: unknown;
+    attempts: number;
+    maxAttempts: number;
+    claimToken: string;
+}
+
 /**
  * A worker that polls the Postgres job queue and processes jobs using
  * SELECT ... FOR UPDATE SKIP LOCKED for safe concurrent processing.
@@ -186,27 +197,48 @@ export class Worker {
      * Return abandoned PROCESSING jobs to the pending queue before claiming work.
      *
      * lockedAt is written with the database clock, so the stale comparison must
-     * also use the database clock. Each registered type is checked against its
-     * own handler timeout to avoid reclaiming a healthy long-running job using
-     * another type's shorter timeout.
+     * also use the database clock. Each registered type gets its own handler
+     * timeout plus a recovery grace: the normal timeout path must have time to
+     * release its claim before another worker calls it crash-abandoned. A true
+     * abandonment consumes an attempt, clears its claim token, and moves toward
+     * DEAD_LETTER like every other failed execution.
      */
     private async reclaimStaleJobs(): Promise<void> {
         const policies = Array.from(this.handlers.keys(), (type) => ({
             type,
-            timeout_ms: this.jobTimeouts[type as JobType] ?? this.defaultTimeoutMs,
+            reclaim_after_ms:
+                (this.jobTimeouts[type as JobType] ?? this.defaultTimeoutMs) +
+                STALE_RECOVERY_GRACE_MS,
         }));
 
         if (policies.length === 0) return;
 
         await prisma.$executeRaw`
             UPDATE "Job" AS job
-            SET status = 'PENDING', "lockedAt" = NULL, progress = NULL,
+            SET status = CASE
+                    WHEN job."attempts" + 1 >= job."maxAttempts"
+                    THEN 'DEAD_LETTER'::"JobStatus"
+                    ELSE 'PENDING'::"JobStatus"
+                END,
+                "attempts" = job."attempts" + 1,
+                "lockedAt" = NULL,
+                "claimToken" = NULL,
+                progress = NULL,
+                error = 'Worker claim was abandoned before completion',
+                "completedAt" = CASE
+                    WHEN job."attempts" + 1 >= job."maxAttempts" THEN NOW()
+                    ELSE NULL
+                END,
+                "runAt" = CASE
+                    WHEN job."attempts" + 1 >= job."maxAttempts" THEN job."runAt"
+                    ELSE NOW()
+                END,
                 "updatedAt" = NOW()
             FROM jsonb_to_recordset(${JSON.stringify(policies)}::jsonb)
-                AS policy(type text, timeout_ms double precision)
+                AS policy(type text, reclaim_after_ms double precision)
             WHERE job.status = 'PROCESSING'
             AND job.type = policy.type
-            AND job."lockedAt" < NOW() - (policy.timeout_ms * INTERVAL '1 millisecond')
+            AND job."lockedAt" < NOW() - (policy.reclaim_after_ms * INTERVAL '1 millisecond')
         `;
     }
 
@@ -269,26 +301,11 @@ export class Worker {
     private async claimJobsForType(
         type: string,
         limit: number,
-    ): Promise<
-        Array<{
-            id: string;
-            type: string;
-            payload: unknown;
-            attempts: number;
-            maxAttempts: number;
-        }>
-    > {
-        return prisma.$queryRaw<
-            Array<{
-                id: string;
-                type: string;
-                payload: unknown;
-                attempts: number;
-                maxAttempts: number;
-            }>
-        >`
+    ): Promise<Array<ClaimedJob>> {
+        return prisma.$queryRaw<Array<ClaimedJob>>`
             UPDATE "Job"
-            SET status = 'PROCESSING', "lockedAt" = NOW(), "updatedAt" = NOW()
+            SET status = 'PROCESSING', "lockedAt" = NOW(),
+                "claimToken" = gen_random_uuid()::text, "updatedAt" = NOW()
             WHERE id IN (
                 SELECT id FROM "Job"
                 WHERE status = 'PENDING'
@@ -298,24 +315,17 @@ export class Worker {
                 LIMIT ${limit}
                 FOR UPDATE SKIP LOCKED
             )
-            RETURNING id, type, payload, attempts, "maxAttempts"
+            RETURNING id, type, payload, attempts, "maxAttempts", "claimToken"
         `;
     }
 
     private async claimAndProcessJobs(limit: number): Promise<number> {
         // Use raw query with SKIP LOCKED for safe concurrent job processing.
         // This atomically selects and locks pending jobs that are ready to run.
-        const jobs = await prisma.$queryRaw<
-            Array<{
-                id: string;
-                type: string;
-                payload: unknown;
-                attempts: number;
-                maxAttempts: number;
-            }>
-        >`
+        const jobs = await prisma.$queryRaw<Array<ClaimedJob>>`
             UPDATE "Job"
-            SET status = 'PROCESSING', "lockedAt" = NOW(), "updatedAt" = NOW()
+            SET status = 'PROCESSING', "lockedAt" = NOW(),
+                "claimToken" = gen_random_uuid()::text, "updatedAt" = NOW()
             WHERE id IN (
                 SELECT id FROM "Job"
                 WHERE status = 'PENDING'
@@ -324,23 +334,17 @@ export class Worker {
                 LIMIT ${limit}
                 FOR UPDATE SKIP LOCKED
             )
-            RETURNING id, type, payload, attempts, "maxAttempts"
+            RETURNING id, type, payload, attempts, "maxAttempts", "claimToken"
         `;
 
         // Process jobs concurrently (each tracked in activeJobs)
-        const promises = jobs.map((job: { id: string; type: string; payload: unknown; attempts: number; maxAttempts: number }) => this.processJob(job));
+        const promises = jobs.map((job) => this.processJob(job));
         await Promise.allSettled(promises);
 
         return jobs.length;
     }
 
-    private async processJob(job: {
-        id: string;
-        type: string;
-        payload: unknown;
-        attempts: number;
-        maxAttempts: number;
-    }): Promise<void> {
+    private async processJob(job: ClaimedJob): Promise<void> {
         this.activeJobs.add(job.id);
         this.activeJobsByType.set(
             job.type,
@@ -352,12 +356,18 @@ export class Worker {
 
             if (!handler) {
                 console.warn(`[Queue Worker] No handler for job type: ${job.type}`);
-                await prisma.job.update({
-                    where: { id: job.id },
+                await prisma.job.updateMany({
+                    where: {
+                        id: job.id,
+                        status: 'PROCESSING',
+                        claimToken: job.claimToken,
+                    },
                     data: {
                         status: 'FAILED',
                         error: `No handler registered for job type: ${job.type}`,
                         completedAt: new Date(),
+                        lockedAt: null,
+                        claimToken: null,
                     },
                 });
                 return;
@@ -369,7 +379,8 @@ export class Worker {
             // Build handler context
             const context: JobHandlerContext = {
                 jobId: job.id,
-                reportProgress: (percent: number) => updateJobProgress(job.id, percent),
+                reportProgress: (percent: number) =>
+                    updateJobProgress(job.id, percent, job.claimToken),
             };
 
             try {
@@ -379,22 +390,39 @@ export class Worker {
                 );
 
                 if (result.success) {
-                    await prisma.job.update({
-                        where: { id: job.id },
+                    await prisma.job.updateMany({
+                        where: {
+                            id: job.id,
+                            status: 'PROCESSING',
+                            claimToken: job.claimToken,
+                        },
                         data: {
                             status: 'COMPLETED',
                             attempts: attempt,
                             progress: 100,
                             completedAt: new Date(),
                             lockedAt: null,
+                            claimToken: null,
                         },
                     });
                 } else {
-                    await this.handleFailure(job.id, attempt, job.maxAttempts, result.error ?? 'Unknown error');
+                    await this.handleFailure(
+                        job.id,
+                        job.claimToken,
+                        attempt,
+                        job.maxAttempts,
+                        result.error ?? 'Unknown error',
+                    );
                 }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                await this.handleFailure(job.id, attempt, job.maxAttempts, errorMessage);
+                await this.handleFailure(
+                    job.id,
+                    job.claimToken,
+                    attempt,
+                    job.maxAttempts,
+                    errorMessage,
+                );
             }
         } finally {
             this.activeJobs.delete(job.id);
@@ -427,45 +455,52 @@ export class Worker {
 
     private async handleFailure(
         jobId: string,
+        claimToken: string,
         attempt: number,
         maxAttempts: number,
         error: string,
     ): Promise<void> {
         if (attempt >= maxAttempts) {
             // Dead letter: job has exhausted all retries
-            await prisma.job.update({
-                where: { id: jobId },
+            const result = await prisma.job.updateMany({
+                where: { id: jobId, status: 'PROCESSING', claimToken },
                 data: {
                     status: 'DEAD_LETTER',
                     attempts: attempt,
                     error,
                     completedAt: new Date(),
                     lockedAt: null,
+                    claimToken: null,
                 },
             });
-            console.error(
-                `[Queue Worker] Job ${jobId} moved to dead letter queue after ${attempt} attempts: ${error}`,
-            );
+            if (result.count > 0) {
+                console.error(
+                    `[Queue Worker] Job ${jobId} moved to dead letter queue after ${attempt} attempts: ${error}`,
+                );
+            }
         } else {
             // Schedule retry with exponential backoff
             const backoffMs = calculateBackoff(attempt);
             const runAt = new Date(Date.now() + backoffMs);
 
-            await prisma.job.update({
-                where: { id: jobId },
+            const result = await prisma.job.updateMany({
+                where: { id: jobId, status: 'PROCESSING', claimToken },
                 data: {
                     status: 'PENDING',
                     attempts: attempt,
                     error,
                     runAt,
                     lockedAt: null,
+                    claimToken: null,
                     progress: null,
                 },
             });
-            console.warn(
-                `[Queue Worker] Job ${jobId} failed (attempt ${attempt}/${maxAttempts}), ` +
-                    `retrying at ${runAt.toISOString()}: ${error}`,
-            );
+            if (result.count > 0) {
+                console.warn(
+                    `[Queue Worker] Job ${jobId} failed (attempt ${attempt}/${maxAttempts}), ` +
+                        `retrying at ${runAt.toISOString()}: ${error}`,
+                );
+            }
         }
     }
 }

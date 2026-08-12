@@ -216,6 +216,7 @@ model Job {
     progress    Int?      // Optional percentage 0-100
     runAt       DateTime  @default(now())
     lockedAt    DateTime?
+    claimToken  String?   // Fences writes to the worker execution that owns this claim
     completedAt DateTime?
     error       String?
     createdAt   DateTime  @default(now())
