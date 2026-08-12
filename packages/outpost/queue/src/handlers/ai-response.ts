@@ -532,7 +532,7 @@ export async function handleAiResponse(
                 confidenceScore: pipelineResult.confidenceScore,
                 confidenceLevel: pipelineResult.confidenceLevel,
                 responseKey: PRIMARY_AI_RESPONSE_KEY,
-                responseState: 'PENDING',
+                responseState: 'PENDING' as const,
                 responseJobId: context.jobId,
                 responseError: null,
             };
