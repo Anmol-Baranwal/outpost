@@ -1,11 +1,6 @@
-ALTER TABLE "Message"
-ADD COLUMN "responseState" TEXT,
-ADD COLUMN "responseJobId" TEXT,
-ADD COLUMN "responseError" TEXT;
+CREATE TYPE "MessageResponseState" AS ENUM ('PENDING', 'DELIVERED', 'ESCALATED');
 
 ALTER TABLE "Message"
-ADD CONSTRAINT "Message_responseState_check"
-CHECK (
-    "responseState" IS NULL
-    OR "responseState" IN ('PENDING', 'DELIVERED', 'ESCALATED')
-);
+ADD COLUMN "responseState" "MessageResponseState",
+ADD COLUMN "responseJobId" TEXT,
+ADD COLUMN "responseError" TEXT;
