@@ -38,6 +38,13 @@ export interface AiResponsePayload {
     ticketId: string;
     threadId?: string;
     source?: PlatformTarget;
+    /**
+     * Durable authorization for a delayed PENDING-response takeover. The
+     * message ID and the job's ownership row replace worker-clock age checks.
+     */
+    pendingResponseRecovery?: {
+        messageId: string;
+    };
 }
 
 export interface TicketClassifyPayload {

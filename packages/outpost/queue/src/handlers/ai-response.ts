@@ -32,10 +32,9 @@
 
 import { prisma } from '@copilotkit/outpost/db';
 import { AIPipeline } from '@copilotkit/outpost/ai';
-import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
+import { AI_CONFIDENCE, MAX_JOB_ATTEMPTS } from '@copilotkit/outpost/shared';
 import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
 import { hasAdapter, getAdapter } from '@copilotkit/outpost/shared/platforms';
-import { createJob } from '../create-job.js';
 import { getFeedbackCalibration } from '../feedback-calibration.js';
 import { JobType } from '../types.js';
 import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.js';
@@ -53,7 +52,6 @@ interface StoredAiResponse {
     responseState?: string | null;
     responseJobId?: string | null;
     responseError?: string | null;
-    createdAt?: Date;
 }
 
 /**
@@ -83,24 +81,46 @@ function isPrimaryAiResponseConflict(error: unknown): boolean {
     );
 }
 
-/**
- * Recover only after the claim is old enough that its original handler is no
- * longer presumed to be posting. Job identity is deliberately irrelevant: a
- * worker timeout can start a retry with the same job ID while the timed-out
- * handler is still running. A fresh takeover could then escalate just before
- * that original handler posts.
- */
-function shouldRecoverPendingResponse(response: StoredAiResponse): boolean {
-    if (response.responseKey !== PRIMARY_AI_RESPONSE_KEY || response.responseState !== 'PENDING') {
-        return false;
-    }
-
-    if (!response.createdAt) return false;
-    return Date.now() - response.createdAt.getTime() >= RESPONSE_RECOVERY_AFTER_MS;
-}
-
 function hasConfirmedDelivery(response: StoredAiResponse): boolean {
     return response.responseError?.startsWith(`${DELIVERY_CONFIRMED_MARKER}:`) ?? false;
+}
+
+/**
+ * Commit the PENDING -> ESCALATED transition and its queue row together.
+ *
+ * updateMany is the compare-and-set. PostgreSQL serializes concurrent updates
+ * to the same message row, so exactly one transaction observes PENDING. Creating
+ * the job after that CAS inside the same transaction means an insert failure
+ * rolls the state change back and leaves the response retryable.
+ */
+async function enqueueEscalationAtomically(
+    ticketId: string,
+    responseId: string,
+    reason: string,
+): Promise<boolean> {
+    return prisma.$transaction(async (tx) => {
+        const transition = await tx.message.updateMany({
+            where: {
+                id: responseId,
+                responseKey: PRIMARY_AI_RESPONSE_KEY,
+                responseState: 'PENDING',
+            },
+            data: { responseState: 'ESCALATED', responseError: null },
+        });
+
+        if (transition.count !== 1) return false;
+
+        await tx.job.create({
+            data: {
+                type: JobType.ESCALATION,
+                payload: JSON.parse(JSON.stringify({ ticketId, reason })),
+                maxAttempts: MAX_JOB_ATTEMPTS,
+                // Omit runAt so the database's now() default, rather than the
+                // worker clock, makes the job immediately eligible.
+            },
+        });
+        return true;
+    });
 }
 
 function requiredEscalationReason(response: StoredAiResponse): string | null {
@@ -121,8 +141,9 @@ async function recoverRequiredEscalation(
     reason: string,
     context: JobHandlerContext,
 ): Promise<JobResult> {
+    let escalationEnqueued: boolean;
     try {
-        await createJob(JobType.ESCALATION, { ticketId, reason });
+        escalationEnqueued = await enqueueEscalationAtomically(ticketId, response.id, reason);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
@@ -131,27 +152,13 @@ async function recoverRequiredEscalation(
         };
     }
 
-    // The job is durable once createJob succeeds. A state-mirror failure must
-    // not turn an ordinary retry into a duplicate escalation.
-    try {
-        await prisma.message.update({
-            where: { id: response.id },
-            data: { responseState: 'ESCALATED', responseError: null },
-        });
-    } catch (error) {
-        console.error(
-            `[AI Response] Required escalation was enqueued but response state could not be recorded for ticket ${ticketId}:`,
-            error instanceof Error ? error.message : String(error),
-        );
-    }
-
     await context.reportProgress(100);
     return {
         success: true,
         data: {
             ticketId,
             skipped: true,
-            escalated: true,
+            escalated: escalationEnqueued,
             deliveryFailed: false,
             reason: 'escalation_recovered',
         },
@@ -171,8 +178,9 @@ async function recoverPendingResponse(
         `AI response for ${ticketSource} is pending after an interrupted attempt. ` +
         `${deliveryDetail} A human must verify the thread and answer if needed.`;
 
+    let escalationEnqueued: boolean;
     try {
-        await createJob(JobType.ESCALATION, { ticketId, reason });
+        escalationEnqueued = await enqueueEscalationAtomically(ticketId, response.id, reason);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
@@ -181,27 +189,13 @@ async function recoverPendingResponse(
         };
     }
 
-    // The escalation job is already durable. If this bookkeeping write fails,
-    // do not fail and enqueue duplicate escalations on another retry.
-    try {
-        await prisma.message.update({
-            where: { id: response.id },
-            data: { responseState: 'ESCALATED' },
-        });
-    } catch (error) {
-        console.error(
-            `[AI Response] Escalation was enqueued but response state could not be recorded for ticket ${ticketId}:`,
-            error instanceof Error ? error.message : String(error),
-        );
-    }
-
     await context.reportProgress(100);
     return {
         success: true,
         data: {
             ticketId,
             skipped: true,
-            escalated: true,
+            escalated: escalationEnqueued,
             deliveryFailed: true,
             reason: 'delivery_recovered',
         },
@@ -213,38 +207,55 @@ async function schedulePendingResponseRecovery(
     response: StoredAiResponse,
     context: JobHandlerContext,
 ): Promise<JobResult> {
-    if (!response.createdAt) {
-        return {
-            success: false,
-            error: `Ticket ${payload.ticketId}: pending AI response has no creation time for safe recovery`,
-        };
-    }
-
-    const runAt = new Date(response.createdAt.getTime() + RESPONSE_RECOVERY_AFTER_MS);
     let recoveryJobId: string;
     try {
-        recoveryJobId = await createJob(JobType.AI_RESPONSE, payload, { runAt });
+        recoveryJobId = await prisma.$transaction(async (tx) => {
+            const [clock] = await tx.$queryRaw<Array<{ now: Date }>>`
+                SELECT CURRENT_TIMESTAMP AS "now"
+            `;
+            if (!clock) throw new Error('database clock unavailable');
+
+            const recoveryPayload: AiResponsePayload = {
+                ...payload,
+                pendingResponseRecovery: { messageId: response.id },
+            };
+            const recoveryJob = await tx.job.create({
+                data: {
+                    type: JobType.AI_RESPONSE,
+                    payload: JSON.parse(JSON.stringify(recoveryPayload)),
+                    maxAttempts: MAX_JOB_ATTEMPTS,
+                    runAt: new Date(clock.now.getTime() + RESPONSE_RECOVERY_AFTER_MS),
+                },
+            });
+
+            const transfer = await tx.message.updateMany({
+                where: {
+                    id: response.id,
+                    responseKey: PRIMARY_AI_RESPONSE_KEY,
+                    responseState: 'PENDING',
+                    responseJobId: context.jobId,
+                },
+                data: { responseJobId: recoveryJob.id },
+            });
+            if (transfer.count !== 1) {
+                // Throwing rolls the just-created recovery job back too.
+                throw new PendingRecoveryClaimLostError();
+            }
+            return recoveryJob.id;
+        });
     } catch (error) {
+        if (error instanceof PendingRecoveryClaimLostError) {
+            await context.reportProgress(100);
+            return {
+                success: true,
+                data: { ticketId: payload.ticketId, skipped: true, reason: 'already_answered' },
+            };
+        }
         const message = error instanceof Error ? error.message : String(error);
         return {
             success: false,
             error: `Ticket ${payload.ticketId}: delayed AI response recovery could not be scheduled (${message})`,
         };
-    }
-
-    // Transfer ownership to the delayed job. A later retry of the timed-out
-    // owner then sees a fresh claim owned by another job and cannot schedule a
-    // second takeover. The job itself is already durable if this mirror fails.
-    try {
-        await prisma.message.update({
-            where: { id: response.id },
-            data: { responseJobId: recoveryJobId },
-        });
-    } catch (error) {
-        console.error(
-            `[AI Response] Recovery was scheduled but ownership could not be transferred for ticket ${payload.ticketId}:`,
-            error instanceof Error ? error.message : String(error),
-        );
     }
 
     await context.reportProgress(100);
@@ -259,6 +270,8 @@ async function schedulePendingResponseRecovery(
         },
     };
 }
+
+class PendingRecoveryClaimLostError extends Error {}
 
 /**
  * Map from TicketSource enum values (stored in DB) to PlatformTarget
@@ -381,7 +394,12 @@ export async function handleAiResponse(
             );
         }
 
-        if (shouldRecoverPendingResponse(priorAiResponse)) {
+        if (
+            priorAiResponse.responseKey === PRIMARY_AI_RESPONSE_KEY &&
+            priorAiResponse.responseState === 'PENDING' &&
+            payload.pendingResponseRecovery?.messageId === priorAiResponse.id &&
+            priorAiResponse.responseJobId === context.jobId
+        ) {
             return recoverPendingResponse(ticketId, ticket.source, priorAiResponse, context);
         }
         if (
@@ -784,32 +802,16 @@ export async function handleAiResponse(
         let escalationEnqueued = false;
         if (escalationReason) {
             try {
-                await createJob(JobType.ESCALATION, {
-                    ticketId: ticket.id,
-                    reason: escalationReason,
-                });
-                escalationEnqueued = true;
+                escalationEnqueued = await enqueueEscalationAtomically(
+                    ticket.id,
+                    aiMessage.id,
+                    escalationReason,
+                );
             } catch (error) {
                 escalationEnqueueError = error instanceof Error ? error.message : String(error);
                 console.error(
                     `[AI Response] Failed to create escalation job for ticket ${ticketId}:`,
                     escalationEnqueueError,
-                );
-            }
-        }
-
-        if (escalationReason && escalationEnqueued) {
-            try {
-                await prisma.message.update({
-                    where: { id: aiMessage.id },
-                    data: { responseState: 'ESCALATED', responseError: null },
-                });
-            } catch (error) {
-                // The escalation job already exists, so the safety outcome is
-                // durable even if this state mirror cannot be updated.
-                console.error(
-                    `[AI Response] Failed to mark response escalated for ticket ${ticketId}:`,
-                    error instanceof Error ? error.message : String(error),
                 );
             }
         }

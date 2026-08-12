@@ -18,16 +18,22 @@ const mockPrismaTicket = {
 const mockPrismaMessage = {
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
 };
 
 const mockPrismaJob = {
     create: vi.fn(),
 };
 
+const mockPrismaQueryRaw = vi.fn();
+const mockPrismaTransaction = vi.fn();
+
 const mockPrisma = {
     ticket: mockPrismaTicket,
     message: mockPrismaMessage,
     job: mockPrismaJob,
+    $queryRaw: mockPrismaQueryRaw,
+    $transaction: mockPrismaTransaction,
 };
 
 vi.mock('@copilotkit/outpost/db', () => ({
@@ -242,7 +248,12 @@ describe('handleAiResponse', () => {
         mockPrismaTicket.update.mockResolvedValue({});
         mockPrismaMessage.create.mockResolvedValue({ id: 'msg-new' });
         mockPrismaMessage.update.mockResolvedValue({});
+        mockPrismaMessage.updateMany.mockResolvedValue({ count: 1 });
         mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
+        mockPrismaQueryRaw.mockResolvedValue([{ now: new Date('2026-08-11T20:00:00.000Z') }]);
+        mockPrismaTransaction.mockImplementation(
+            async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+        );
         mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
         mockClassifyTicket.mockResolvedValue(sampleClassification);
         mockGetFeedbackCalibration.mockResolvedValue(0);
@@ -1000,13 +1011,23 @@ describe('handleAiResponse', () => {
                 responseError: 'Discord API 503',
                 createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
             };
-            mockPrismaTicket.findUnique.mockResolvedValueOnce(sampleTicket).mockResolvedValueOnce({
-                ...sampleTicket,
-                messages: [...sampleTicket.messages, pendingResponse],
-            });
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce(sampleTicket)
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [...sampleTicket.messages, pendingResponse],
+                })
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [
+                        ...sampleTicket.messages,
+                        { ...pendingResponse, responseJobId: 'job-delayed-delivery-recovery' },
+                    ],
+                });
             mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
             mockPrismaJob.create
                 .mockRejectedValueOnce(new Error('queue unavailable'))
+                .mockResolvedValueOnce({ id: 'job-delayed-delivery-recovery' })
                 .mockResolvedValueOnce({ id: 'job-escalation-retry' });
 
             const context = makeContext({ jobId: 'job-retry-delivery' });
@@ -1018,15 +1039,24 @@ describe('handleAiResponse', () => {
                 { ticketId: 'tkt-1', source: 'discord' },
                 context,
             );
+            const recoveryAttempt = await handleAiResponse(
+                {
+                    ticketId: 'tkt-1',
+                    source: 'discord',
+                    pendingResponseRecovery: { messageId: pendingResponse.id },
+                },
+                makeContext({ jobId: 'job-delayed-delivery-recovery' }),
+            );
 
             expect(firstAttempt.success).toBe(false);
             expect(retryAttempt.success).toBe(true);
-            expect(retryAttempt.data).toMatchObject({
+            expect(retryAttempt.data).toMatchObject({ recoveryScheduled: true });
+            expect(recoveryAttempt.data).toMatchObject({
                 skipped: true,
                 escalated: true,
                 reason: 'delivery_recovered',
             });
-            expect(mockPrismaJob.create).toHaveBeenCalledTimes(2);
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(3);
             expect(mockPostResponse).toHaveBeenCalledTimes(1);
             expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
         });
@@ -1043,11 +1073,23 @@ describe('handleAiResponse', () => {
                 responseError: 'Discord API 503',
                 createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
             };
-            mockPrismaTicket.findUnique.mockResolvedValueOnce(sampleTicket).mockResolvedValueOnce({
-                ...sampleTicket,
-                messages: [...sampleTicket.messages, pendingResponse],
-            });
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce(sampleTicket)
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [...sampleTicket.messages, pendingResponse],
+                })
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [
+                        ...sampleTicket.messages,
+                        { ...pendingResponse, responseJobId: 'job-delayed-interruption' },
+                    ],
+                });
             mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+            mockPrismaJob.create
+                .mockResolvedValueOnce({ id: 'job-delayed-interruption' })
+                .mockResolvedValueOnce({ id: 'job-escalation-after-interruption' });
 
             let interruptAt85 = true;
             const firstProgress = vi.fn().mockImplementation(async (percent: number) => {
@@ -1067,14 +1109,23 @@ describe('handleAiResponse', () => {
                 { ticketId: 'tkt-1', source: 'discord' },
                 makeContext({ jobId: 'job-interrupted' }),
             );
+            const recoveryAttempt = await handleAiResponse(
+                {
+                    ticketId: 'tkt-1',
+                    source: 'discord',
+                    pendingResponseRecovery: { messageId: pendingResponse.id },
+                },
+                makeContext({ jobId: 'job-delayed-interruption' }),
+            );
 
             expect(retryAttempt.success).toBe(true);
-            expect(retryAttempt.data).toMatchObject({
+            expect(retryAttempt.data).toMatchObject({ recoveryScheduled: true });
+            expect(recoveryAttempt.data).toMatchObject({
                 skipped: true,
                 escalated: true,
                 reason: 'delivery_recovered',
             });
-            expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(2);
             expect(mockPostResponse).toHaveBeenCalledTimes(1);
             expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
         });
@@ -1169,8 +1220,12 @@ describe('handleAiResponse', () => {
                 ticketId: 'tkt-1',
                 reason: 'Low AI confidence (25%) — automated escalation',
             });
-            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
-                where: { id: 'msg-required-escalation' },
+            expect(mockPrismaMessage.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 'msg-required-escalation',
+                    responseKey: 'PRIMARY_AI_RESPONSE',
+                    responseState: 'PENDING',
+                },
                 data: { responseState: 'ESCALATED', responseError: null },
             });
         });
@@ -1632,12 +1687,25 @@ describe('handleAiResponse', () => {
                 expect(mockPrismaJob.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
                         type: 'AI_RESPONSE',
-                        payload: { ticketId: 'tkt-1', source: 'discord' },
-                        runAt: new Date(now - 1_000 + PENDING_RECOVERY_AFTER_MS),
+                        payload: {
+                            ticketId: 'tkt-1',
+                            source: 'discord',
+                            pendingResponseRecovery: {
+                                messageId: 'msg-same-job-in-flight',
+                            },
+                        },
+                        // The due time is based on the database clock fixture,
+                        // not message.createdAt or Date.now().
+                        runAt: new Date('2026-08-11T20:05:00.000Z'),
                     }),
                 });
-                expect(mockPrismaMessage.update).toHaveBeenCalledWith({
-                    where: { id: 'msg-same-job-in-flight' },
+                expect(mockPrismaMessage.updateMany).toHaveBeenCalledWith({
+                    where: {
+                        id: 'msg-same-job-in-flight',
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-timed-out',
+                    },
                     data: { responseJobId: 'job-delayed-takeover' },
                 });
                 expect(mockPostResponse).not.toHaveBeenCalled();
@@ -1674,9 +1742,7 @@ describe('handleAiResponse', () => {
             expect(mockPostResponse).not.toHaveBeenCalled();
         });
 
-        it('recovers a stale PENDING response from a replacement job', async () => {
-            const now = Date.parse('2026-08-11T20:00:00.000Z');
-            const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
+        it('recovers only from an explicit delayed payload even when the app clock is behind', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue({
                 ...sampleTicket,
                 messages: [
@@ -1688,28 +1754,74 @@ describe('handleAiResponse', () => {
                         isAiGenerated: true,
                         responseKey: 'PRIMARY_AI_RESPONSE',
                         responseState: 'PENDING',
-                        responseJobId: 'job-timed-out',
-                        createdAt: new Date(now - PENDING_RECOVERY_AFTER_MS),
+                        responseJobId: 'job-takeover',
+                        // Deliberately in the app clock's future. Recovery must
+                        // be authorized by the durable payload/owner pair, not
+                        // by Date.now() arithmetic against a DB timestamp.
+                        createdAt: new Date('2099-01-01T00:00:00.000Z'),
                     },
                 ],
             });
 
-            try {
-                const result = await handleAiResponse(
-                    { ticketId: 'tkt-1', source: 'discord' },
-                    makeContext({ jobId: 'job-takeover' }),
-                );
+            const result = await handleAiResponse(
+                {
+                    ticketId: 'tkt-1',
+                    source: 'discord',
+                    pendingResponseRecovery: { messageId: 'msg-stale' },
+                },
+                makeContext({ jobId: 'job-takeover' }),
+            );
 
-                expect(result.data).toMatchObject({
-                    skipped: true,
-                    escalated: true,
-                    reason: 'delivery_recovered',
-                });
-                expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
-                expect(mockPostResponse).not.toHaveBeenCalled();
-            } finally {
-                dateNow.mockRestore();
-            }
+            expect(result.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                reason: 'delivery_recovered',
+            });
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+            expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ type: 'ESCALATION' }),
+            });
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('atomically allows only one concurrent delayed recovery to enqueue escalation', async () => {
+            const pendingResponse = {
+                id: 'msg-concurrent-recovery',
+                type: 'BOT',
+                content: highConfidenceResult.response,
+                isAiGenerated: true,
+                responseKey: 'PRIMARY_AI_RESPONSE',
+                responseState: 'PENDING',
+                responseJobId: 'job-delayed-recovery',
+                responseError: 'Discord API 503',
+                createdAt: new Date(),
+            };
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [...sampleTicket.messages, pendingResponse],
+            });
+
+            let pending = true;
+            mockPrismaMessage.updateMany.mockImplementation(async () => {
+                if (!pending) return { count: 0 };
+                pending = false;
+                return { count: 1 };
+            });
+
+            const payload = {
+                ticketId: 'tkt-1',
+                source: 'discord' as const,
+                pendingResponseRecovery: { messageId: pendingResponse.id },
+            };
+            const [first, second] = await Promise.all([
+                handleAiResponse(payload, makeContext({ jobId: 'job-delayed-recovery' })),
+                handleAiResponse(payload, makeContext({ jobId: 'job-delayed-recovery' })),
+            ]);
+
+            expect(first.success).toBe(true);
+            expect(second.success).toBe(true);
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+            expect(mockPostResponse).not.toHaveBeenCalled();
         });
 
         it('drives progress to 100 so the skipped job is not left looking hung', async () => {
