@@ -556,6 +556,33 @@ describe('Worker', () => {
         expect(appStopResolved).toBe(true);
     });
 
+    it('waits for an in-flight poll and does not claim after shutdown begins', async () => {
+        let releaseReclaim!: () => void;
+        mockPrisma.$executeRaw.mockImplementationOnce(
+            () =>
+                new Promise<number>((resolve) => {
+                    releaseReclaim = () => resolve(0);
+                }),
+        );
+
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+        worker.start();
+
+        const stopPromise = worker.stop();
+        let stopped = false;
+        void stopPromise.then(() => {
+            stopped = true;
+        });
+        await Promise.resolve();
+        expect(stopped).toBe(false);
+
+        releaseReclaim();
+        await stopPromise;
+
+        expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+        expect(worker.healthCheck().running).toBe(false);
+    });
+
     it('handler receives context with progress reporting', async () => {
         const jobRow = makeJobRow();
         mockPrisma.$queryRaw.mockResolvedValueOnce([jobRow]);

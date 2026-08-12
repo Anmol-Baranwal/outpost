@@ -44,6 +44,7 @@ export class Worker {
     private jobTimeouts: Partial<Record<JobType, number>>;
     private defaultTimeoutMs: number;
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
+    private pollPromise: Promise<void> | null = null;
     private activeJobs = new Set<string>();
     /** Track active job counts per type for per-type concurrency enforcement */
     private activeJobsByType = new Map<string, number>();
@@ -81,7 +82,7 @@ export class Worker {
         this.upSince = new Date();
         console.log('[Queue Worker] Started');
         this.registerSignalHandlers();
-        this.poll();
+        this.runPoll();
     }
 
     /**
@@ -106,6 +107,11 @@ export class Worker {
         this.removeSignalHandlers();
 
         this.stopPromise = (async () => {
+            // A poll may be between its running check and its atomic claim. Let
+            // that cycle finish before deciding whether the active set is
+            // drained, otherwise stop() can resolve just before it claims work.
+            await this.pollPromise;
+
             // Wait for active jobs to finish
             if (this.activeJobs.size > 0) {
                 console.log(`[Queue Worker] Waiting for ${this.activeJobs.size} active jobs to complete...`);
@@ -158,6 +164,19 @@ export class Worker {
         this.signalHandlers = [];
     }
 
+    private runPoll(): void {
+        const currentPoll = this.poll();
+        this.pollPromise = currentPoll;
+        void currentPoll.finally(() => {
+            if (this.pollPromise === currentPoll) this.pollPromise = null;
+        });
+    }
+
+    private schedulePoll(delayMs: number): void {
+        if (!this.running) return;
+        this.pollTimer = setTimeout(() => this.runPoll(), delayMs);
+    }
+
     private async poll(): Promise<void> {
         if (!this.running) return;
 
@@ -167,11 +186,12 @@ export class Worker {
 
             if (availableSlots <= 0) {
                 // At capacity, wait and retry
-                this.pollTimer = setTimeout(() => this.poll(), this.pollIntervalMs);
+                this.schedulePoll(this.pollIntervalMs);
                 return;
             }
 
             await this.reclaimStaleJobs();
+            if (!this.running) return;
 
             const hasPerTypeLimits = Object.keys(this.concurrencyByType).length > 0;
             let processedCount: number;
@@ -186,10 +206,10 @@ export class Worker {
 
             // If we processed jobs, poll immediately for more
             const nextPollDelay = processedCount > 0 ? 0 : this.pollIntervalMs;
-            this.pollTimer = setTimeout(() => this.poll(), nextPollDelay);
+            this.schedulePoll(nextPollDelay);
         } catch (error) {
             console.error('[Queue Worker] Poll error:', error);
-            this.pollTimer = setTimeout(() => this.poll(), this.pollIntervalMs);
+            this.schedulePoll(this.pollIntervalMs);
         }
     }
 
