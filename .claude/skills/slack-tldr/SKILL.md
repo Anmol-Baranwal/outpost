@@ -36,7 +36,7 @@ The Slack app posting this is named `CopilotKit Community Signal` — its name r
 Full report → <<notion-url>|<Mon DD>-<DD>>
 ```
 
-This nested layout replaced the older flat single-line Top-issues bullet + the **Top demand** and **🏢 Enterprise reporters** lines (dropped — they cluttered the scan; the full report carries them). Re-add a dropped line only if a week genuinely needs it.
+This nested layout replaced the older flat single-line Top-issues bullet. (**Top demand** and **🏢 Enterprise reporters** were also dropped from the TL;DR — see the **Dropped lines** rule below.)
 
 ## Rules
 
@@ -72,10 +72,10 @@ Use `\n` for line breaks inside the JSON string. Escape `*` as needed if it appe
 After saving, output the exact curl Nathan runs:
 
 ```bash
-curl -X POST -H "Content-Type: application/json" --data @/tmp/slack-msg.json "$SLACK_WEBHOOK_URL"
+curl -X POST -H "Content-Type: application/json" --data @/tmp/slack-msg.json "$SLACK_WEBHOOK_URL_1"
 ```
 
-Webhook URL lives in Nathan's env. Don't include the URL inline; tell him to `export SLACK_WEBHOOK_URL=...` from the Slack app config first.
+Webhook URL lives in Nathan's env as `SLACK_WEBHOOK_URL_1` (set in `.claude/settings.local.json` `env`). Don't include the URL inline; if it isn't already exported, tell him to `export SLACK_WEBHOOK_URL_1=...` from the Slack app config first.
 
 ## Dual-community handling
 

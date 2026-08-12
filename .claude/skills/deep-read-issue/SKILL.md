@@ -43,7 +43,7 @@ For EACH issue number, run ALL of these — do not stop at the body:
    Then deep-read every PR you find (section B) — a fix usually lives here, even when the issue thread is empty.
 
 Capture per issue:
-- **STATUS AS OF <today>:** one line — open / closed(reason) / fixed-in-vX / merged-PR#N — derived from state + maintainer comment + linked PR, NOT from the body.
+- **STATUS AS OF <today>:** one line — open / closed(reason) / fixed-in-vX / merged-PR#N — derived from state + maintainer comment + linked PR, NOT from the body. **If the issue is closed OR its closing/linked PR is MERGED, emit an explicit `RESOLVED` verdict (with PR# + merge/close date)** so the orchestrator files it under ✅ Resolved, never as an open Pain/Top issue. Reading the linked PR's live merged state is a required check — a merged fix outranks any earlier "this is a blocker" comment in the thread.
 - **TYPE — bug vs feature-request (MANDATORY, run the checks BEFORE calling anything a bug).** Don't assume an issue is a bug. Classify it first, from signals in this order:
   - **Feature request** if ANY of: the issue title says `Feature Request` / `[Feature]` / `Proposal` / `RFC` / `Enhancement`; the issue has a `feature` / `enhancement` / `proposal` label; **its fix PR is `feat(...)` (conventional-commit) or its title/body says "proposal"** (a `feat` or "proposal" PR is the strongest signal — treat as feature). Feature requests belong in **🔥 Demand**, never in 💢 Pain or 🔝 Top issues (unless a front-door break).
   - **Bug** if: `[Bug]` title / `bug` label / a `fix(...)` PR / the reporter says something errors, crashes, throws, 404s, regressed, or returns wrong output.
