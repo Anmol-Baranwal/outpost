@@ -13,6 +13,8 @@
  * 3. Orphaned replies (isThreadStart=false with no matching ticket): create the
  *    Ticket + Message so the customer's words are never dropped, but do NOT
  *    enqueue AI_RESPONSE — we never saw the message that opened the conversation.
+ *    Of the callers, only Teams actually reaches this branch; Discord, the GitHub
+ *    App and Slack drop untracked replies before calling in. See handleReply.
  * 4. Team member detection via ExternalIdentity -> TeamMember lookup
  * 5. Sequential display ID generation (TKT-XXXXXXXX)
  */
@@ -135,7 +137,7 @@ export class InboundHandler {
      */
     async handle(message: InboundMessage): Promise<InboundResult> {
         if (message.isThreadStart) {
-            return this.handleNewTicket(message, { answer: true });
+            return this.handleNewTicket(message, { answer: true, orphanedReply: false });
         }
         return this.handleReply(message);
     }
@@ -148,10 +150,17 @@ export class InboundHandler {
      * the one message Outpost is allowed to answer), `false` for the orphaned-
      * reply fallback in `handleReply`, where we are creating a ticket around a
      * mid-conversation message we must not answer.
+     *
+     * `orphanedReply` is surfaced on the result as `isOrphanedReply` so callers
+     * can distinguish "a real thread started" from "we filed a ticket around a
+     * message in a conversation we were never part of". It is a separate
+     * decision from `answer` on purpose — a caller must not have to infer one
+     * from the other — even though today only the orphan path passes
+     * `answer: false`.
      */
     private async handleNewTicket(
         message: InboundMessage,
-        { answer }: { answer: boolean },
+        { answer, orphanedReply }: { answer: boolean; orphanedReply: boolean },
     ): Promise<InboundResult> {
         const displayId = generateTicketId();
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
@@ -224,6 +233,7 @@ export class InboundHandler {
             ticketId: ticket.id,
             displayId,
             isNewTicket: true,
+            isOrphanedReply: orphanedReply,
             aiJobEnqueued,
             messageId,
         };
@@ -255,6 +265,26 @@ export class InboundHandler {
             // customer's words is worse than filing an oddly-titled ticket, and a
             // human can pick it up from the dashboard.
             //
+            // In practice only Teams reaches this branch. Every other caller
+            // pre-filters an untracked reply and drops it before we are called:
+            //   - Discord: apps/discord-bot/src/events/message-create.ts returns
+            //     early when findTicketByThreadId finds nothing.
+            //   - GitHub: apps/github-app/src/webhooks/issue-comment.ts returns
+            //     early on no ticket, and never routes comments through this
+            //     handler at all (its InboundHandler callers, issues-opened and
+            //     discussion-created, are thread starts only).
+            //   - Slack: apps/slack-bot/src/events/message.ts queries the ticket
+            //     itself and returns when the reply's thread is untracked.
+            // The web Postmark webhook does honour the principle, but implements
+            // it locally (see apps/web/src/app/api/webhooks/postmark/route.ts,
+            // isOrphanedReply) rather than through this path.
+            //
+            // So the preservation rationale above is the intent of this handler,
+            // not the platform-wide behaviour of Outpost today. A reviewer flagged
+            // the inconsistency; the resolution was to document it rather than
+            // change three platforms' filtering. Anyone unifying this should
+            // remove those pre-filters, not weaken this branch.
+            //
             // We do NOT answer it. ASSUMPTION, stated so it is reviewable: the
             // message that opened the real conversation was never seen by us, so
             // this reply is not "the message that opened the ticket" in the
@@ -267,7 +297,16 @@ export class InboundHandler {
             // already-answered gate in the AI_RESPONSE handler would wave it
             // straight through and answer a mid-thread "any update?" in a
             // conversation Outpost was never part of.
-            return this.handleNewTicket({ ...message, isThreadStart: true }, { answer: false });
+            // isOrphanedReply rides back out on the result: isNewTicket is
+            // true here (a ticket really was created), so a caller that only
+            // looks at isNewTicket would treat this like a fresh thread start
+            // and, on Teams, post an acknowledgment card plus claim the
+            // conversation for proactive messaging — bot chatter in a thread
+            // we were never part of.
+            return this.handleNewTicket(
+                { ...message, isThreadStart: true },
+                { answer: false, orphanedReply: true },
+            );
         }
 
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
@@ -319,6 +358,7 @@ export class InboundHandler {
             ticketId: ticket.id,
             displayId: ticket.displayId,
             isNewTicket: false,
+            isOrphanedReply: false,
             aiJobEnqueued: false,
             messageId: msg.id,
         };

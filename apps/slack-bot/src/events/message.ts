@@ -58,7 +58,7 @@ export function registerMessageHandler(app: App): void {
 
             await handler.handle(message);
 
-            // No acknowledgment post \u2014 it leaked the internal ticket displayId to
+            // No acknowledgment post — it leaked the internal ticket displayId to
             // the channel and added a second bot message for no reporter benefit.
             // See the matching change in apps/discord-bot/src/events/thread-create.ts.
         } catch (error) {

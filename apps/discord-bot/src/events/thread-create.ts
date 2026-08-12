@@ -85,7 +85,7 @@ export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: bo
         // "\uD83C\uDFAB Ticket TKT-XXXXXXXX created..." in the thread, which leaked an
         // internal identifier to the public server and spent a bot message
         // saying nothing the reporter can act on. displayId is for the dashboard
-        // and team slash commands only \u2014 never for reporter-facing copy.
+        // and team slash commands only — never for reporter-facing copy.
         // The AI response itself is the only message the reporter needs.
 
         console.log(`[Discord Bot] Created ticket ${result.displayId} for thread ${thread.id}`);

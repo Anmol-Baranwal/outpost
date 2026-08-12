@@ -57,9 +57,9 @@ export async function handleIssueOpened(
             },
         });
 
-        // Intentionally no "Ticket TKT-\u2026 created" acknowledgment comment. The
+        // Intentionally no "Ticket TKT-… created" acknowledgment comment. The
         // ticket id is internal, and the AI response lands in the same thread
-        // moments later \u2014 the ack was pure noise on a public issue.
+        // moments later — the ack was pure noise on a public issue.
 
         console.log(
             `[GitHub App] Created ticket ${result.displayId} for issue ${repository.full_name}#${issue.number}`,
