@@ -6,19 +6,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ─── Mock Prisma ────────────────────────────────────────────────────────────
 
 const mockTicketFindUnique = vi.fn();
+const mockTicketFindFirst = vi.fn();
 const mockTicketCreate = vi.fn();
 const mockTicketUpdate = vi.fn();
 const mockMessageCreate = vi.fn();
+const mockJobCreate = vi.fn();
+const mockTransaction = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
+        $transaction: (...args: unknown[]) => mockTransaction(...args),
         ticket: {
             findUnique: (...args: unknown[]) => mockTicketFindUnique(...args),
+            findFirst: (...args: unknown[]) => mockTicketFindFirst(...args),
             create: (...args: unknown[]) => mockTicketCreate(...args),
             update: (...args: unknown[]) => mockTicketUpdate(...args),
         },
         message: {
             create: (...args: unknown[]) => mockMessageCreate(...args),
+        },
+        job: {
+            create: (...args: unknown[]) => mockJobCreate(...args),
         },
     },
 }));
@@ -76,6 +84,26 @@ function fullPayload(overrides: Partial<PostmarkInboundPayload> = {}): PostmarkI
 describe('Postmark inbound webhook', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockTicketCreate.mockReset();
+        mockTicketFindFirst.mockReset();
+        mockJobCreate.mockReset();
+        mockTransaction.mockReset();
+        mockCreateJob.mockReset();
+        mockTicketFindFirst.mockResolvedValue(null);
+        mockJobCreate.mockResolvedValue({ id: 'job-1' });
+        mockCreateJob.mockResolvedValue('job-1');
+        mockTransaction.mockImplementation(
+            async (
+                callback: (tx: {
+                    ticket: { create: typeof mockTicketCreate };
+                    job: { create: typeof mockJobCreate };
+                }) => Promise<unknown>,
+            ) =>
+                callback({
+                    ticket: { create: mockTicketCreate },
+                    job: { create: mockJobCreate },
+                }),
+        );
     });
 
     // ── Helper function tests ──────────────────────────────────────────────
@@ -154,11 +182,112 @@ describe('Postmark inbound webhook', () => {
                 }),
             );
 
-            // Should enqueue AI_RESPONSE job
-            expect(mockCreateJob).toHaveBeenCalledWith(
-                'AI_RESPONSE',
-                { ticketId: 'ticket-1', source: 'web' },
+            // Ticket, opening message, and AI job share one transaction.
+            expect(mockTransaction).toHaveBeenCalledTimes(1);
+            expect(mockJobCreate).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    type: 'AI_RESPONSE',
+                    payload: { ticketId: 'ticket-1', source: 'web' },
+                }),
+            });
+            expect(mockCreateJob).not.toHaveBeenCalled();
+        });
+
+        it('creates one ticket and AI job for concurrent deliveries of the same MessageID', async () => {
+            const ticket = {
+                id: 'ticket-concurrent',
+                displayId: 'TKT-TESTID01',
+                source: 'EMAIL',
+                sourceId: 'msg-001@postmark.example',
+            };
+            mockTicketFindFirst
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValue(ticket);
+
+            let sourceIdClaimed = false;
+            mockTicketCreate.mockImplementation(async () => {
+                if (sourceIdClaimed) {
+                    throw {
+                        code: 'P2002',
+                        meta: { target: 'Ticket_email_sourceId_key' },
+                    };
+                }
+                sourceIdClaimed = true;
+                return ticket;
+            });
+
+            const [first, second] = await Promise.all([
+                POST(postmarkRequest(fullPayload())),
+                POST(postmarkRequest(fullPayload())),
+            ]);
+
+            expect(first.status).toBe(200);
+            expect(second.status).toBe(200);
+            expect(await first.json()).toMatchObject({ ticketId: 'TKT-TESTID01' });
+            expect(await second.json()).toMatchObject({ ticketId: 'TKT-TESTID01' });
+            expect(mockTicketCreate).toHaveBeenCalledTimes(2);
+            expect(mockJobCreate).toHaveBeenCalledTimes(1);
+            expect(mockCreateJob).not.toHaveBeenCalled();
+        });
+
+        it('rolls back ticket creation when the atomic AI job insert fails, then retries once', async () => {
+            const ticket = {
+                id: 'ticket-after-retry',
+                displayId: 'TKT-TESTID01',
+                source: 'EMAIL',
+                sourceId: 'msg-001@postmark.example',
+            };
+            let committedTicket: typeof ticket | null = null;
+            let committedJobs = 0;
+            let ticketAttempts = 0;
+            let failJobInsert = true;
+
+            mockTicketFindFirst.mockImplementation(async () => committedTicket);
+            mockTransaction.mockImplementation(
+                async (
+                    callback: (tx: {
+                        ticket: { create: () => Promise<typeof ticket> };
+                        job: { create: () => Promise<{ id: string }> };
+                    }) => Promise<unknown>,
+                ) => {
+                    let stagedTicket: typeof ticket | null = null;
+                    let stagedJob = false;
+                    const result = await callback({
+                        ticket: {
+                            create: async () => {
+                                ticketAttempts += 1;
+                                stagedTicket = ticket;
+                                return ticket;
+                            },
+                        },
+                        job: {
+                            create: async () => {
+                                if (failJobInsert) {
+                                    failJobInsert = false;
+                                    throw new Error('queue insert unavailable');
+                                }
+                                stagedJob = true;
+                                return { id: 'job-after-retry' };
+                            },
+                        },
+                    });
+                    committedTicket = stagedTicket;
+                    if (stagedJob) committedJobs += 1;
+                    return result;
+                },
             );
+
+            const first = await POST(postmarkRequest(fullPayload()));
+            const retry = await POST(postmarkRequest(fullPayload()));
+
+            expect(first.status).toBe(500);
+            expect(retry.status).toBe(200);
+            expect(ticketAttempts).toBe(2);
+            expect(committedTicket).toEqual(ticket);
+            expect(committedJobs).toBe(1);
+            expect(mockTransaction).toHaveBeenCalledTimes(2);
+            expect(mockCreateJob).not.toHaveBeenCalled();
         });
 
         it('appends to existing ticket via MailboxHash (plus-addressing)', async () => {
@@ -397,6 +526,15 @@ describe('Postmark inbound webhook', () => {
                 postmarkRequest({ From: 'alice@test.com', Subject: '' }),
             );
             expect(res.status).toBe(400);
+        });
+
+        it('rejects a new-email payload without the MessageID required for idempotency', async () => {
+            const res = await POST(
+                postmarkRequest(fullPayload({ MessageID: '' })),
+            );
+
+            expect(res.status).toBe(400);
+            expect(mockTransaction).not.toHaveBeenCalled();
         });
 
         it('returns 500 on database error', async () => {
