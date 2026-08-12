@@ -149,6 +149,8 @@ export class Worker {
                 return;
             }
 
+            await this.reclaimStaleJobs();
+
             const hasPerTypeLimits = Object.keys(this.concurrencyByType).length > 0;
             let processedCount: number;
 
@@ -167,6 +169,34 @@ export class Worker {
             console.error('[Queue Worker] Poll error:', error);
             this.pollTimer = setTimeout(() => this.poll(), this.pollIntervalMs);
         }
+    }
+
+    /**
+     * Return abandoned PROCESSING jobs to the pending queue before claiming work.
+     *
+     * lockedAt is written with the database clock, so the stale comparison must
+     * also use the database clock. Each registered type is checked against its
+     * own handler timeout to avoid reclaiming a healthy long-running job using
+     * another type's shorter timeout.
+     */
+    private async reclaimStaleJobs(): Promise<void> {
+        const policies = Array.from(this.handlers.keys(), (type) => ({
+            type,
+            timeout_ms: this.jobTimeouts[type as JobType] ?? this.defaultTimeoutMs,
+        }));
+
+        if (policies.length === 0) return;
+
+        await prisma.$executeRaw`
+            UPDATE "Job" AS job
+            SET status = 'PENDING', "lockedAt" = NULL, progress = NULL,
+                "updatedAt" = NOW()
+            FROM jsonb_to_recordset(${JSON.stringify(policies)}::jsonb)
+                AS policy(type text, timeout_ms double precision)
+            WHERE job.status = 'PROCESSING'
+            AND job.type = policy.type
+            AND job."lockedAt" < NOW() - (policy.timeout_ms * INTERVAL '1 millisecond')
+        `;
     }
 
     /**

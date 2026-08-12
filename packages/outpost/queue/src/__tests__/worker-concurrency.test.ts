@@ -21,6 +21,7 @@ const mockPrismaJob = {
 
 const mockPrisma = {
     job: mockPrismaJob,
+    $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
 };
 
@@ -63,6 +64,7 @@ describe('Worker per-type concurrency', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
+        mockPrisma.$executeRaw.mockResolvedValue(0);
     });
 
     afterEach(async () => {
@@ -109,6 +111,33 @@ describe('Worker per-type concurrency', () => {
                 data: expect.objectContaining({ status: 'COMPLETED' }),
             }),
         );
+    });
+
+    it('reclaims stale processing jobs before per-type claims', async () => {
+        const now = new Date('2026-08-11T12:00:00.000Z');
+        vi.setSystemTime(now);
+        worker = new Worker({
+            pollIntervalMs: 100,
+            maxConcurrency: 2,
+            concurrencyByType: {
+                [JobType.AI_RESPONSE]: 1,
+            },
+            jobTimeouts: {
+                [JobType.AI_RESPONSE]: 2000,
+            },
+        });
+
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(mockPrisma.$executeRaw.mock.calls[0][1])).toEqual([
+            { type: JobType.AI_RESPONSE, timeout_ms: 2000 },
+        ]);
+        expect(mockPrisma.$queryRaw).toHaveBeenCalled();
     });
 
     it('falls back to global limit when concurrencyByType is not specified', async () => {

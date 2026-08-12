@@ -24,6 +24,7 @@ const mockPrismaJob = {
 
 const mockPrisma = {
     job: mockPrismaJob,
+    $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
 };
 
@@ -156,6 +157,7 @@ describe('Worker', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
+        mockPrisma.$executeRaw.mockResolvedValue(0);
         worker = new Worker({
             pollIntervalMs: 100,
             maxConcurrency: 2,
@@ -192,6 +194,47 @@ describe('Worker', () => {
                 data: expect.objectContaining({ status: 'COMPLETED', attempts: 1 }),
             }),
         );
+    });
+
+    it('reclaims stale processing jobs using each job type timeout before claiming', async () => {
+        const now = new Date('2026-08-11T12:00:00.000Z');
+        vi.setSystemTime(now);
+
+        await worker.stop();
+        worker = new Worker({
+            pollIntervalMs: 100,
+            maxConcurrency: 2,
+            defaultTimeoutMs: 5000,
+            jobTimeouts: {
+                [JobType.AI_RESPONSE]: 1000,
+            },
+        });
+
+        const recoveredJob = makeJobRow();
+        mockPrisma.$executeRaw.mockResolvedValue(1);
+        mockPrisma.$queryRaw.mockResolvedValueOnce([recoveredJob]);
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+        mockPrismaJob.update.mockResolvedValue({});
+
+        const handled: string[] = [];
+        worker.on(JobType.AI_RESPONSE, async (payload) => {
+            handled.push(payload.ticketId);
+            return { success: true };
+        });
+        worker.on(JobType.ESCALATION, async () => ({ success: true }));
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const firstReclaim = mockPrisma.$executeRaw.mock.calls[0];
+        expect(JSON.parse(firstReclaim[1])).toEqual([
+            { type: JobType.AI_RESPONSE, timeout_ms: 1000 },
+            { type: JobType.ESCALATION, timeout_ms: 5000 },
+        ]);
+        const reclaimSql = firstReclaim[0].join(' ');
+        expect(reclaimSql).toContain("WHERE job.status = 'PROCESSING'");
+        expect(reclaimSql).toContain('job."lockedAt" < NOW()');
+        expect(handled).toEqual(['tkt-1']);
     });
 
     it('marks job DEAD_LETTER after maxAttempts exhausted', async () => {
