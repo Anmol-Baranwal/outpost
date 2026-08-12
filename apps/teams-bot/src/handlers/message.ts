@@ -50,16 +50,15 @@ export async function handleMessage(context: TurnContext): Promise<void> {
     if (!message || !message.content) return;
 
     try {
-        // Channel monitoring filter: if monitoredChannelIds is configured,
-        // only process messages from those channels. If empty, monitor all.
-        if (message.isThreadStart) {
-            const channelId = message.channelId;
-            const isMonitored =
-                config.monitoredChannelIds.length === 0 ||
-                (channelId !== undefined && config.monitoredChannelIds.includes(channelId));
+        // Channel monitoring filter applies to both thread starts and replies.
+        // If the list is empty, monitor all channels (including 1:1 chats);
+        // otherwise the activity must carry an explicitly monitored channel ID.
+        const channelId = message.channelId;
+        const isMonitored =
+            config.monitoredChannelIds.length === 0 ||
+            (channelId !== undefined && config.monitoredChannelIds.includes(channelId));
 
-            if (!isMonitored) return;
-        }
+        if (!isMonitored) return;
 
         // Delegate to the shared inbound handler
         const result = await inboundHandler.handle(message);

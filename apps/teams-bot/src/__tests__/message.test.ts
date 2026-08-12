@@ -174,6 +174,21 @@ describe('handleMessage', () => {
         expect(prisma.ticket.create).not.toHaveBeenCalled();
     });
 
+    it('ignores replies in unmonitored channels before orphan fallback', async () => {
+        const context = makeContext({
+            replyToId: 'missing-parent-id',
+            channelData: { teamsChannelId: 'unmonitored-channel' },
+        });
+
+        await handleMessage(context);
+
+        expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+        expect(prisma.ticket.create).not.toHaveBeenCalled();
+        expect(prisma.message.create).not.toHaveBeenCalled();
+        expect(createJob).not.toHaveBeenCalled();
+        expect(context.sendActivity).not.toHaveBeenCalled();
+    });
+
     it('appends follow-up messages to existing tickets', async () => {
         vi.mocked(prisma.ticket.findFirst).mockResolvedValue(
             TICKET as ReturnType<typeof prisma.ticket.findFirst> extends Promise<infer T> ? T : never,
