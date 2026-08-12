@@ -89,6 +89,8 @@ const { handleAiResponse } = await import('../handlers/ai-response.js');
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
+const PENDING_RECOVERY_AFTER_MS = 5 * 60 * 1000;
+
 function makeContext(overrides: Partial<JobHandlerContext> = {}): JobHandlerContext {
     return {
         jobId: 'test-job-1',
@@ -932,7 +934,7 @@ describe('handleAiResponse', () => {
                 responseState: 'PENDING',
                 responseJobId: 'job-retry-delivery',
                 responseError: 'Discord API 503',
-                createdAt: new Date(),
+                createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
             };
             mockPrismaTicket.findUnique
                 .mockResolvedValueOnce(sampleTicket)
@@ -977,7 +979,7 @@ describe('handleAiResponse', () => {
                 responseState: 'PENDING',
                 responseJobId: 'job-interrupted',
                 responseError: 'Discord API 503',
-                createdAt: new Date(),
+                createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
             };
             mockPrismaTicket.findUnique
                 .mockResolvedValueOnce(sampleTicket)
@@ -1393,6 +1395,136 @@ describe('handleAiResponse', () => {
             expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
             expect(mockPrismaJob.create).not.toHaveBeenCalled();
             expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('schedules exactly one delayed takeover for a fresh same-job PENDING response', async () => {
+            const now = Date.parse('2026-08-11T20:00:00.000Z');
+            const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
+            const pendingResponse = {
+                id: 'msg-same-job-in-flight',
+                type: 'BOT',
+                content: highConfidenceResult.response,
+                isAiGenerated: true,
+                responseKey: 'PRIMARY_AI_RESPONSE',
+                responseState: 'PENDING',
+                responseJobId: 'job-timed-out',
+                createdAt: new Date(now - 1_000),
+            };
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [...sampleTicket.messages, pendingResponse],
+                })
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [
+                        ...sampleTicket.messages,
+                        { ...pendingResponse, responseJobId: 'job-delayed-takeover' },
+                    ],
+                });
+            mockPrismaJob.create.mockResolvedValueOnce({ id: 'job-delayed-takeover' });
+
+            try {
+                const firstRetry = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-timed-out' }),
+                );
+                const duplicateRetry = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-timed-out' }),
+                );
+
+                expect(firstRetry.data).toMatchObject({
+                    skipped: true,
+                    recoveryScheduled: true,
+                    reason: 'delivery_recovery_scheduled',
+                });
+                expect(duplicateRetry.data).toMatchObject({
+                    skipped: true,
+                    reason: 'already_answered',
+                });
+                expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+                expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
+                        type: 'AI_RESPONSE',
+                        payload: { ticketId: 'tkt-1', source: 'discord' },
+                        runAt: new Date(now - 1_000 + PENDING_RECOVERY_AFTER_MS),
+                    }),
+                });
+                expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                    where: { id: 'msg-same-job-in-flight' },
+                    data: { responseJobId: 'job-delayed-takeover' },
+                });
+                expect(mockPostResponse).not.toHaveBeenCalled();
+            } finally {
+                dateNow.mockRestore();
+            }
+        });
+
+        it('skips a delayed takeover when the original response became DELIVERED', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-delivered-before-takeover',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'DELIVERED',
+                        responseJobId: 'job-delayed-takeover',
+                        createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-delayed-takeover' }),
+            );
+
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('recovers a stale PENDING response from a replacement job', async () => {
+            const now = Date.parse('2026-08-11T20:00:00.000Z');
+            const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-stale',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-timed-out',
+                        createdAt: new Date(now - PENDING_RECOVERY_AFTER_MS),
+                    },
+                ],
+            });
+
+            try {
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-takeover' }),
+                );
+
+                expect(result.data).toMatchObject({
+                    skipped: true,
+                    escalated: true,
+                    reason: 'delivery_recovered',
+                });
+                expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+                expect(mockPostResponse).not.toHaveBeenCalled();
+            } finally {
+                dateNow.mockRestore();
+            }
         });
 
         it('drives progress to 100 so the skipped job is not left looking hung', async () => {

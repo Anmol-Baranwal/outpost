@@ -19,8 +19,9 @@
  *
  * The BOT Message starts in PENDING before any external post. Successful
  * delivery marks it DELIVERED; a durable escalation marks it ESCALATED. If an
- * attempt ends while it is still PENDING, a retry preserves the one-post rule
- * and pulls in a human instead of posting the response a second time.
+ * attempt ends while it is still PENDING, a retry schedules a delayed check.
+ * That check pulls in a human only if the response remains pending, preserving
+ * the one-post rule without racing the original handler.
  *
  * The pipeline itself handles Pathfinder retrieval, Claude generation,
  * confidence scoring, platform-specific formatting, and the groundedness gate —
@@ -80,15 +81,13 @@ function isPrimaryAiResponseConflict(error: unknown): boolean {
 }
 
 /**
- * A PENDING response owned by this job means an earlier attempt ended after
- * winning the one-response slot. A sufficiently old response may also be
- * recovered by a replacement/manual job. Fresh rows owned by another job are
- * left alone because that job may still be posting.
+ * Recover only after the claim is old enough that its original handler is no
+ * longer presumed to be posting. Job identity is deliberately irrelevant: a
+ * worker timeout can start a retry with the same job ID while the timed-out
+ * handler is still running. A fresh takeover could then escalate just before
+ * that original handler posts.
  */
-function shouldRecoverPendingResponse(
-    response: StoredAiResponse,
-    currentJobId: string,
-): boolean {
+function shouldRecoverPendingResponse(response: StoredAiResponse): boolean {
     if (
         response.responseKey !== PRIMARY_AI_RESPONSE_KEY ||
         response.responseState !== 'PENDING'
@@ -96,7 +95,6 @@ function shouldRecoverPendingResponse(
         return false;
     }
 
-    if (response.responseJobId === currentJobId) return true;
     if (!response.createdAt) return false;
     return Date.now() - response.createdAt.getTime() >= RESPONSE_RECOVERY_AFTER_MS;
 }
@@ -147,6 +145,58 @@ async function recoverPendingResponse(
             escalated: true,
             deliveryFailed: true,
             reason: 'delivery_recovered',
+        },
+    };
+}
+
+async function schedulePendingResponseRecovery(
+    payload: AiResponsePayload,
+    response: StoredAiResponse,
+    context: JobHandlerContext,
+): Promise<JobResult> {
+    if (!response.createdAt) {
+        return {
+            success: false,
+            error: `Ticket ${payload.ticketId}: pending AI response has no creation time for safe recovery`,
+        };
+    }
+
+    const runAt = new Date(response.createdAt.getTime() + RESPONSE_RECOVERY_AFTER_MS);
+    let recoveryJobId: string;
+    try {
+        recoveryJobId = await createJob(JobType.AI_RESPONSE, payload, { runAt });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+            success: false,
+            error: `Ticket ${payload.ticketId}: delayed AI response recovery could not be scheduled (${message})`,
+        };
+    }
+
+    // Transfer ownership to the delayed job. A later retry of the timed-out
+    // owner then sees a fresh claim owned by another job and cannot schedule a
+    // second takeover. The job itself is already durable if this mirror fails.
+    try {
+        await prisma.message.update({
+            where: { id: response.id },
+            data: { responseJobId: recoveryJobId },
+        });
+    } catch (error) {
+        console.error(
+            `[AI Response] Recovery was scheduled but ownership could not be transferred for ticket ${payload.ticketId}:`,
+            error instanceof Error ? error.message : String(error),
+        );
+    }
+
+    await context.reportProgress(100);
+    return {
+        success: true,
+        data: {
+            ticketId: payload.ticketId,
+            skipped: true,
+            recoveryScheduled: true,
+            recoveryJobId,
+            reason: 'delivery_recovery_scheduled',
         },
     };
 }
@@ -234,8 +284,15 @@ export async function handleAiResponse(
         (m: StoredAiResponse) => m.type === 'BOT' && m.isAiGenerated,
     ) as StoredAiResponse | undefined;
     if (priorAiResponse) {
-        if (shouldRecoverPendingResponse(priorAiResponse, context.jobId)) {
+        if (shouldRecoverPendingResponse(priorAiResponse)) {
             return recoverPendingResponse(ticketId, ticket.source, priorAiResponse, context);
+        }
+        if (
+            priorAiResponse.responseKey === PRIMARY_AI_RESPONSE_KEY &&
+            priorAiResponse.responseState === 'PENDING' &&
+            priorAiResponse.responseJobId === context.jobId
+        ) {
+            return schedulePendingResponseRecovery(payload, priorAiResponse, context);
         }
 
         console.log(
@@ -319,7 +376,7 @@ export async function handleAiResponse(
     // Why the response never reached the reporter, when it didn't. Set by the
     // post-back arm below and consumed by the escalation step. If this attempt
     // cannot durably enqueue that escalation, the PENDING response lets its
-    // retry finish the handoff without risking a second external post.
+    // retry schedule a safe delayed handoff without risking a second post.
     let deliveryFailure: string | null = null;
     // Set when the ESCALATION enqueue itself failed after a delivery failure —
     // the one case where the job must not report success (see the return below).
@@ -405,9 +462,9 @@ export async function handleAiResponse(
         // Store the formatted response on the ticket for bots to pick up.
         //
         // Non-fatal on purpose. The BOT Message row is already committed above,
-        // so aborting here would turn the retry into a human recovery rather than
-        // giving this attempt the chance to complete its intended delivery. Log
-        // it, remember it, and keep going so delivery can still happen.
+        // so aborting here would turn the retry into delayed human recovery
+        // rather than giving this attempt the chance to complete its intended
+        // delivery. Log it, remember it, and keep going so delivery can happen.
         let suggestedResponseError: string | null = null;
         try {
             await prisma.ticket.update({
@@ -577,7 +634,8 @@ export async function handleAiResponse(
         // cases nothing useful reached the reporter, so a human has to pick it up
         // regardless of what the score says. Delivery failure wins the reason slot
         // because it is the most actionable: the answer exists but is undelivered.
-        // A retry will escalate a response left PENDING, never post it again.
+        // A stale-recovery job will escalate a response left PENDING, never
+        // post it again.
         const escalationReason = deliveryFailure
             ? `AI response generated but not delivered to ${ticket.source} (${deliveryFailure}) — needs a human to answer the reporter`
             : pipelineResult.suppressed
@@ -636,9 +694,10 @@ export async function handleAiResponse(
 
     // An undelivered answer with no escalation behind it is the one outcome that
     // leaves the reporter silent and no human involved. Report failure so the
-    // queue retries it; that retry sees the PENDING response and durably hands the
-    // thread to a human without posting again. Other escalation-enqueue failures
-    // keep the historical success result because the response reached the reporter.
+    // queue retries it; that retry sees the PENDING response and schedules a
+    // delayed takeover, which hands the thread to a human only if the original
+    // attempt still has not completed. Other escalation-enqueue failures keep
+    // the historical success result because the response reached the reporter.
     if (deliveryFailure && escalationEnqueueError) {
         return {
             success: false,
