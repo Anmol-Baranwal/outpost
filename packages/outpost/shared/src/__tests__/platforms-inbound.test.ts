@@ -81,6 +81,7 @@ describe('InboundHandler', () => {
             const result = await handler.handle(msg);
 
             expect(result.isNewTicket).toBe(true);
+            expect(result.isOrphanedReply).toBe(false);
             expect(result.ticketId).toBe('ticket-1');
             expect(result.displayId).toMatch(/^TKT-/);
 
@@ -290,6 +291,7 @@ describe('InboundHandler', () => {
             const result = await handler.handle(msg);
 
             expect(result.isNewTicket).toBe(false);
+            expect(result.isOrphanedReply).toBe(false);
             expect(result.ticketId).toBe('ticket-existing');
             expect(result.displayId).toBe('TKT-EXISTIN');
 
@@ -453,8 +455,10 @@ describe('InboundHandler', () => {
             const msg = makeInboundMessage({ isThreadStart: false });
             const result = await handler.handle(msg);
 
-            // Falls back to creating a new ticket
+            // Falls back to creating a new ticket, flagged as an orphan so
+            // callers do not treat it as a conversation Outpost opened.
             expect(result.isNewTicket).toBe(true);
+            expect(result.isOrphanedReply).toBe(true);
             expect(prisma.ticket.create).toHaveBeenCalledTimes(1);
         });
     });
@@ -484,6 +488,10 @@ describe('InboundHandler', () => {
             expect(createJob).not.toHaveBeenCalled();
             expect(result.aiJobEnqueued).toBe(false);
             expect(result.isNewTicket).toBe(true);
+            // isNewTicket cannot distinguish this from a real thread start, so
+            // the orphan flag is what platform handlers gate their ack posts on
+            // (see apps/teams-bot/src/handlers/message.ts).
+            expect(result.isOrphanedReply).toBe(true);
             expect(result.messageId).toBe('msg-1');
         });
 

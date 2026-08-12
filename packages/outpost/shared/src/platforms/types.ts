@@ -161,6 +161,19 @@ export interface InboundResult {
     displayId: string;
     /** Whether a new ticket was created (vs reply appended to existing) */
     isNewTicket: boolean;
+    /**
+     * Whether this ticket was created by the orphaned-reply fallback — a
+     * mid-thread message arrived, no ticket matched its thread, and a ticket
+     * was filed around it so the customer's words are not dropped.
+     *
+     * `isNewTicket` is still `true` in that case (a ticket genuinely was
+     * created), so consumers cannot use it to tell a real thread start from an
+     * orphan. Anything that would be wrong to do in a conversation Outpost was
+     * never part of — posting an acknowledgment, claiming the thread by storing
+     * a conversation reference for proactive messaging — must check this flag
+     * and skip when it is `true`.
+     */
+    isOrphanedReply: boolean;
     /** Whether an AI_RESPONSE job was enqueued */
     aiJobEnqueued: boolean;
     /** The message record ID that was created, or null if no message was created */

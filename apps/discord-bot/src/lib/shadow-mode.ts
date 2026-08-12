@@ -1,6 +1,6 @@
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { truncate } from '@copilotkit/outpost/shared';
+import { TicketSource, buildTicketSourceId, truncate } from '@copilotkit/outpost/shared';
 import type { ThreadChannel, Message } from 'discord.js';
 
 /**
@@ -64,6 +64,13 @@ export async function handleShadowThreadCreate(
     authorId: string,
 ): Promise<string | null> {
     try {
+        // Build the lookup key through the SAME helper findTicketByThreadId
+        // reads with, so the stored key and the searched-for key cannot drift
+        // apart. null means "this thread is not addressable" (no thread ID) —
+        // the ticket is still created so the report is not dropped, but no later
+        // reply will match it.
+        const sourceId = buildTicketSourceId(TicketSource.DISCORD, thread.id);
+
         const ticket = await prisma.ticket.create({
             data: {
                 displayId,
@@ -73,7 +80,7 @@ export async function handleShadowThreadCreate(
                 priority: 'MEDIUM',
                 type: 'QUESTION',
                 source: 'DISCORD',
-                sourceId: thread.id,
+                sourceId,
                 sourceUrl: thread.url,
                 channel: thread.parentId ?? undefined,
             },

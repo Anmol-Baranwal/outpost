@@ -6,9 +6,17 @@ import { mockPrisma, mockQueue } from './helpers/mocks.js';
 vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 vi.mock('@copilotkit/outpost/queue', () => mockQueue());
 
-vi.mock('@copilotkit/outpost/shared', () => ({
-    truncate: vi.fn((str: string, _len: number) => str),
-}));
+// truncate is stubbed to a pass-through so assertions can compare exact
+// strings, but buildTicketSourceId/TicketSource stay REAL: the point of the
+// sourceId assertions below is that shadow mode derives the key with the shared
+// helper, which a stub would hide.
+vi.mock('@copilotkit/outpost/shared', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@copilotkit/outpost/shared')>();
+    return {
+        ...actual,
+        truncate: vi.fn((str: string, _len: number) => str),
+    };
+});
 
 import {
     isShadowMode,
@@ -18,6 +26,7 @@ import {
 } from '../lib/shadow-mode.js';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob, JobType } from '@copilotkit/outpost/queue';
+import { TicketSource, buildTicketSourceId } from '@copilotkit/outpost/shared';
 
 function makeThread(overrides: Record<string, unknown> = {}) {
     return {
@@ -128,6 +137,49 @@ describe('shadow-mode', () => {
                     status: 'OPEN',
                 }),
             });
+        });
+
+        // The writer must derive sourceId with buildTicketSourceId, not inline
+        // thread.id: findTicketByThreadId reads through that helper, so an
+        // inlined write silently desynchronizes the moment the derivation
+        // changes (exactly the null-vs-'' bug this helper was introduced for).
+        it('derives sourceId with buildTicketSourceId, not an inlined thread.id', async () => {
+            const thread = makeThread({ id: 'thread-999' });
+            await handleShadowThreadCreate(
+                thread,
+                'TKT-0001',
+                'My question',
+                'TestUser#1234',
+                'user-456',
+            );
+
+            const { data } = vi.mocked(prisma.ticket.create).mock.calls[0]![0] as {
+                data: { sourceId: string | null };
+            };
+            expect(data.sourceId).toBe(
+                buildTicketSourceId(TicketSource.DISCORD, 'thread-999'),
+            );
+            expect(data.sourceId).toBe('thread-999');
+        });
+
+        it('stores a null sourceId for an unaddressable thread', async () => {
+            // No thread key means no reply can ever find this ticket. We still
+            // create it (never drop the report) but must store the helper's null
+            // rather than an empty-string placeholder a reader would search for.
+            const thread = makeThread({ id: '' });
+            const result = await handleShadowThreadCreate(
+                thread,
+                'TKT-0001',
+                'My question',
+                'TestUser#1234',
+                'user-456',
+            );
+
+            expect(result).toBe('ticket-internal-id');
+            const { data } = vi.mocked(prisma.ticket.create).mock.calls[0]![0] as {
+                data: { sourceId: string | null };
+            };
+            expect(data.sourceId).toBeNull();
         });
 
         it('creates a message record for the content', async () => {

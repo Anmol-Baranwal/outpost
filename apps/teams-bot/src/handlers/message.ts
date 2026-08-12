@@ -63,7 +63,15 @@ export async function handleMessage(context: TurnContext): Promise<void> {
         // Delegate to the shared inbound handler
         const result = await inboundHandler.handle(message);
 
-        if (result.isNewTicket) {
+        // An orphaned reply also reports isNewTicket: true — a ticket really was
+        // created — but it is NOT a conversation Outpost opened. Teams sets
+        // isThreadStart from `!activity.replyToId`, so a bare mid-conversation
+        // message ("thanks, that worked!") whose thread we have no ticket for
+        // lands here. Acking it would post "🎫 We've got your question" into a
+        // thread we were never part of, and storing the conversationReference
+        // would claim that thread for proactive messaging. Both are skipped; the
+        // ticket still exists for a human to pick up from the dashboard.
+        if (result.isNewTicket && !result.isOrphanedReply) {
             // Store Teams-specific ConversationReference for proactive messaging
             const conversationReference = {
                 serviceUrl: activity.serviceUrl ?? 'https://smba.trafficmanager.net/teams/',
@@ -77,7 +85,20 @@ export async function handleMessage(context: TurnContext): Promise<void> {
                 },
             });
 
-            // New ticket: post acknowledgment card
+            // New ticket: post acknowledgment card.
+            //
+            // Teams is deliberately the only platform that still acknowledges.
+            // Discord, Slack and the GitHub App dropped their ack posts because
+            // those were plain text that printed the internal ticket displayId
+            // into a public channel and gave the reporter nothing to act on.
+            // Neither objection applies here: buildTicketCreatedCard carries no
+            // displayId (see apps/teams-bot/src/cards/ticket-created-card.ts,
+            // asserted by cards.test.ts) and an Adaptive Card is a richer surface
+            // than a plain text post — it tells the reporter which of the two
+            // things is about to happen, an AI answer or a human follow-up, off
+            // result.aiJobEnqueued. Known divergence, not an oversight; if the
+            // card ever starts rendering an identifier, drop this the way the
+            // other platforms did.
             const card = buildTicketCreatedCard({
                 title: truncate(message.content, 200),
             });
@@ -90,6 +111,10 @@ export async function handleMessage(context: TurnContext): Promise<void> {
 
             console.log(
                 `[Teams Bot] Created ticket ${result.displayId} for conversation ${message.threadId}`,
+            );
+        } else if (result.isOrphanedReply) {
+            console.log(
+                `[Teams Bot] Untracked mid-conversation message from ${message.platformUsername} filed as ticket ${result.displayId} (no ack card, no conversation reference)`,
             );
         } else {
             console.log(
