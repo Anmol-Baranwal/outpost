@@ -29,14 +29,31 @@ $PRISMA migrate deploy --schema "$SCHEMA"
 # the database, and one running against a schema it does not match would write
 # wrong statuses to Linear. Failing the deploy keeps the previous replica serving.
 echo "Checking for schema drift..."
-if ! $PRISMA migrate diff \
+set +e
+$PRISMA migrate diff \
     --from-schema-datasource "$SCHEMA" \
     --to-schema-datamodel "$SCHEMA" \
-    --exit-code; then
+    --exit-code
+DRIFT_STATUS=$?
+set -e
+
+# --exit-code has three outcomes: 0 no difference, 2 a difference, and anything
+# else the CLI itself failing (database unreachable, bad DATABASE_URL, schema
+# engine did not start). Those are different problems and must not be reported
+# with the same message — a script whose whole purpose is naming the real cause
+# should not send the on-call hunting for drift that was never detected.
+if [ "$DRIFT_STATUS" -eq 2 ]; then
     echo ""
     echo "FATAL: the database does not match schema.prisma (see the diff above)."
     echo "A migration may be recorded as applied without having run."
     echo "Compare models in schema.prisma against the live tables before redeploying."
+    exit 1
+elif [ "$DRIFT_STATUS" -ne 0 ]; then
+    echo ""
+    echo "FATAL: could not check for schema drift — prisma migrate diff exited $DRIFT_STATUS."
+    echo "This is a tool or connectivity failure, NOT confirmed drift: the database"
+    echo "was never successfully compared. Check DATABASE_URL and that the database"
+    echo "is reachable from this container, then redeploy."
     exit 1
 fi
 
