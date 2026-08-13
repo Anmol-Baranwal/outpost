@@ -225,7 +225,13 @@ jobs:
 
                   check() { # label expect_exit expect_started env...
                       label=$1 want_rc=$2 want_started=$3; shift 3
-                      out=$(env OUTPOST_PRISMA_CMD="$stub" "$@" sh "$script" 2>&1); rc=$?
+                      # set +e around the call: half these cases are SUPPOSED to exit
+                      # non-zero, and this step runs under `bash -e`, so the assignment
+                      # would abort the whole step on the first expected failure.
+                      set +e
+                      out=$(env OUTPOST_PRISMA_CMD="$stub" "$@" sh "$script" 2>&1)
+                      rc=$?
+                      set -e
                       case "$out" in *STARTED*) got=yes ;; *) got=no ;; esac
                       if [ "$rc" != "$want_rc" ] || [ "$got" != "$want_started" ]; then
                           echo "FATAL: $label -> exit=$rc started=$got (wanted exit=$want_rc started=$want_started)"
@@ -251,10 +257,20 @@ jobs:
                   check "timeout=0 means unbounded"          0 yes DIFF_RC=0 OUTPOST_STARTUP_STEP_TIMEOUT=0
 
                   # Diagnostics must reach stderr, and an overridden boot must not page.
-                  env OUTPOST_PRISMA_CMD="$stub" DIFF_RC=2 sh "$script" 2>/dev/null | grep -q FATAL \
-                      && { echo "FATAL: diagnostics leaked to stdout."; exit 1; }
-                  env OUTPOST_PRISMA_CMD="$stub" DIFF_RC=1 OUTPOST_ALLOW_SCHEMA_DRIFT=1 sh "$script" 2>&1 >/dev/null | grep -q FATAL \
-                      && { echo "FATAL: an overridden boot emitted FATAL and would page."; exit 1; }
+                  set +e
+                  env OUTPOST_PRISMA_CMD="$stub" DIFF_RC=2 sh "$script" 2>/dev/null | grep -q FATAL
+                  leaked=$?
+                  env OUTPOST_PRISMA_CMD="$stub" DIFF_RC=1 OUTPOST_ALLOW_SCHEMA_DRIFT=1 sh "$script" 2>&1 >/dev/null | grep -q FATAL
+                  paged=$?
+                  set -e
+                  if [ "$leaked" -eq 0 ]; then
+                      echo "FATAL: diagnostics leaked to stdout."
+                      exit 1
+                  fi
+                  if [ "$paged" -eq 0 ]; then
+                      echo "FATAL: an overridden boot emitted FATAL and would page."
+                      exit 1
+                  fi
                   echo "Startup guard behaves correctly across all branches."
 
             - name: Verify the pinned Prisma CLI matches the lockfile
