@@ -190,8 +190,12 @@ jobs:
                   fi
                   # Any non-zero would also cover "database unreachable", which would pass
                   # this test without the assertion ever firing. Require our own message.
+                  # Match a stable fragment of the migration's own RAISE, not the whole
+                  # sentence: the previous run failed here because the assertion text was
+                  # reworded and this pattern was not, so a correctly-firing guard read as
+                  # "failed for the wrong reason".
                   case "$deploy_out" in
-                      *"SystemConfig exists with unexpected columns"*) ;;
+                      *"Repairing it needs an ALTER"*) ;;
                       *)
                           echo "FATAL: deploy failed, but not via the migration's own guard."
                           exit 1
