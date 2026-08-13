@@ -15,6 +15,13 @@
 -- IF NOT EXISTS is deliberate: environments whose 0001_init did create the
 -- table must no-op rather than fail. Column definitions match the SystemConfig
 -- block in 0001_init exactly.
+--
+-- It repairs exactly one state — table absent. A SystemConfig that exists with
+-- the WRONG columns is not repaired: this no-ops, gets recorded as applied, and
+-- leaves the same "recorded but not effective" gap it was written to close. That
+-- state is caught at deploy time by the schema-drift guard in
+-- apps/worker/start.sh, which reports the missing column rather than the missing
+-- table; repairing it needs an ALTER, not this file.
 CREATE TABLE IF NOT EXISTS "SystemConfig" (
     "key" TEXT NOT NULL,
     "value" TEXT NOT NULL,
