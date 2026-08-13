@@ -71,7 +71,14 @@ jobs:
                   PGPASSWORD: ci
               run: |
                   set -e
-                  pnpm --filter @copilotkit/outpost exec prisma validate --schema db/prisma/schema.prisma
+                  # Invoke the CLI directly, the way apps/worker/start.sh does. `pnpm exec`
+                  # remaps ANY non-zero child status to 1 (ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL),
+                  # which destroys the 0/2/other contract these assertions depend on — the
+                  # first run of this job proved it, reporting real drift (exit 2) as a
+                  # tool failure (exit 1).
+                  PRISMA="node $(cd packages/outpost && node -p "require.resolve('prisma/build/index.js')")"
+                  echo "using $PRISMA"
+                  $PRISMA validate --schema packages/outpost/db/prisma/schema.prisma
                   test -f packages/outpost/db/prisma/migrations/migration_lock.toml
 
                   # Apply every migration to a real, empty database, then ask whether the
@@ -86,10 +93,10 @@ jobs:
                   # failures in August 2026. Running the same `migrate diff` the worker's
                   # start.sh uses closes the loop: if the migrations cannot reproduce
                   # schema.prisma from scratch, this fails here instead of at 3am.
-                  pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
-                  pnpm --filter @copilotkit/outpost exec prisma migrate diff \
-                      --from-schema-datasource db/prisma/schema.prisma \
-                      --to-schema-datamodel db/prisma/schema.prisma \
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+                  $PRISMA migrate diff \
+                      --from-schema-datasource packages/outpost/db/prisma/schema.prisma \
+                      --to-schema-datamodel packages/outpost/db/prisma/schema.prisma \
                       --exit-code
                   echo "Migrations reproduce schema.prisma exactly."
 
@@ -101,8 +108,18 @@ jobs:
                   # correctly-shaped table stays.
                   psql -h 127.0.0.1 -U ci -d ci -q -c \
                       "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
-                  pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
                   echo "Repair migration re-runs cleanly against an already-correct table."
+
+                  # Positive control on the thing every assertion below rests on: that
+                  # this invocation style returns the child's exit code unchanged.
+                  set +e
+                  sh -c 'exit 2'; propagated=$?
+                  set -e
+                  if [ "$propagated" -ne 2 ]; then
+                      echo "FATAL: exit codes are not propagating (got $propagated for a deliberate 2)."
+                      exit 1
+                  fi
 
             - name: Verify the SystemConfig repair path
               env:
@@ -110,6 +127,7 @@ jobs:
                   PGPASSWORD: ci
               run: |
                   set -e
+                  PRISMA="node $(cd packages/outpost && node -p "require.resolve('prisma/build/index.js')")"
                   # Reconstruct the broken production state and prove the repair fixes it.
                   # The step above only covers a fresh database, which was never the broken
                   # case — production had 0001_init RECORDED AS APPLIED while the table it
@@ -127,9 +145,9 @@ jobs:
                   # as proof the guard works, having never compared anything. start.sh
                   # treats that distinction as load-bearing; the test for it must too.
                   set +e
-                  pnpm --filter @copilotkit/outpost exec prisma migrate diff \
-                      --from-schema-datasource db/prisma/schema.prisma \
-                      --to-schema-datamodel db/prisma/schema.prisma \
+                  $PRISMA migrate diff \
+                      --from-schema-datasource packages/outpost/db/prisma/schema.prisma \
+                      --to-schema-datamodel packages/outpost/db/prisma/schema.prisma \
                       --exit-code
                   drift_status=$?
                   set -e
@@ -144,10 +162,10 @@ jobs:
                   echo "Drift guard detects the missing table (exit 2)."
 
                   # ...and the repair migration must fix it.
-                  pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
-                  pnpm --filter @copilotkit/outpost exec prisma migrate diff \
-                      --from-schema-datasource db/prisma/schema.prisma \
-                      --to-schema-datamodel db/prisma/schema.prisma \
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+                  $PRISMA migrate diff \
+                      --from-schema-datasource packages/outpost/db/prisma/schema.prisma \
+                      --to-schema-datamodel packages/outpost/db/prisma/schema.prisma \
                       --exit-code
                   echo "Repair migration restores SystemConfig."
 
@@ -162,7 +180,7 @@ jobs:
                   psql -h 127.0.0.1 -U ci -d ci -c \
                       "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
                   set +e
-                  deploy_out=$(pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma 2>&1)
+                  deploy_out=$($PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma 2>&1)
                   deploy_status=$?
                   set -e
                   echo "$deploy_out"
@@ -186,7 +204,7 @@ jobs:
                   # and Test — so the first DB-touching test added to this job would
                   # otherwise inherit a knowingly-broken schema.
                   psql -h 127.0.0.1 -U ci -d ci -q -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
-                  pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
                   echo "CI database restored."
 
             - name: Verify the worker startup guard
@@ -243,7 +261,7 @@ jobs:
                   # report false drift and block every deploy with a message pointing at
                   # the database. Keep the Dockerfile pin and the lockfile in lockstep.
                   set -o pipefail
-                  resolved=$(pnpm --filter @copilotkit/outpost exec prisma --version | sed -n 's/^prisma *: *\([0-9][^ ]*\).*/\1/p' | head -1)
+                  resolved=$(node "$(cd packages/outpost && node -p "require.resolve('prisma/build/index.js')")" --version | sed -n 's/^prisma *: *\([0-9][^ ]*\).*/\1/p' | head -1)
                   if [ -z "$resolved" ]; then
                       echo "FATAL: could not parse a version from 'prisma --version'; its output format may have changed."
                       exit 1
