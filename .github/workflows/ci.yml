@@ -67,7 +67,8 @@ jobs:
 
             - name: Verify Prisma schema and migrations
               env:
-                  DATABASE_URL: 'postgresql://ci:ci@localhost:5432/ci'
+                  DATABASE_URL: 'postgresql://ci:ci@127.0.0.1:5432/ci'
+                  PGPASSWORD: ci
               run: |
                   set -e
                   pnpm --filter @copilotkit/outpost exec prisma validate --schema db/prisma/schema.prisma
@@ -98,14 +99,14 @@ jobs:
                   # blind spot this whole job exists to close. To actually exercise
                   # CREATE TABLE IF NOT EXISTS, the row has to be removed while the
                   # correctly-shaped table stays.
-                  psql -h localhost -U ci -d ci -q -c \
+                  psql -h 127.0.0.1 -U ci -d ci -q -c \
                       "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
                   pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
                   echo "Repair migration re-runs cleanly against an already-correct table."
 
             - name: Verify the SystemConfig repair path
               env:
-                  DATABASE_URL: 'postgresql://ci:ci@localhost:5432/ci'
+                  DATABASE_URL: 'postgresql://ci:ci@127.0.0.1:5432/ci'
                   PGPASSWORD: ci
               run: |
                   set -e
@@ -114,8 +115,8 @@ jobs:
                   # case — production had 0001_init RECORDED AS APPLIED while the table it
                   # declares was absent, and that is the one scenario this migration exists
                   # for. Without this, nothing tests it.
-                  psql -h localhost -U ci -d ci -c 'DROP TABLE IF EXISTS "SystemConfig";'
-                  psql -h localhost -U ci -d ci -c \
+                  psql -h 127.0.0.1 -U ci -d ci -c 'DROP TABLE IF EXISTS "SystemConfig";'
+                  psql -h 127.0.0.1 -U ci -d ci -c \
                       "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
 
                   # The database now looks exactly like production did on 2026-08-07:
@@ -153,12 +154,12 @@ jobs:
                   # A table present but mis-shaped must FAIL the migration loudly rather
                   # than no-op and be recorded as applied — the "recorded but not
                   # effective" state that caused the incident.
-                  psql -h localhost -U ci -d ci -c 'DROP TABLE "SystemConfig";'
+                  psql -h 127.0.0.1 -U ci -d ci -c 'DROP TABLE "SystemConfig";'
                   # Wrong TYPE, not just a missing column name — the assertion must check
                   # shape, since a table with the right three names but wrong types is
                   # still a database that does not match schema.prisma.
-                  psql -h localhost -U ci -d ci -c 'CREATE TABLE "SystemConfig" ("key" TEXT PRIMARY KEY, "value" INTEGER NOT NULL, "updatedAt" TIMESTAMP(3) NOT NULL);'
-                  psql -h localhost -U ci -d ci -c \
+                  psql -h 127.0.0.1 -U ci -d ci -c 'CREATE TABLE "SystemConfig" ("key" TEXT PRIMARY KEY, "value" INTEGER NOT NULL, "updatedAt" TIMESTAMP(3) NOT NULL);'
+                  psql -h 127.0.0.1 -U ci -d ci -c \
                       "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
                   set +e
                   deploy_out=$(pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma 2>&1)
@@ -184,7 +185,7 @@ jobs:
                   # (mis-shaped table plus a failed P3009 row), and they run before Build
                   # and Test — so the first DB-touching test added to this job would
                   # otherwise inherit a knowingly-broken schema.
-                  psql -h localhost -U ci -d ci -q -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+                  psql -h 127.0.0.1 -U ci -d ci -q -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
                   pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
                   echo "CI database restored."
 
