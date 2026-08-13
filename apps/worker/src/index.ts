@@ -80,6 +80,53 @@ healthServer.listen(port, () => {
     console.log(`[Worker] Health server listening on port ${port} (boot: ${boot.phase})`);
 });
 
+// ─── Graceful Shutdown ────────────────────────────────────────────────────
+
+// Registered BEFORE the boot await, not after it. Boot is the slowest thing this
+// process does and can now sit in `starting` or `failed` indefinitely, which is
+// exactly when Railway tears a bad deploy down — and a SIGTERM arriving while
+// module evaluation is still suspended would find no handler and kill the
+// process outright. `worker`/`scheduler` are still null in that window, so the
+// optional calls below no-op and this reduces to closing the port and dropping
+// the Prisma connection.
+let shuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[Worker] Received ${signal} in boot phase '${boot.phase}', shutting down...`);
+
+    // Nothing below may outlive Railway's stop grace period. Signalled mid-boot,
+    // $disconnect() waits on a pool that never filled, which turns a clean stop
+    // into a SIGKILL. unref'd so it never keeps an otherwise-idle process up.
+    const watchdog = setTimeout(() => {
+        console.error('[Worker] Shutdown did not finish in 10s, exiting anyway');
+        process.exit(1);
+    }, 10_000);
+    watchdog.unref();
+
+    try {
+        scheduler?.stop();
+        await worker?.stop();
+        healthServer.close();
+        await prisma.$disconnect();
+        console.log('[Worker] Shutdown complete');
+        process.exit(0);
+    } catch (error) {
+        // These reject in practice: a SIGTERM during boot leaves $disconnect()
+        // tearing down a connection that was never established (P2024). Without
+        // this the rejection is unhandled and the process dies to a stack trace
+        // mid-shutdown instead of reporting a failed stop.
+        console.error('[Worker] Shutdown failed:', error);
+        process.exit(1);
+    }
+}
+
+// `void` because an unhandled rejection here would be the very failure the catch
+// above exists to prevent.
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
 // ─── Boot ─────────────────────────────────────────────────────────────────
 
 // Everything that can throw at boot lives in here: buildSyncEngine's three
@@ -160,18 +207,3 @@ try {
             `check the schema-drift guard in apps/worker/start.sh.`,
     );
 }
-
-// ─── Graceful Shutdown ────────────────────────────────────────────────────
-
-async function shutdown(signal: string): Promise<void> {
-    console.log(`[Worker] Received ${signal}, shutting down...`);
-    scheduler?.stop();
-    await worker?.stop();
-    healthServer.close();
-    await prisma.$disconnect();
-    console.log('[Worker] Shutdown complete');
-    process.exit(0);
-}
-
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
