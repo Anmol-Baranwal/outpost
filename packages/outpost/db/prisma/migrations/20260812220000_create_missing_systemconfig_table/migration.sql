@@ -10,7 +10,7 @@
 -- --to-schema-datamodel` against that database reported "No difference detected".
 -- That compares indexes, constraints and column types, not just tables — so
 -- SystemConfig really was the only difference, and the rest of 0001_init (which
--- creates 45 indexes and 12 foreign keys AFTER this table) did land. Staging was
+-- creates 27 indexes and 12 foreign keys AFTER this table) did land. Staging was
 -- not checked; its Postgres has no public URL, and the drift guard in
 -- apps/worker/start.sh is what will report the answer on its next deploy.
 --
@@ -53,15 +53,41 @@ CREATE TABLE IF NOT EXISTS "SystemConfig" (
 -- services and demands a human. That is deliberately louder than the alternative:
 -- a stopped deploy is recoverable, a silently-ineffective one cost nine days.
 DO $$
+DECLARE
+    rel oid := to_regclass(format('%I.%I', current_schema(), 'SystemConfig'));
 BEGIN
-    IF (
-        SELECT count(*)
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'SystemConfig'
-          AND column_name IN ('key', 'value', 'updatedAt')
-    ) <> 3 THEN
+    -- pg_catalog, not information_schema: the latter only exposes columns the
+    -- current role holds some privilege on. This table was created directly in
+    -- production, possibly as another role, so an information_schema count could
+    -- return 0 against a perfectly correct table and hard-fail the migration into
+    -- P3009 — blocking both services over a database that was fine.
+    --
+    -- current_schema(), not a hardcoded 'public': the CREATE above is unqualified
+    -- and resolves through search_path, so an environment using ?schema= would
+    -- create the table in one schema while this inspected another.
+    IF rel IS NULL THEN
         RAISE EXCEPTION
-            'SystemConfig exists with unexpected columns; repairing it needs an ALTER, not this migration. Compare the live table against the SystemConfig model in schema.prisma.';
+            'SystemConfig does not exist in schema % after CREATE TABLE IF NOT EXISTS; the migration could not repair it.', current_schema();
+    END IF;
+
+    -- Shape, not just names. Three correctly-named columns of the wrong type, or
+    -- nullable where the schema says NOT NULL, or an extra column, or a missing
+    -- primary key (Prisma's upsert on @id key needs it) all leave a database that
+    -- does not match schema.prisma while CREATE ... IF NOT EXISTS quietly no-ops.
+    -- Letting any of those record as applied is the "recorded but not effective"
+    -- state this migration exists to eliminate, reproduced one level up.
+    IF NOT (
+        (SELECT count(*) FROM pg_attribute
+          WHERE attrelid = rel AND attnum > 0 AND NOT attisdropped) = 3
+        AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = rel
+                     AND attname = 'key' AND atttypid = 'text'::regtype AND attnotnull)
+        AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = rel
+                     AND attname = 'value' AND atttypid = 'text'::regtype AND attnotnull)
+        AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = rel
+                     AND attname = 'updatedAt' AND atttypid = 'timestamp'::regtype AND attnotnull)
+        AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = rel AND contype = 'p')
+    ) THEN
+        RAISE EXCEPTION
+            'SystemConfig exists but does not match schema.prisma (columns, types, nullability, or primary key). Repairing it needs an ALTER, not this migration. Compare the live table against the SystemConfig model in schema.prisma.';
     END IF;
 END $$;
