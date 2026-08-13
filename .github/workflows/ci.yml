@@ -23,6 +23,27 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 15
 
+        # A real database, because the incident this workflow now guards against was
+        # invisible without one: `prisma validate` parses the schema and `migrate
+        # deploy` only consults the _prisma_migrations bookkeeping table, so a
+        # migration recorded as applied but never executed passes both. Production
+        # carried exactly that state for months and it only surfaced as nine days of
+        # "1/1 replicas never became healthy" in August 2026.
+        services:
+            postgres:
+                image: postgres:16-alpine
+                env:
+                    POSTGRES_USER: ci
+                    POSTGRES_PASSWORD: ci
+                    POSTGRES_DB: ci
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd "pg_isready -U ci"
+                    --health-interval 5s
+                    --health-timeout 5s
+                    --health-retries 10
+
         steps:
             - name: Checkout
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,10 +69,102 @@ jobs:
               env:
                   DATABASE_URL: 'postgresql://ci:ci@localhost:5432/ci'
               run: |
+                  set -e
                   pnpm --filter @copilotkit/outpost exec prisma validate --schema db/prisma/schema.prisma
-                  # Ensure migration directory exists with at least one migration
                   test -f packages/outpost/db/prisma/migrations/migration_lock.toml
-                  test -d packages/outpost/db/prisma/migrations/0001_init
+
+                  # Apply every migration to a real, empty database, then ask whether the
+                  # resulting schema actually matches schema.prisma.
+                  #
+                  # This is the check that was missing. `migrate deploy` reports success
+                  # from the _prisma_migrations table alone — it never inspects the schema
+                  # — so a migration recorded as applied but never effective is invisible
+                  # to it, and `prisma validate` only parses the file. Production ran in
+                  # exactly that state (0001_init recorded as applied, its SystemConfig
+                  # table absent) until it surfaced as nine days of undiagnosable deploy
+                  # failures in August 2026. Running the same `migrate diff` the worker's
+                  # start.sh uses closes the loop: if the migrations cannot reproduce
+                  # schema.prisma from scratch, this fails here instead of at 3am.
+                  pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
+                  pnpm --filter @copilotkit/outpost exec prisma migrate diff \
+                      --from-schema-datasource db/prisma/schema.prisma \
+                      --to-schema-datamodel db/prisma/schema.prisma \
+                      --exit-code
+                  echo "Migrations reproduce schema.prisma exactly."
+
+                  # Applying twice must be a no-op. The repair migration uses
+                  # CREATE TABLE IF NOT EXISTS precisely so environments that already have
+                  # the table do not fail, and this is what proves it.
+                  pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
+                  echo "Re-applying migrations is idempotent."
+
+            - name: Verify the SystemConfig repair path
+              env:
+                  DATABASE_URL: 'postgresql://ci:ci@localhost:5432/ci'
+                  PGPASSWORD: ci
+              run: |
+                  set -e
+                  # Reconstruct the broken production state and prove the repair fixes it.
+                  # The step above only covers a fresh database, which was never the broken
+                  # case — production had 0001_init RECORDED AS APPLIED while the table it
+                  # declares was absent, and that is the one scenario this migration exists
+                  # for. Without this, nothing tests it.
+                  psql -h localhost -U ci -d ci -c 'DROP TABLE IF EXISTS "SystemConfig";'
+                  psql -h localhost -U ci -d ci -c \
+                      "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
+
+                  # The database now looks exactly like production did on 2026-08-07:
+                  # migrations recorded, table missing. The guard must see it...
+                  if pnpm --filter @copilotkit/outpost exec prisma migrate diff \
+                      --from-schema-datasource db/prisma/schema.prisma \
+                      --to-schema-datamodel db/prisma/schema.prisma \
+                      --exit-code; then
+                      echo "FATAL: drift guard did not detect a missing SystemConfig table."
+                      echo "That is the exact blind spot this PR exists to close."
+                      exit 1
+                  fi
+                  echo "Drift guard detects the missing table."
+
+                  # ...and the repair migration must fix it.
+                  pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
+                  pnpm --filter @copilotkit/outpost exec prisma migrate diff \
+                      --from-schema-datasource db/prisma/schema.prisma \
+                      --to-schema-datamodel db/prisma/schema.prisma \
+                      --exit-code
+                  echo "Repair migration restores SystemConfig."
+
+                  # A table present but mis-shaped must FAIL the migration loudly rather
+                  # than no-op and be recorded as applied — the "recorded but not
+                  # effective" state that caused the incident.
+                  psql -h localhost -U ci -d ci -c 'DROP TABLE "SystemConfig";'
+                  psql -h localhost -U ci -d ci -c 'CREATE TABLE "SystemConfig" ("key" TEXT PRIMARY KEY);'
+                  psql -h localhost -U ci -d ci -c \
+                      "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
+                  if pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma; then
+                      echo "FATAL: migration reported success against a mis-shaped SystemConfig."
+                      exit 1
+                  fi
+                  echo "Migration fails loudly on a mis-shaped SystemConfig."
+
+            - name: Verify the pinned Prisma CLI matches the lockfile
+              run: |
+                  set -e
+                  # apps/worker/start.sh gates the worker's boot on this CLI's `migrate
+                  # diff` exit code, so a CLI that has drifted from @prisma/client can
+                  # report false drift and block every deploy with a message pointing at
+                  # the database. Keep the Dockerfile pin and the lockfile in lockstep.
+                  resolved=$(pnpm --filter @copilotkit/outpost exec prisma --version | sed -n 's/^prisma *: *\([0-9][^ ]*\).*/\1/p' | head -1)
+                  pinned=$(sed -n 's/.*--no-save prisma@\([0-9][^ ]*\).*/\1/p' apps/worker/Dockerfile | head -1)
+                  echo "lockfile resolves prisma=$resolved; apps/worker/Dockerfile pins $pinned"
+                  if [ -z "$pinned" ]; then
+                      echo "FATAL: could not read the Prisma pin out of apps/worker/Dockerfile."
+                      exit 1
+                  fi
+                  if [ "$resolved" != "$pinned" ]; then
+                      echo "FATAL: apps/worker/Dockerfile pins prisma@$pinned but the lockfile resolves $resolved."
+                      echo "Update the Dockerfile pin and the lockfile together."
+                      exit 1
+                  fi
 
             - name: Build
               run: pnpm build
