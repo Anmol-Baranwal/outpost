@@ -12,7 +12,10 @@
  * Replies are detected first by `MailboxHash` (an exact ticket reference) and
  * then by the RFC 5322 threading headers `In-Reply-To` / `References`, which is
  * the only signal available when the customer's mail client replies to a plain
- * From address and drops the plus-address.
+ * From address and drops the plus-address. Those headers are attacker-supplied,
+ * so that second path additionally requires the sender to already be a
+ * participant on the ticket it resolves to; `MailboxHash` is a token we mint and
+ * needs no such check.
  */
 import crypto from 'node:crypto';
 import { NextResponse } from 'next/server';
@@ -29,11 +32,25 @@ import {
     extractName,
     extractReplyMessageIds,
     hasReplyHeaders,
+    isTicketParticipant,
 } from './utils';
 import type { PostmarkInboundPayload } from './utils';
 
 /** Ticket fields the reply paths need. */
 type ReplyTargetTicket = { id: string; displayId: string; status: string };
+
+/**
+ * Everything the header reply path needs: the append target plus the
+ * participant set it is authorized against.
+ */
+const REPLY_TARGET_SELECT = {
+    id: true,
+    displayId: true,
+    status: true,
+    user: { select: { email: true } },
+    account: { select: { domain: true } },
+    messages: { select: { author: true } },
+} as const;
 
 /**
  * Resolve a reply to the ticket that already holds its conversation.
@@ -43,23 +60,39 @@ type ReplyTargetTicket = { id: string; displayId: string; status: string };
  * appended message). A reply can name either, so both are checked. Outbound
  * Message-IDs are never persisted, which is why `References` (the full chain,
  * including the customer's own opening ID) matters as much as `In-Reply-To`.
+ *
+ * `In-Reply-To` / `References` are supplied by the sender, and a Message-ID is
+ * *known* to everyone who was ever on the thread — including a CC. Naming a
+ * valid ID is therefore not evidence of belonging to the ticket, so every
+ * candidate must additionally pass `isTicketParticipant(senderEmail, …)`. A
+ * candidate that resolves but fails that check is treated as unresolved, which
+ * sends the mail down the orphaned-reply path: filed as its own ticket for a
+ * human, never answered, never dropped.
+ *
+ * Candidates are scanned oldest-first rather than taking the single oldest row,
+ * so a chain naming both someone else's ticket and the sender's own still lands
+ * on the sender's own.
  */
 async function findTicketByReplyMessageIds(
     messageIds: string[],
+    senderEmail: string,
 ): Promise<ReplyTargetTicket | null> {
     if (messageIds.length === 0) return null;
 
     // The opening email of a thread — the oldest match wins so a thread always
     // resolves to its root ticket.
-    const openingTicket = await prisma.ticket.findFirst({
+    const openingTickets = await prisma.ticket.findMany({
         where: { source: 'EMAIL', sourceId: { in: messageIds } },
         orderBy: { createdAt: 'asc' },
-        select: { id: true, displayId: true, status: true },
+        select: REPLY_TARGET_SELECT,
     });
+    const openingTicket = openingTickets.find((ticket) =>
+        isTicketParticipant(senderEmail, ticket),
+    );
     if (openingTicket) return openingTicket;
 
     // A message appended mid-thread.
-    const appendedMessage = await prisma.message.findFirst({
+    const appendedMessages = await prisma.message.findMany({
         where: {
             ticket: { source: 'EMAIL' },
             OR: messageIds.map((id) => ({
@@ -67,9 +100,13 @@ async function findTicketByReplyMessageIds(
             })),
         },
         orderBy: { createdAt: 'asc' },
-        select: { ticket: { select: { id: true, displayId: true, status: true } } },
+        select: { ticket: { select: REPLY_TARGET_SELECT } },
     });
-    return appendedMessage?.ticket ?? null;
+    return (
+        appendedMessages
+            .map((message) => message?.ticket)
+            .find((ticket) => ticket && isTicketParticipant(senderEmail, ticket)) ?? null
+    );
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -199,9 +236,13 @@ export async function POST(request: Request) {
         } else {
             // Fallback: most mail clients reply to the plain From address and
             // never preserve the plus-address, so RFC 5322 threading headers are
-            // the only thing marking those as replies.
+            // the only thing marking those as replies. Unlike MailboxHash — a
+            // plus-addressed token WE mint and hand out — these headers are
+            // attacker-supplied, so the sender must already be a participant on
+            // the ticket they name.
             const replyTarget = await findTicketByReplyMessageIds(
                 extractReplyMessageIds(body.Headers),
+                senderEmail,
             );
             if (replyTarget) {
                 return await appendReplyToTicket(replyTarget, body, author, messageBody);

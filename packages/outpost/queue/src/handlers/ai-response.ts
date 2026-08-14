@@ -41,8 +41,6 @@ import type { AiResponsePayload, JobResult, JobHandlerContext } from '../types.j
 
 const PRIMARY_AI_RESPONSE_KEY = 'PRIMARY_AI_RESPONSE';
 const RESPONSE_RECOVERY_AFTER_MS = 5 * 60 * 1000;
-const DELIVERY_CONFIRMED_MARKER = 'DELIVERY_CONFIRMED';
-const ESCALATION_REQUIRED_MARKER = 'ESCALATION_REQUIRED';
 
 interface StoredAiResponse {
     id: string;
@@ -52,6 +50,8 @@ interface StoredAiResponse {
     responseState?: string | null;
     responseJobId?: string | null;
     responseError?: string | null;
+    deliveryConfirmed?: boolean | null;
+    escalationRequiredReason?: string | null;
 }
 
 /**
@@ -81,8 +81,14 @@ function isPrimaryAiResponseConflict(error: unknown): boolean {
     );
 }
 
+/**
+ * True when the platform post is a proven fact even though responseState never
+ * made it out of PENDING. A dedicated flag rather than a prefix in
+ * responseError: that column is read as error text, and "the reporter has their
+ * answer" is the opposite of an error.
+ */
 function hasConfirmedDelivery(response: StoredAiResponse): boolean {
-    return response.responseError?.startsWith(`${DELIVERY_CONFIRMED_MARKER}:`) ?? false;
+    return response.deliveryConfirmed === true;
 }
 
 /**
@@ -105,7 +111,13 @@ async function enqueueEscalationAtomically(
                 responseKey: PRIMARY_AI_RESPONSE_KEY,
                 responseState: 'PENDING',
             },
-            data: { responseState: 'ESCALATED', responseError: null },
+            // The handoff is durable as of this transaction, so the "owed"
+            // marker is cleared with it.
+            data: {
+                responseState: 'ESCALATED',
+                responseError: null,
+                escalationRequiredReason: null,
+            },
         });
 
         if (transition.count !== 1) return false;
@@ -123,16 +135,23 @@ async function enqueueEscalationAtomically(
     });
 }
 
+/**
+ * The human handoff this response promised but has not yet made durable.
+ *
+ * One nullable column carries both the fact and its payload, so the flag and the
+ * reason cannot drift apart: non-null means "escalation owed", and the value is
+ * the reason to enqueue. It is deliberately not a MessageResponseState value —
+ * the response is still PENDING, which is the outcome the enum records.
+ */
 function requiredEscalationReason(response: StoredAiResponse): string | null {
-    const prefix = `${ESCALATION_REQUIRED_MARKER}: `;
     if (
         response.responseKey !== PRIMARY_AI_RESPONSE_KEY ||
         response.responseState !== 'PENDING' ||
-        !response.responseError?.startsWith(prefix)
+        !response.escalationRequiredReason
     ) {
         return null;
     }
-    return response.responseError.slice(prefix.length);
+    return response.escalationRequiredReason;
 }
 
 async function recoverRequiredEscalation(
@@ -362,6 +381,21 @@ export async function handleAiResponse(
         generatedResponses.find((m) => m.responseKey === PRIMARY_AI_RESPONSE_KEY) ??
         generatedResponses[0];
     if (priorAiResponse) {
+        // Order matters. The two PENDING sub-states now live in independent
+        // columns, so nothing at the type level stops a row carrying both. An
+        // owed human handoff is checked first because dropping it is the worse
+        // failure: its transition also ends the PENDING state, and neither branch
+        // ever reposts to the reporter.
+        const escalationRetryReason = requiredEscalationReason(priorAiResponse);
+        if (escalationRetryReason) {
+            return recoverRequiredEscalation(
+                ticketId,
+                priorAiResponse,
+                escalationRetryReason,
+                context,
+            );
+        }
+
         if (priorAiResponse.responseState === 'PENDING' && hasConfirmedDelivery(priorAiResponse)) {
             // The platform post succeeded; only the state mirror failed. Repair
             // it when possible, but never route an already-answered reporter to
@@ -382,16 +416,6 @@ export async function handleAiResponse(
                 success: true,
                 data: { ticketId, skipped: true, reason: 'already_answered' },
             };
-        }
-
-        const escalationRetryReason = requiredEscalationReason(priorAiResponse);
-        if (escalationRetryReason) {
-            return recoverRequiredEscalation(
-                ticketId,
-                priorAiResponse,
-                escalationRetryReason,
-                context,
-            );
         }
 
         if (
@@ -498,6 +522,14 @@ export async function handleAiResponse(
     // report success until that handoff is durable.
     let escalationEnqueueError: string | null = null;
     let escalationReason: string | null = null;
+    // Whether this attempt's ESCALATION actually committed, and — when the
+    // compare-and-set found the response row already outside PENDING — which
+    // state it settled in. Read after the pipeline is torn down so the returned
+    // `escalated` reports what happened to the row instead of restating the
+    // local conditions that asked for an escalation.
+    let escalationEnqueued = false;
+    let escalationSkippedState: string | null = null;
+    let escalationStateReadError: string | null = null;
 
     let pipelineResult;
     try {
@@ -728,9 +760,7 @@ export async function handleAiResponse(
                 try {
                     await prisma.message.update({
                         where: { id: aiMessage.id },
-                        data: {
-                            responseError: `${ESCALATION_REQUIRED_MARKER}: ${nonDeliveryEscalationReason}`,
-                        },
+                        data: { escalationRequiredReason: nonDeliveryEscalationReason },
                     });
                 } catch (error) {
                     console.error(
@@ -750,19 +780,21 @@ export async function handleAiResponse(
                         `[AI Response] Failed to record durable delivery for ticket ${ticketId}:`,
                         message,
                     );
-                    // Delivery is already a fact. Persist a separate confirmation
-                    // marker so a retry can repair the state without reposting or
-                    // escalating an already-answered reporter.
+                    // Delivery is already a fact. Persist it on its own flag so a
+                    // retry can repair the state without reposting or escalating
+                    // an already-answered reporter. The write failure itself is a
+                    // genuine error, so it — and only it — goes in responseError.
                     try {
                         await prisma.message.update({
                             where: { id: aiMessage.id },
                             data: {
-                                responseError: `${DELIVERY_CONFIRMED_MARKER}: ${message}`,
+                                deliveryConfirmed: true,
+                                responseError: `Delivery succeeded but the DELIVERED state write failed: ${message}`,
                             },
                         });
                     } catch (markerError) {
                         console.error(
-                            `[AI Response] Failed to record delivery confirmation marker for ticket ${ticketId}:`,
+                            `[AI Response] Failed to record delivery confirmation for ticket ${ticketId}:`,
                             markerError instanceof Error
                                 ? markerError.message
                                 : String(markerError),
@@ -799,7 +831,6 @@ export async function handleAiResponse(
             ? `AI response generated but not delivered to ${ticket.source} (${deliveryFailure}) — needs a human to answer the reporter`
             : nonDeliveryEscalationReason;
 
-        let escalationEnqueued = false;
         if (escalationReason) {
             try {
                 escalationEnqueued = await enqueueEscalationAtomically(
@@ -814,6 +845,32 @@ export async function handleAiResponse(
                     escalationEnqueueError,
                 );
             }
+
+            if (!escalationEnqueued && !escalationEnqueueError) {
+                // The compare-and-set found the row outside PENDING, so nothing
+                // was queued. Read the state it settled in before deciding what
+                // to report: DELIVERED means the answer is durable and no
+                // handoff was owed, ESCALATED means another actor already
+                // summoned the human. Anything else leaves the promised handoff
+                // unaccounted for and must not be reported as handled. Both
+                // terminal states are final in this handler, so reading them
+                // after the transaction cannot observe a third value.
+                try {
+                    const settled = await prisma.message.findUnique({
+                        where: { id: aiMessage.id },
+                        select: { responseState: true },
+                    });
+                    escalationSkippedState = settled?.responseState ?? null;
+                } catch (error) {
+                    escalationStateReadError =
+                        error instanceof Error ? error.message : String(error);
+                }
+                console.warn(
+                    `[AI Response] Ticket ${ticketId}: escalation (${escalationReason}) was not ` +
+                        `queued — response row state is ${escalationSkippedState ?? 'unavailable'}` +
+                        `${escalationStateReadError ? ` (${escalationStateReadError})` : ''}`,
+                );
+            }
         }
     } finally {
         pipeline.destroy();
@@ -826,10 +883,12 @@ export async function handleAiResponse(
             `${deliveryFailure ? `, delivery failed (${deliveryFailure})` : ''}`,
     );
 
-    const escalated =
-        deliveryFailure !== null ||
-        pipelineResult.suppressed ||
-        pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE;
+    // A human was summoned only if this attempt's escalation committed, or if the
+    // row shows another actor already committed one. `escalationReason !== null`
+    // is exactly the old local-condition test (delivery failure, suppression, or
+    // sub-threshold confidence); what is new is that it no longer stands alone.
+    const escalationHandoffDurable = escalationEnqueued || escalationSkippedState === 'ESCALATED';
+    const escalated = escalationReason !== null && escalationHandoffDurable;
 
     // A promised human handoff is part of successful completion even when the AI
     // response reached the reporter. Report enqueue failure so the queue retries:
@@ -842,6 +901,24 @@ export async function handleAiResponse(
             error:
                 `Ticket ${ticketId}: required escalation (${escalationReason}) ` +
                 `could not be enqueued (${escalationEnqueueError}) — needs manual attention`,
+        };
+    }
+
+    // The enqueue reported no-op rather than throwing. DELIVERED is the one
+    // unremarkable explanation — the response is durably answered, so no handoff
+    // was owed and `escalated: false` matches the row. Every other state (still
+    // PENDING, row gone, or unreadable) means a reporter was promised a human who
+    // was never summoned: fail so the queue retries through the prior-response
+    // gate, which escalates without regenerating or reposting.
+    if (escalationReason && !escalationHandoffDurable && escalationSkippedState !== 'DELIVERED') {
+        const observed = escalationStateReadError
+            ? `unreadable (${escalationStateReadError})`
+            : (escalationSkippedState ?? 'missing');
+        return {
+            success: false,
+            error:
+                `Ticket ${ticketId}: required escalation (${escalationReason}) was not queued — ` +
+                `response state is ${observed} — needs manual attention`,
         };
     }
 
