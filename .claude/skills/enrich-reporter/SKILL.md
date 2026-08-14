@@ -14,9 +14,15 @@ Spawn an `Explore` subagent (or any read-only general-purpose) with this prompt:
 ## Subagent prompt template
 
 ```
-For each GitHub username below, run BOTH:
+For each GitHub username below, run ALL THREE:
   gh api users/<login> --jq '{login, name, company, bio, blog, twitter_username}'
   gh api users/<login>/social_accounts    # ← the person's OWN self-linked LinkedIn / X / site — authoritative
+  gh api "search/commits?q=author:<login>" --jq '[.items[].commit.author | {name, email}] | unique'
+      # ← COMMIT-AUTHOR EMAIL is the strongest employer proof available. A corporate
+      #   email domain confirms current employment better than any self-declared field,
+      #   and it also yields the person's real full name for the sales list.
+      #   Rate limit ~30/min — pace it and back off on 403.
+  gh api users/<login>/orgs --jq '[.[].login]'   # ← public org membership; how you catch OUR OWN STAFF
 
 Return a compact one-line-per-user table:
   login | name | company | profile_url | company_url | linkedin_url | bio | blog | twitter
@@ -38,7 +44,9 @@ Run them in parallel via xargs or a small loop. Under 350 words total.
 
 ## Classification rules
 
+- **EXCLUDE OUR OWN STAFF — check this first, before any classification.** Anyone who is a public member of the `CopilotKit` or `ag-ui-protocol` orgs, or commits under an `@copilotkit.ai` email, is **staff, not a community reporter**. Their issues still appear in the report as real work, but they are excluded from community reporter counts, never badged 🏢, and never routed to the prospect list. **Say the corrected counts out loud** so downstream sections don't inherit the inflated ones. (Precedent 2026-08-14: `mxmzb`, `BenTaylorDev` and `contextablemark` were all in the "community authors" input list — excluding them moved CopilotKit's in-window author count from 3 to **2** and AG-UI's from 12 to **10**, and reclassified five items from community signal to internal engineering findings.)
 - **Direct enterprise (confirmed):** `company` field populated AND corroborated by the bio/blog/a verifiable identity → use that as canonical affiliation, mark `confirmed`.
+- **Corp-email confirmed (STRONGEST — prefer this over every other signal):** a commit-author email on a corporate domain (`arslan.mehboob@autoscout24.com`, `mustafa.asif@commercetools.com`) confirms the employer even when the profile is completely bare — no company field, no bio, no name. This is the only method that works on empty profiles, and on 2026-08-14 it confirmed four employers nothing else could reach. **Its silence is also evidence:** when `search/commits` returns only personal-domain emails, that supports "unaffiliated on paper" rather than meaning you didn't look hard enough — report it that way.
 - **Self-declared only (UNCONFIRMED):** the `company` field names an employer but nothing else corroborates it — no bio mention, no verifiable name/LinkedIn, throwaway-looking account. Still surface it, but mark it **`unconfirmed (self-declared)`** so the report can flag "⚠️ Company unconfirmed" in 🏢 Enterprise. Never present it as fact. (Precedent: `GeauxEric` → `company: Nvidia`, no verifiable identity → unconfirmed.)
 - **Inferred enterprise:** `company` empty, but bio or blog clearly identifies an employer (e.g. "Engineer @AcmeCorp", LinkedIn profile naming a current role) → label as `<Company> (inferred)`. Still treat as enterprise signal.
 - **Indie / no affiliation:** no company, no employer clues. Default classification.
