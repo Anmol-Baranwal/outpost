@@ -1,5 +1,7 @@
 export interface TicketCreatedCardOptions {
     title: string;
+    /** Whether an AI_RESPONSE job was actually queued for this ticket. */
+    aiJobEnqueued: boolean;
 }
 
 /**
@@ -9,7 +11,7 @@ export interface TicketCreatedCardOptions {
  * belongs in the dashboard and team slash commands, not in reporter-facing copy.
  */
 export function buildTicketCreatedCard(options: TicketCreatedCardOptions): Record<string, unknown> {
-    const { title } = options;
+    const { title, aiJobEnqueued } = options;
 
     return {
         type: 'AdaptiveCard',
@@ -30,7 +32,9 @@ export function buildTicketCreatedCard(options: TicketCreatedCardOptions): Recor
             },
             {
                 type: 'TextBlock',
-                text: 'Our AI assistant is reviewing your question...',
+                text: aiJobEnqueued
+                    ? 'Our AI assistant is reviewing your question...'
+                    : 'A team member will review your question and follow up.',
                 wrap: true,
             },
         ],

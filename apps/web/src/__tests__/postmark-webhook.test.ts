@@ -6,19 +6,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ─── Mock Prisma ────────────────────────────────────────────────────────────
 
 const mockTicketFindUnique = vi.fn();
+const mockTicketFindFirst = vi.fn();
 const mockTicketCreate = vi.fn();
 const mockTicketUpdate = vi.fn();
 const mockMessageCreate = vi.fn();
+const mockMessageFindFirst = vi.fn();
+const mockJobCreate = vi.fn();
+const mockTransaction = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
+        $transaction: (...args: unknown[]) => mockTransaction(...args),
         ticket: {
             findUnique: (...args: unknown[]) => mockTicketFindUnique(...args),
+            findFirst: (...args: unknown[]) => mockTicketFindFirst(...args),
             create: (...args: unknown[]) => mockTicketCreate(...args),
             update: (...args: unknown[]) => mockTicketUpdate(...args),
         },
         message: {
             create: (...args: unknown[]) => mockMessageCreate(...args),
+            findFirst: (...args: unknown[]) => mockMessageFindFirst(...args),
+        },
+        job: {
+            create: (...args: unknown[]) => mockJobCreate(...args),
         },
     },
 }));
@@ -45,7 +55,15 @@ vi.mock('@copilotkit/outpost/queue', () => ({
 // ─── Import route + helpers ─────────────────────────────────────────────────
 
 import { POST } from '@/app/api/webhooks/postmark/route';
-import { extractTicketId, extractEmail, extractName } from '@/app/api/webhooks/postmark/utils';
+import {
+    extractTicketId,
+    extractEmail,
+    extractName,
+    extractReplyMessageIds,
+    getHeaderValue,
+    hasReplyHeaders,
+    normalizeMessageId,
+} from '@/app/api/webhooks/postmark/utils';
 import type { PostmarkInboundPayload } from '@/app/api/webhooks/postmark/utils';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -76,6 +94,30 @@ function fullPayload(overrides: Partial<PostmarkInboundPayload> = {}): PostmarkI
 describe('Postmark inbound webhook', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockTicketCreate.mockReset();
+        mockTicketFindFirst.mockReset();
+        mockJobCreate.mockReset();
+        mockTransaction.mockReset();
+        mockCreateJob.mockReset();
+        mockMessageFindFirst.mockReset();
+        mockTicketFindUnique.mockReset();
+        mockTicketFindFirst.mockResolvedValue(null);
+        mockMessageFindFirst.mockResolvedValue(null);
+        mockTicketFindUnique.mockResolvedValue(null);
+        mockJobCreate.mockResolvedValue({ id: 'job-1' });
+        mockCreateJob.mockResolvedValue('job-1');
+        mockTransaction.mockImplementation(
+            async (
+                callback: (tx: {
+                    ticket: { create: typeof mockTicketCreate };
+                    job: { create: typeof mockJobCreate };
+                }) => Promise<unknown>,
+            ) =>
+                callback({
+                    ticket: { create: mockTicketCreate },
+                    job: { create: mockJobCreate },
+                }),
+        );
     });
 
     // ── Helper function tests ──────────────────────────────────────────────
@@ -126,6 +168,89 @@ describe('Postmark inbound webhook', () => {
         });
     });
 
+    // Postmark's MessageID field is bare while header values are angle-bracketed
+    // and may be folded across lines. If normalization is off by a bracket the
+    // route silently stops recognizing replies, so it is tested directly.
+    describe('normalizeMessageId', () => {
+        it('strips angle brackets', () => {
+            expect(normalizeMessageId('<abc@example.com>')).toBe('abc@example.com');
+        });
+
+        it('leaves a bare ID untouched', () => {
+            expect(normalizeMessageId('abc@example.com')).toBe('abc@example.com');
+        });
+
+        it('strips surrounding and inner-edge whitespace, including folded lines', () => {
+            expect(normalizeMessageId('\r\n\t <abc@example.com> ')).toBe('abc@example.com');
+            expect(normalizeMessageId('< abc@example.com >')).toBe('abc@example.com');
+        });
+
+        it('returns null for empty, bracket-only, and missing values', () => {
+            expect(normalizeMessageId('')).toBeNull();
+            expect(normalizeMessageId('   ')).toBeNull();
+            expect(normalizeMessageId('<>')).toBeNull();
+            expect(normalizeMessageId(undefined)).toBeNull();
+            expect(normalizeMessageId(null)).toBeNull();
+        });
+    });
+
+    describe('getHeaderValue', () => {
+        it('matches header names case-insensitively', () => {
+            const list = [{ Name: 'in-REPLY-to', Value: '<a@b>' }];
+            expect(getHeaderValue(list, 'In-Reply-To')).toBe('<a@b>');
+        });
+
+        it('returns undefined for a missing header or missing list', () => {
+            expect(getHeaderValue([{ Name: 'Date', Value: 'x' }], 'References')).toBeUndefined();
+            expect(getHeaderValue(undefined, 'References')).toBeUndefined();
+        });
+    });
+
+    describe('extractReplyMessageIds', () => {
+        it('collects In-Reply-To and the whole References chain, normalized and deduped', () => {
+            expect(
+                extractReplyMessageIds([
+                    { Name: 'In-Reply-To', Value: '<b@x>' },
+                    { Name: 'References', Value: '<a@x> <b@x>\r\n\t<c@x>' },
+                ]),
+            ).toEqual(['b@x', 'a@x', 'c@x']);
+        });
+
+        it('tolerates comma-separated References', () => {
+            expect(extractReplyMessageIds([{ Name: 'References', Value: '<a@x>, <b@x>' }])).toEqual(
+                ['a@x', 'b@x'],
+            );
+        });
+
+        it('returns an empty list when there are no threading headers', () => {
+            expect(extractReplyMessageIds([{ Name: 'Subject', Value: 'hi' }])).toEqual([]);
+            expect(extractReplyMessageIds(undefined)).toEqual([]);
+        });
+
+        it('drops unparseable tokens', () => {
+            expect(extractReplyMessageIds([{ Name: 'In-Reply-To', Value: '<>' }])).toEqual([]);
+        });
+    });
+
+    describe('hasReplyHeaders', () => {
+        it('is true for a non-empty In-Reply-To or References', () => {
+            expect(hasReplyHeaders([{ Name: 'In-Reply-To', Value: '<a@x>' }])).toBe(true);
+            expect(hasReplyHeaders([{ Name: 'References', Value: '<a@x>' }])).toBe(true);
+        });
+
+        it('is true even when the value cannot be parsed into an ID', () => {
+            // A malformed threading header is still proof this is a reply, so the
+            // bot must stay silent rather than answering mid-conversation.
+            expect(hasReplyHeaders([{ Name: 'In-Reply-To', Value: '<>' }])).toBe(true);
+        });
+
+        it('is false for whitespace-only, absent, and undefined headers', () => {
+            expect(hasReplyHeaders([{ Name: 'References', Value: '  ' }])).toBe(false);
+            expect(hasReplyHeaders([{ Name: 'Subject', Value: 'hi' }])).toBe(false);
+            expect(hasReplyHeaders(undefined)).toBe(false);
+        });
+    });
+
     // ── Route handler tests ────────────────────────────────────────────────
 
     describe('POST handler', () => {
@@ -154,11 +279,112 @@ describe('Postmark inbound webhook', () => {
                 }),
             );
 
-            // Should enqueue AI_RESPONSE job
-            expect(mockCreateJob).toHaveBeenCalledWith(
-                'AI_RESPONSE',
-                { ticketId: 'ticket-1', source: 'web' },
+            // Ticket, opening message, and AI job share one transaction.
+            expect(mockTransaction).toHaveBeenCalledTimes(1);
+            expect(mockJobCreate).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    type: 'AI_RESPONSE',
+                    payload: { ticketId: 'ticket-1', source: 'web' },
+                }),
+            });
+            expect(mockCreateJob).not.toHaveBeenCalled();
+        });
+
+        it('creates one ticket and AI job for concurrent deliveries of the same MessageID', async () => {
+            const ticket = {
+                id: 'ticket-concurrent',
+                displayId: 'TKT-TESTID01',
+                source: 'EMAIL',
+                sourceId: 'msg-001@postmark.example',
+            };
+            mockTicketFindFirst
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValue(ticket);
+
+            let sourceIdClaimed = false;
+            mockTicketCreate.mockImplementation(async () => {
+                if (sourceIdClaimed) {
+                    throw {
+                        code: 'P2002',
+                        meta: { target: 'Ticket_email_sourceId_key' },
+                    };
+                }
+                sourceIdClaimed = true;
+                return ticket;
+            });
+
+            const [first, second] = await Promise.all([
+                POST(postmarkRequest(fullPayload())),
+                POST(postmarkRequest(fullPayload())),
+            ]);
+
+            expect(first.status).toBe(200);
+            expect(second.status).toBe(200);
+            expect(await first.json()).toMatchObject({ ticketId: 'TKT-TESTID01' });
+            expect(await second.json()).toMatchObject({ ticketId: 'TKT-TESTID01' });
+            expect(mockTicketCreate).toHaveBeenCalledTimes(2);
+            expect(mockJobCreate).toHaveBeenCalledTimes(1);
+            expect(mockCreateJob).not.toHaveBeenCalled();
+        });
+
+        it('rolls back ticket creation when the atomic AI job insert fails, then retries once', async () => {
+            const ticket = {
+                id: 'ticket-after-retry',
+                displayId: 'TKT-TESTID01',
+                source: 'EMAIL',
+                sourceId: 'msg-001@postmark.example',
+            };
+            let committedTicket: typeof ticket | null = null;
+            let committedJobs = 0;
+            let ticketAttempts = 0;
+            let failJobInsert = true;
+
+            mockTicketFindFirst.mockImplementation(async () => committedTicket);
+            mockTransaction.mockImplementation(
+                async (
+                    callback: (tx: {
+                        ticket: { create: () => Promise<typeof ticket> };
+                        job: { create: () => Promise<{ id: string }> };
+                    }) => Promise<unknown>,
+                ) => {
+                    let stagedTicket: typeof ticket | null = null;
+                    let stagedJob = false;
+                    const result = await callback({
+                        ticket: {
+                            create: async () => {
+                                ticketAttempts += 1;
+                                stagedTicket = ticket;
+                                return ticket;
+                            },
+                        },
+                        job: {
+                            create: async () => {
+                                if (failJobInsert) {
+                                    failJobInsert = false;
+                                    throw new Error('queue insert unavailable');
+                                }
+                                stagedJob = true;
+                                return { id: 'job-after-retry' };
+                            },
+                        },
+                    });
+                    committedTicket = stagedTicket;
+                    if (stagedJob) committedJobs += 1;
+                    return result;
+                },
             );
+
+            const first = await POST(postmarkRequest(fullPayload()));
+            const retry = await POST(postmarkRequest(fullPayload()));
+
+            expect(first.status).toBe(500);
+            expect(retry.status).toBe(200);
+            expect(ticketAttempts).toBe(2);
+            expect(committedTicket).toEqual(ticket);
+            expect(committedJobs).toBe(1);
+            expect(mockTransaction).toHaveBeenCalledTimes(2);
+            expect(mockCreateJob).not.toHaveBeenCalled();
         });
 
         it('appends to existing ticket via MailboxHash (plus-addressing)', async () => {
@@ -296,7 +522,7 @@ describe('Postmark inbound webhook', () => {
             },
         );
 
-        it('creates new ticket when MailboxHash ticket is not found', async () => {
+        it('files an orphaned reply without enqueueing an AI response', async () => {
             mockTicketFindUnique.mockResolvedValue(null);
             mockTicketCreate.mockResolvedValue({
                 id: 'new-ticket',
@@ -314,6 +540,290 @@ describe('Postmark inbound webhook', () => {
             expect(res.status).toBe(200);
             const body = await res.json();
             expect(body.status).toBe('ticket_created');
+            expect(mockTicketCreate).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        description: 'I have a question about my invoice.',
+                        messages: expect.objectContaining({
+                            create: expect.objectContaining({
+                                content: 'I have a question about my invoice.',
+                                type: 'USER',
+                            }),
+                        }),
+                    }),
+                }),
+            );
+            expect(mockCreateJob).not.toHaveBeenCalled();
+        });
+
+        // ── Reply detection via RFC 5322 threading headers ──────────────────
+        //
+        // MailboxHash only survives when the customer's client preserves the
+        // plus-address. The normal case is a reply to a plain From address, which
+        // carries In-Reply-To / References and nothing else. Those replies used to
+        // fall through to the new-ticket branch and got a second AI answer for a
+        // conversation already in progress.
+
+        /** Build a Postmark Headers array for a reply. */
+        function headers(inReplyTo?: string, references?: string) {
+            const list = [
+                { Name: 'Date', Value: 'Mon, 3 Feb 2025 10:00:00 +0000' },
+                { Name: 'Subject', Value: 'Re: Need help with billing' },
+            ];
+            if (inReplyTo !== undefined) list.push({ Name: 'In-Reply-To', Value: inReplyTo });
+            if (references !== undefined) list.push({ Name: 'References', Value: references });
+            return list;
+        }
+
+        /**
+         * Answer the reply-resolution ticket lookup (`sourceId: { in: [...] }`)
+         * from a map, while leaving the MessageID idempotency lookup
+         * (`sourceId: '<string>'`) returning null.
+         */
+        function ticketsBySourceId(map: Record<string, unknown>) {
+            mockTicketFindFirst.mockImplementation(async (args: unknown) => {
+                const where = (args as { where?: { sourceId?: { in?: string[] } } }).where;
+                const ids = where?.sourceId?.in;
+                if (!Array.isArray(ids)) return null;
+                for (const id of ids) {
+                    if (map[id]) return map[id];
+                }
+                return null;
+            });
+        }
+
+        it('appends a reply whose In-Reply-To matches a ticket sourceId, with no AI job', async () => {
+            ticketsBySourceId({
+                'root-msg@postmark.example': {
+                    id: 'ticket-root',
+                    displayId: 'TKT-ROOT0001',
+                    status: 'OPEN',
+                },
+            });
+            mockMessageCreate.mockResolvedValue({ id: 'msg-appended' });
+
+            const res = await POST(
+                postmarkRequest(
+                    fullPayload({
+                        MessageID: 'reply-msg@postmark.example',
+                        Subject: 'Re: Need help with billing',
+                        TextBody: 'Any update on this?',
+                        Headers: headers('<root-msg@postmark.example>'),
+                    }),
+                ),
+            );
+
+            expect(res.status).toBe(200);
+            expect(await res.json()).toEqual({
+                status: 'message_appended',
+                ticketId: 'TKT-ROOT0001',
+            });
+            expect(mockMessageCreate).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        ticketId: 'ticket-root',
+                        content: 'Any update on this?',
+                        // Every appended message records its inbound Message-ID so a
+                        // later reply can resolve to this mid-thread message.
+                        attachments: expect.objectContaining({
+                            postmarkMessageId: 'reply-msg@postmark.example',
+                        }),
+                    }),
+                }),
+            );
+            // The whole point: no second ticket, no second answer.
+            expect(mockTicketCreate).not.toHaveBeenCalled();
+            expect(mockTransaction).not.toHaveBeenCalled();
+            expect(mockJobCreate).not.toHaveBeenCalled();
+            expect(mockCreateJob).not.toHaveBeenCalled();
+        });
+
+        it('resolves a reply through the References chain when In-Reply-To names an outbound ID we never stored', async () => {
+            // Outbound Message-IDs are not persisted (postResponse is unimplemented),
+            // so a reply to our own message names an ID no row holds. References
+            // still carries the customer's opening Message-ID.
+            ticketsBySourceId({
+                'root-msg@postmark.example': {
+                    id: 'ticket-root',
+                    displayId: 'TKT-ROOT0001',
+                    status: 'WAITING_ON_CUSTOMER',
+                },
+            });
+            mockMessageCreate.mockResolvedValue({ id: 'msg-appended' });
+            mockTicketUpdate.mockResolvedValue({});
+
+            const res = await POST(
+                postmarkRequest(
+                    fullPayload({
+                        MessageID: 'reply-msg@postmark.example',
+                        Headers: headers(
+                            '<outbound-never-stored@outpost.dev>',
+                            '<root-msg@postmark.example>\r\n\t<outbound-never-stored@outpost.dev>',
+                        ),
+                    }),
+                ),
+            );
+
+            expect(await res.json()).toMatchObject({
+                status: 'message_appended',
+                ticketId: 'TKT-ROOT0001',
+            });
+            // Dormant ticket reopens so a human sees the reply.
+            expect(mockTicketUpdate).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: { id: 'ticket-root' },
+                    data: expect.objectContaining({ status: 'OPEN' }),
+                }),
+            );
+            expect(mockJobCreate).not.toHaveBeenCalled();
+        });
+
+        it('resolves a reply that matches a mid-thread Message.attachments.postmarkMessageId', async () => {
+            ticketsBySourceId({});
+            mockMessageFindFirst.mockResolvedValue({
+                ticket: { id: 'ticket-mid', displayId: 'TKT-MID00001', status: 'OPEN' },
+            });
+            mockMessageCreate.mockResolvedValue({ id: 'msg-appended' });
+
+            const res = await POST(
+                postmarkRequest(
+                    fullPayload({
+                        MessageID: 'reply-msg@postmark.example',
+                        Headers: headers('<mid-thread@postmark.example>'),
+                    }),
+                ),
+            );
+
+            expect(await res.json()).toMatchObject({
+                status: 'message_appended',
+                ticketId: 'TKT-MID00001',
+            });
+            expect(mockMessageFindFirst).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: expect.objectContaining({
+                        OR: [
+                            {
+                                attachments: {
+                                    path: ['postmarkMessageId'],
+                                    equals: 'mid-thread@postmark.example',
+                                },
+                            },
+                        ],
+                    }),
+                }),
+            );
+            expect(mockTicketCreate).not.toHaveBeenCalled();
+            expect(mockJobCreate).not.toHaveBeenCalled();
+        });
+
+        it('files a reply whose headers resolve to nothing as a ticket with no AI job', async () => {
+            ticketsBySourceId({});
+            mockTicketCreate.mockResolvedValue({
+                id: 'ticket-orphan-header',
+                displayId: 'TKT-TESTID01',
+            });
+
+            const res = await POST(
+                postmarkRequest(
+                    fullPayload({
+                        MessageID: 'reply-msg@postmark.example',
+                        TextBody: 'Following up on the thread from last year.',
+                        Headers: headers('<long-deleted@postmark.example>'),
+                    }),
+                ),
+            );
+
+            expect(res.status).toBe(200);
+            expect(await res.json()).toMatchObject({ status: 'ticket_created' });
+            // Kept for a human...
+            expect(mockTicketCreate).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        description: 'Following up on the thread from last year.',
+                    }),
+                }),
+            );
+            // ...but never answered.
+            expect(mockJobCreate).not.toHaveBeenCalled();
+            expect(mockCreateJob).not.toHaveBeenCalled();
+        });
+
+        it('still answers a genuinely new email that carries headers but no threading headers', async () => {
+            mockTicketCreate.mockResolvedValue({ id: 'ticket-new', displayId: 'TKT-TESTID01' });
+
+            const res = await POST(
+                postmarkRequest(
+                    fullPayload({
+                        Headers: [
+                            { Name: 'Date', Value: 'Mon, 3 Feb 2025 10:00:00 +0000' },
+                            { Name: 'Subject', Value: 'Need help with billing' },
+                            { Name: 'Message-ID', Value: '<msg-001@postmark.example>' },
+                        ],
+                    }),
+                ),
+            );
+
+            expect(res.status).toBe(200);
+            expect(await res.json()).toMatchObject({ status: 'ticket_created' });
+            // The fix must not blanket-mute email: a new ticket still gets its one job.
+            expect(mockJobCreate).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    type: 'AI_RESPONSE',
+                    payload: { ticketId: 'ticket-new', source: 'web' },
+                }),
+            });
+            // No threading headers means no header lookups at all.
+            expect(mockMessageFindFirst).not.toHaveBeenCalled();
+        });
+
+        it('treats an empty References header as not-a-reply', async () => {
+            mockTicketCreate.mockResolvedValue({ id: 'ticket-new', displayId: 'TKT-TESTID01' });
+
+            await POST(postmarkRequest(fullPayload({ Headers: headers(undefined, '   ') })));
+
+            expect(mockJobCreate).toHaveBeenCalledTimes(1);
+        });
+
+        it('keeps MailboxHash as the primary reply path, without header lookups', async () => {
+            mockTicketFindUnique.mockResolvedValue({
+                id: 'hash-ticket',
+                displayId: 'TKT-HASH0001',
+                status: 'OPEN',
+            });
+            mockMessageCreate.mockResolvedValue({ id: 'msg-appended' });
+
+            const res = await POST(
+                postmarkRequest(
+                    fullPayload({
+                        MailboxHash: 'TKT-HASH0001',
+                        Headers: headers('<root-msg@postmark.example>'),
+                    }),
+                ),
+            );
+
+            expect(await res.json()).toMatchObject({ ticketId: 'TKT-HASH0001' });
+            expect(mockTicketFindFirst).not.toHaveBeenCalled();
+            expect(mockMessageFindFirst).not.toHaveBeenCalled();
+        });
+
+        it('files an unresolvable MailboxHash reply without falling back to headers', async () => {
+            mockTicketFindUnique.mockResolvedValue(null);
+            mockTicketCreate.mockResolvedValue({
+                id: 'ticket-orphan-hash',
+                displayId: 'TKT-TESTID01',
+            });
+
+            await POST(
+                postmarkRequest(
+                    fullPayload({
+                        MailboxHash: 'TKT-NOTEXIST',
+                        Headers: headers('<root-msg@postmark.example>'),
+                    }),
+                ),
+            );
+
+            expect(mockMessageFindFirst).not.toHaveBeenCalled();
+            expect(mockJobCreate).not.toHaveBeenCalled();
         });
 
         it('handles attachments in the payload', async () => {
@@ -383,6 +893,15 @@ describe('Postmark inbound webhook', () => {
                 postmarkRequest({ From: 'alice@test.com', Subject: '' }),
             );
             expect(res.status).toBe(400);
+        });
+
+        it('rejects a new-email payload without the MessageID required for idempotency', async () => {
+            const res = await POST(
+                postmarkRequest(fullPayload({ MessageID: '' })),
+            );
+
+            expect(res.status).toBe(400);
+            expect(mockTransaction).not.toHaveBeenCalled();
         });
 
         it('returns 500 on database error', async () => {

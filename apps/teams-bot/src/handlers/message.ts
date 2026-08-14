@@ -101,6 +101,7 @@ export async function handleMessage(context: TurnContext): Promise<void> {
             // other platforms did.
             const card = buildTicketCreatedCard({
                 title: truncate(message.content, 200),
+                aiJobEnqueued: result.aiJobEnqueued,
             });
 
             const reply = MessageFactory.attachment(

@@ -16,11 +16,13 @@ import type { JobHandlerContext, WorkerHealthStatus } from '../types.js';
 const mockPrismaJob = {
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     findFirst: vi.fn(),
 };
 
 const mockPrisma = {
     job: mockPrismaJob,
+    $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
 };
 
@@ -45,6 +47,7 @@ function makeJobRow(overrides: Partial<{
     payload: unknown;
     attempts: number;
     maxAttempts: number;
+    claimToken: string;
 }> = {}) {
     return {
         id: overrides.id ?? 'job-1',
@@ -52,6 +55,7 @@ function makeJobRow(overrides: Partial<{
         payload: overrides.payload ?? { ticketId: 'tkt-1', source: 'discord' },
         attempts: overrides.attempts ?? 0,
         maxAttempts: overrides.maxAttempts ?? 5,
+        claimToken: overrides.claimToken ?? `claim-${overrides.id ?? 'job-1'}`,
     };
 }
 
@@ -63,6 +67,8 @@ describe('Worker per-type concurrency', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
+        mockPrisma.$executeRaw.mockResolvedValue(0);
+        mockPrismaJob.updateMany.mockResolvedValue({ count: 1 });
     });
 
     afterEach(async () => {
@@ -103,12 +109,42 @@ describe('Worker per-type concurrency', () => {
 
         // Process should have picked up the job
         expect(mockPrisma.$queryRaw).toHaveBeenCalled();
+        const claimSql = mockPrisma.$queryRaw.mock.calls[0][0].join(' ');
+        expect(claimSql).toContain('"claimToken" = gen_random_uuid()::text');
+        expect(claimSql).toContain('"maxAttempts", "claimToken"');
         // Job should have been completed
-        expect(mockPrismaJob.update).toHaveBeenCalledWith(
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 data: expect.objectContaining({ status: 'COMPLETED' }),
             }),
         );
+    });
+
+    it('reclaims stale processing jobs before per-type claims', async () => {
+        const now = new Date('2026-08-11T12:00:00.000Z');
+        vi.setSystemTime(now);
+        worker = new Worker({
+            pollIntervalMs: 100,
+            maxConcurrency: 2,
+            concurrencyByType: {
+                [JobType.AI_RESPONSE]: 1,
+            },
+            jobTimeouts: {
+                [JobType.AI_RESPONSE]: 2000,
+            },
+        });
+
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(mockPrisma.$executeRaw.mock.calls[0][1])).toEqual([
+            { type: JobType.AI_RESPONSE, reclaim_after_ms: 32_000 },
+        ]);
+        expect(mockPrisma.$queryRaw).toHaveBeenCalled();
     });
 
     it('falls back to global limit when concurrencyByType is not specified', async () => {
@@ -187,7 +223,7 @@ describe('Worker per-type concurrency', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         // Both AI jobs should have completed
-        const completedCalls = mockPrismaJob.update.mock.calls.filter(
+        const completedCalls = mockPrismaJob.updateMany.mock.calls.filter(
             (call: Array<Record<string, Record<string, unknown>>>) =>
                 call[0].data.status === 'COMPLETED',
         );

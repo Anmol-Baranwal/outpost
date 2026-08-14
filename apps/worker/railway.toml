@@ -9,3 +9,9 @@ dockerfilePath = "apps/worker/Dockerfile"
 [deploy]
 restartPolicyType = "ALWAYS"
 healthcheckPath = "/health"
+# A failed boot now answers 503 with its reason immediately rather than dying
+# silently, so there is nothing to gain from Railway's 300s default — that
+# five-minute wait per attempt is what made the 2026-08-07 incident so slow to
+# read. Kept above the worker's BOOT_FAILURE_LINGER_MS (120s) so the probe sees
+# the reason before the process exits to be restarted.
+healthcheckTimeout = 180

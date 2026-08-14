@@ -5,6 +5,7 @@ import {
     SYSTEM_PROMPT_PREFIX,
     ResponseGenerator,
     buildChannelGuidance,
+    extractResponseText,
 } from './generator.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
@@ -61,6 +62,30 @@ describe('ResponseGenerator', () => {
     });
 
     describe('generate', () => {
+        it('should extract text across response blocks when the first block is non-text', () => {
+            const content = [
+                { type: 'tool_use', id: 'tool-1', name: 'lookup', input: {} },
+                { type: 'text', text: 'First part' },
+                { type: 'text', text: ' and second part' },
+            ] as unknown as Parameters<typeof extractResponseText>[0];
+
+            expect(extractResponseText(content)).toBe('First part and second part');
+            expect(extractResponseText([])).toBe('');
+        });
+
+        it('should return the safe fallback when the model produces no usable text', async () => {
+            mock.onMessage(/./, {
+                content: '',
+                usage: { input_tokens: 100, output_tokens: 0 },
+            });
+
+            const result = await generator.generate({ question: 'test' }, sampleSources);
+
+            expect(result.text).toContain('unable to generate');
+            expect(result.confidenceScore).toBe(0);
+            expect(result.degraded).toBe(true);
+        });
+
         it('should generate a response with confidence scoring', async () => {
             mock.onMessage(/./, {
                 content: 'Here is how to use CopilotKit actions...',
