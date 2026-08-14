@@ -19,6 +19,7 @@ This repo carries a runnable Claude Code skill suite under `.claude/skills/` for
 | "enterprise report" / "who at enterprise this week" / "enterprise status" | `enterprise` |
 | (invoked by `weekly-report`) | `product-surface-scan` · `front-door-triage` · `deep-read-issue` · `release-scan` · `enrich-reporter` · `enrich-prospect` · `report-sources` |
 | "draft Slack TL;DR" / "build the Slack message" | `slack-tldr` |
+| "carry forward owners" / "who owned this last week" / "owner continuity" (also auto-run near the end of every report) | `carry-forward-owners` |
 | "loom script" / "record the loom" / "walkthrough script" (also auto-run as the last step of every report) | `loom-walkthrough` |
 
 ### Architecture — orchestrator + subagents
@@ -35,6 +36,7 @@ weekly-report (main)
 ├─→ enrich-reporter subagent   (gh api users/<login>, enterprise classify — all reporters)
 ├─→ enrich-prospect subagent   (deep: LinkedIn + company website + size — prospect shortlist only)
 ├─→ report-sources subagent    (evidence-backed defense of every placement → "Report Sources" child page)
+├─→ carry-forward-owners       (diff vs last week's report → print owners of recurring items; Nathan re-tags)
 └─→ Synthesize → Notion page + Slack JSON via slack-tldr
 ```
 
