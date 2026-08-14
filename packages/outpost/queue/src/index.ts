@@ -11,6 +11,11 @@ export { handleHubSpotSync } from './handlers/hubspot-sync.js';
 export { createTrackerSyncHandler } from './handlers/tracker-sync.js';
 export { handleJobCleanup } from './handlers/job-cleanup.js';
 export { handleGithubReactionPoll } from './handlers/github-reaction-poll.js';
+export {
+    handlePendingResponseSweep,
+    STRANDED_RESPONSE_AFTER_MS,
+    SWEEP_BATCH_SIZE,
+} from './handlers/pending-response-sweep.js';
 export { getFeedbackCalibration } from './feedback-calibration.js';
 export type { FeedbackCountClient } from './feedback-calibration.js';
 export * from './types.js';

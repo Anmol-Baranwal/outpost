@@ -108,17 +108,47 @@ model Message {
     confidenceLevel    String?     // "HIGH" | "MEDIUM" | "LOW"
     feedback           String?     // "POSITIVE" | "NEGATIVE" | null (no feedback yet)
     externalCommentId  String?     // GitHub comment/discussion-comment ID this message was posted as, if applicable
+    responseKey        String?     // Idempotency slot; PRIMARY_AI_RESPONSE is unique per ticket
+    responseState      MessageResponseState? // Lifecycle of the primary AI response
+    responseJobId      String?     // Queue job that owns a PENDING primary response
+    responseError      String?     // Last real delivery/bookkeeping error text — never lifecycle state
+    // Two sub-states of a PENDING primary response, kept OUT of responseError so
+    // that column stays readable as "what went wrong" on an ops surface.
+    //   deliveryConfirmed        — the platform post succeeded but the
+    //                              PENDING -> DELIVERED write did not, so a retry
+    //                              must repair state instead of reposting.
+    //   escalationRequiredReason — non-null means a human handoff is owed and not
+    //                              yet durable; it holds the reason to enqueue.
+    // Neither is a MessageResponseState value: responseState records the OUTCOME
+    // (PENDING/DELIVERED/ESCALATED) and both of these describe a response that is
+    // still PENDING, so folding them into the enum would lose the outcome.
+    deliveryConfirmed        Boolean @default(false)
+    escalationRequiredReason String?
     attachments        Json?
     createdAt          DateTime    @default(now())
 
+    @@unique([ticketId, responseKey])
     @@index([ticketId])
     @@index([isAiGenerated, feedback])
+    // PENDING_RESPONSE_SWEEP scans for primary responses stranded in PENDING and
+    // older than its threshold. Without this the sweep is a full Message scan on
+    // a fixed schedule, and Message is the table that grows fastest. Leading with
+    // responseState keeps the scan proportional to the handful of genuinely
+    // in-flight responses rather than to message history; createdAt second serves
+    // the age cutoff and the ascending order the sweep reads in.
+    @@index([responseState, createdAt])
 }
 
 enum MessageType {
     USER
     BOT
     SYSTEM
+}
+
+enum MessageResponseState {
+    PENDING
+    DELIVERED
+    ESCALATED
 }
 
 model Note {

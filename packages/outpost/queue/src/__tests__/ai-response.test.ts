@@ -18,16 +18,23 @@ const mockPrismaTicket = {
 const mockPrismaMessage = {
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
+    findUnique: vi.fn(),
 };
 
 const mockPrismaJob = {
     create: vi.fn(),
 };
 
+const mockPrismaQueryRaw = vi.fn();
+const mockPrismaTransaction = vi.fn();
+
 const mockPrisma = {
     ticket: mockPrismaTicket,
     message: mockPrismaMessage,
     job: mockPrismaJob,
+    $queryRaw: mockPrismaQueryRaw,
+    $transaction: mockPrismaTransaction,
 };
 
 vi.mock('@copilotkit/outpost/db', () => ({
@@ -89,10 +96,13 @@ const { handleAiResponse } = await import('../handlers/ai-response.js');
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
-function makeContext(): JobHandlerContext {
+const PENDING_RECOVERY_AFTER_MS = 5 * 60 * 1000;
+
+function makeContext(overrides: Partial<JobHandlerContext> = {}): JobHandlerContext {
     return {
         jobId: 'test-job-1',
         reportProgress: vi.fn().mockResolvedValue(undefined),
+        ...overrides,
     };
 }
 
@@ -239,7 +249,15 @@ describe('handleAiResponse', () => {
         mockPrismaTicket.update.mockResolvedValue({});
         mockPrismaMessage.create.mockResolvedValue({ id: 'msg-new' });
         mockPrismaMessage.update.mockResolvedValue({});
+        mockPrismaMessage.updateMany.mockResolvedValue({ count: 1 });
+        // Only read when an escalation compare-and-set reports no rows changed;
+        // "row is gone" is the least forgiving default for that path.
+        mockPrismaMessage.findUnique.mockResolvedValue(null);
         mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
+        mockPrismaQueryRaw.mockResolvedValue([{ now: new Date('2026-08-11T20:00:00.000Z') }]);
+        mockPrismaTransaction.mockImplementation(
+            async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+        );
         mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
         mockClassifyTicket.mockResolvedValue(sampleClassification);
         mockGetFeedbackCalibration.mockResolvedValue(0);
@@ -301,12 +319,7 @@ describe('handleAiResponse', () => {
             'How do I use CopilotKit with Next.js?',
             expect.objectContaining({
                 source: 'discord',
-                conversationHistory: expect.arrayContaining([
-                    expect.objectContaining({
-                        role: 'user',
-                        content: 'How do I use CopilotKit with Next.js?',
-                    }),
-                ]),
+                conversationHistory: [],
             }),
         );
     });
@@ -518,6 +531,10 @@ describe('handleAiResponse', () => {
                 isAiGenerated: true,
                 confidenceScore: 0.92,
                 confidenceLevel: 'HIGH',
+                responseKey: 'PRIMARY_AI_RESPONSE',
+                responseState: 'PENDING',
+                responseJobId: 'test-job-1',
+                responseError: null,
             },
         });
     });
@@ -859,7 +876,8 @@ describe('handleAiResponse', () => {
             );
 
             // The failed write must not abort the job between the BOT row and the
-            // post-back — that is the window the guard makes unrecoverable.
+            // post-back. Recovery is intentionally human-only, so this attempt
+            // should still use its one chance to deliver automatically.
             expect(mockPostResponse).toHaveBeenCalled();
             expect(result.success).toBe(true);
             expect(result.data?.deliveryFailed).toBe(false);
@@ -898,14 +916,82 @@ describe('handleAiResponse', () => {
             expect(mockPrismaJob.create).not.toHaveBeenCalled();
         });
 
+        it('does not escalate when posting succeeds but DELIVERED state persistence fails', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPrismaMessage.update.mockImplementation(
+                async (args: { data: Record<string, unknown> }) => {
+                    if (args.data.responseState === 'DELIVERED') {
+                        throw new Error('DB write conflict');
+                    }
+                    return {};
+                },
+            );
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-delivered-state' }),
+            );
+
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(result.data?.escalated).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: {
+                    deliveryConfirmed: true,
+                    responseError: expect.stringContaining('DB write conflict'),
+                },
+            });
+        });
+
+        it('does not escalate or repost a confirmed delivery whose DELIVERED state write failed', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-delivered-state-failed',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-delivered-state',
+                        deliveryConfirmed: true,
+                        responseError:
+                            'Delivery succeeded but the DELIVERED state write failed: DB write conflict',
+                        createdAt: new Date(),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-delivered-state' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-delivered-state-failed' },
+                data: { responseState: 'DELIVERED', responseError: null },
+            });
+        });
+
         it('reports job failure when the answer was neither delivered nor escalated', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
             mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+            const context = makeContext();
 
             const result = await handleAiResponse(
                 { ticketId: 'tkt-1', source: 'discord' },
-                makeContext(),
+                context,
             );
 
             // Nothing reached the reporter and no human was pulled in; a silent
@@ -913,22 +999,759 @@ describe('handleAiResponse', () => {
             expect(result.success).toBe(false);
             expect(result.error).toContain('Discord API 503');
             expect(result.error).toContain('queue unavailable');
+            // A terminal worker attempt preserves the handler's last progress
+            // value on the DEAD_LETTER row. Failure must therefore stop at the
+            // last completed phase instead of looking 100% complete.
+            expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+            expect(context.reportProgress).toHaveBeenLastCalledWith(85);
         });
 
-        it('still reports success when only a low-confidence escalation fails to enqueue', async () => {
-            // The reporter did get the answer here, so the historical fail-soft
-            // behaviour stands — the failure mode is different in kind.
+        /**
+         * The escalation compare-and-set reports "no rows changed" instead of
+         * throwing when the response row is no longer PENDING. Nothing was
+         * queued in that case, so what the handler reports has to follow the
+         * row's actual state — not the local conditions that asked for the
+         * escalation. `count: 0` on updateMany is exactly that no-op.
+         */
+        describe('escalation compare-and-set changed no rows', () => {
+            beforeEach(() => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+                mockPrismaMessage.updateMany.mockResolvedValue({ count: 0 });
+            });
+
+            it('fails loudly when the response is still PENDING, so no human was summoned', async () => {
+                mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'PENDING' });
+                const context = makeContext();
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    context,
+                );
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('was not queued');
+                expect(result.error).toContain('PENDING');
+                expect(result.error).toContain('Low AI confidence');
+                // No ESCALATION row was written: the transaction rolled back.
+                expect(mockPrismaJob.create).not.toHaveBeenCalled();
+                // Same rule as the enqueue-threw case: a failing attempt must not
+                // look complete on the DEAD_LETTER row.
+                expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+            });
+
+            it('fails loudly when the response row cannot be found', async () => {
+                mockPrismaMessage.findUnique.mockResolvedValue(null);
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext(),
+                );
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('response state is missing');
+            });
+
+            it('fails loudly when the response state cannot be read', async () => {
+                mockPrismaMessage.findUnique.mockRejectedValue(new Error('db down'));
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext(),
+                );
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('unreadable (db down)');
+            });
+
+            it('succeeds with escalated:false when the response is already DELIVERED', async () => {
+                // No handoff was owed: the reporter has a durable answer, so a
+                // no-op enqueue is unremarkable and `escalated` must match the row.
+                mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'DELIVERED' });
+                const context = makeContext();
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    context,
+                );
+
+                expect(result.success).toBe(true);
+                expect(result.data?.escalated).toBe(false);
+                expect(mockPrismaJob.create).not.toHaveBeenCalled();
+                expect(context.reportProgress).toHaveBeenCalledWith(100);
+            });
+
+            it('succeeds with escalated:true when another actor already escalated the row', async () => {
+                mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'ESCALATED' });
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext(),
+                );
+
+                expect(result.success).toBe(true);
+                // A human is on it — just not because of this attempt.
+                expect(result.data?.escalated).toBe(true);
+                expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            });
+
+            it('still reports escalated:true when this attempt does queue the escalation', async () => {
+                // Guards the rewritten `escalated`: the ordinary success path must
+                // keep reporting true off the committed enqueue.
+                mockPrismaMessage.updateMany.mockResolvedValue({ count: 1 });
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext(),
+                );
+
+                expect(result.success).toBe(true);
+                expect(result.data?.escalated).toBe(true);
+                expect(mockPrismaMessage.findUnique).not.toHaveBeenCalled();
+            });
+        });
+
+        it('retries the escalation after delivery and escalation both fail', async () => {
+            const pendingResponse = {
+                id: 'msg-new',
+                type: 'BOT',
+                content: highConfidenceResult.response,
+                isAiGenerated: true,
+                responseKey: 'PRIMARY_AI_RESPONSE',
+                responseState: 'PENDING',
+                responseJobId: 'job-retry-delivery',
+                responseError: 'Discord API 503',
+                createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
+            };
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce(sampleTicket)
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [...sampleTicket.messages, pendingResponse],
+                })
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [
+                        ...sampleTicket.messages,
+                        { ...pendingResponse, responseJobId: 'job-delayed-delivery-recovery' },
+                    ],
+                });
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+            mockPrismaJob.create
+                .mockRejectedValueOnce(new Error('queue unavailable'))
+                .mockResolvedValueOnce({ id: 'job-delayed-delivery-recovery' })
+                .mockResolvedValueOnce({ id: 'job-escalation-retry' });
+
+            const context = makeContext({ jobId: 'job-retry-delivery' });
+            const firstAttempt = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                context,
+            );
+            const retryAttempt = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                context,
+            );
+            const recoveryAttempt = await handleAiResponse(
+                {
+                    ticketId: 'tkt-1',
+                    source: 'discord',
+                    pendingResponseRecovery: { messageId: pendingResponse.id },
+                },
+                makeContext({ jobId: 'job-delayed-delivery-recovery' }),
+            );
+
+            expect(firstAttempt.success).toBe(false);
+            expect(retryAttempt.success).toBe(true);
+            expect(retryAttempt.data).toMatchObject({ recoveryScheduled: true });
+            expect(recoveryAttempt.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                reason: 'delivery_recovered',
+            });
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(3);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it('escalates on retry after interruption between delivery failure and escalation', async () => {
+            const pendingResponse = {
+                id: 'msg-new',
+                type: 'BOT',
+                content: highConfidenceResult.response,
+                isAiGenerated: true,
+                responseKey: 'PRIMARY_AI_RESPONSE',
+                responseState: 'PENDING',
+                responseJobId: 'job-interrupted',
+                responseError: 'Discord API 503',
+                createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS - 1),
+            };
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce(sampleTicket)
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [...sampleTicket.messages, pendingResponse],
+                })
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [
+                        ...sampleTicket.messages,
+                        { ...pendingResponse, responseJobId: 'job-delayed-interruption' },
+                    ],
+                });
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+            mockPrismaJob.create
+                .mockResolvedValueOnce({ id: 'job-delayed-interruption' })
+                .mockResolvedValueOnce({ id: 'job-escalation-after-interruption' });
+
+            let interruptAt85 = true;
+            const firstProgress = vi.fn().mockImplementation(async (percent: number) => {
+                if (percent === 85 && interruptAt85) {
+                    interruptAt85 = false;
+                    throw new Error('worker interrupted after response row was created');
+                }
+            });
+            await expect(
+                handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-interrupted', reportProgress: firstProgress }),
+                ),
+            ).rejects.toThrow('worker interrupted');
+
+            const retryAttempt = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-interrupted' }),
+            );
+            const recoveryAttempt = await handleAiResponse(
+                {
+                    ticketId: 'tkt-1',
+                    source: 'discord',
+                    pendingResponseRecovery: { messageId: pendingResponse.id },
+                },
+                makeContext({ jobId: 'job-delayed-interruption' }),
+            );
+
+            expect(retryAttempt.success).toBe(true);
+            expect(retryAttempt.data).toMatchObject({ recoveryScheduled: true });
+            expect(recoveryAttempt.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                reason: 'delivery_recovered',
+            });
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(2);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            ['low-confidence', lowConfidenceResult, 'Low AI confidence'],
+            ['suppressed', suppressedResult, 'AI response withheld'],
+        ])(
+            'fails durably when a delivered %s response cannot enqueue its required escalation',
+            async (_label, pipelineResult, reasonFragment) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue(pipelineResult);
+                mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+
+                const result = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-required-escalation' }),
+                );
+
+                expect(mockPostResponse).toHaveBeenCalledTimes(1);
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('queue unavailable');
+                expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                    where: { id: 'msg-new' },
+                    data: {
+                        escalationRequiredReason: expect.stringContaining(reasonFragment),
+                    },
+                });
+                expect(mockPrismaMessage.update).not.toHaveBeenCalledWith({
+                    where: { id: 'msg-new' },
+                    data: { responseState: 'DELIVERED', responseError: null },
+                });
+            },
+        );
+
+        it('retries a required escalation without regenerating or reposting the delivered response', async () => {
+            const pendingRequiredEscalation = {
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-required-escalation',
+                        type: 'BOT',
+                        content: lowConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-required-escalation',
+                        escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                        createdAt: new Date(),
+                    },
+                ],
+            };
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce(sampleTicket)
+                .mockResolvedValueOnce(pendingRequiredEscalation);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPrismaJob.create
+                .mockRejectedValueOnce(new Error('queue unavailable'))
+                .mockResolvedValueOnce({ id: 'job-required-escalation-retry' });
+
+            const context = makeContext({ jobId: 'job-required-escalation' });
+            const firstAttempt = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                context,
+            );
+            const retryAttempt = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                context,
+            );
+
+            expect(firstAttempt.success).toBe(false);
+            expect(retryAttempt.success).toBe(true);
+            expect(retryAttempt.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                reason: 'escalation_recovered',
+            });
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+
+            const escalationCalls = mockPrismaJob.create.mock.calls.filter(
+                (call: Array<{ data: { type: string } }>) => call[0].data.type === 'ESCALATION',
+            );
+            // One failed enqueue plus one successful retry; no additional job is
+            // created once the ordinary retry completes.
+            expect(escalationCalls).toHaveLength(2);
+            expect(escalationCalls[1][0].data.payload).toEqual({
+                ticketId: 'tkt-1',
+                reason: 'Low AI confidence (25%) — automated escalation',
+            });
+            expect(mockPrismaMessage.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 'msg-required-escalation',
+                    responseKey: 'PRIMARY_AI_RESPONSE',
+                    responseState: 'PENDING',
+                },
+                data: {
+                    responseState: 'ESCALATED',
+                    escalationRequiredReason: null,
+                },
+            });
+        });
+
+        it('recovers the keyed primary response when an older AI BOT row appears first', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'legacy-ai-row',
+                        type: 'BOT',
+                        content: 'Legacy AI response',
+                        isAiGenerated: true,
+                        responseKey: null,
+                        responseState: null,
+                        createdAt: new Date('2026-04-23T10:00:10Z'),
+                    },
+                    {
+                        id: 'primary-ai-row',
+                        type: 'BOT',
+                        content: lowConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-required-escalation',
+                        escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                        createdAt: new Date('2026-04-23T10:00:20Z'),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-required-escalation' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ reason: 'escalation_recovered' });
+            expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ type: 'ESCALATION' }),
+            });
+            expect(mockPrismaMessage.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 'primary-ai-row',
+                    responseKey: 'PRIMARY_AI_RESPONSE',
+                    responseState: 'PENDING',
+                },
+                data: {
+                    responseState: 'ESCALATED',
+                    escalationRequiredReason: null,
+                },
+            });
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+    });
+
+    /**
+     * The recovery paths face the same no-op enqueue the main path does.
+     *
+     * `enqueueEscalationAtomically` returns false rather than throwing when its
+     * compare-and-set matches no rows — nothing was queued. Both recovery
+     * functions used to copy that boolean into `data.escalated` and return
+     * `success: true` regardless, so a dropped human handoff was recorded as a
+     * completed job. `count: 0` on updateMany drives exactly that no-op, and what
+     * comes back has to follow the row's real responseState.
+     */
+    describe('recovery escalation compare-and-set changed no rows', () => {
+        /** Row shape that routes into recoverRequiredEscalation. */
+        const requiredEscalationRow = {
+            id: 'msg-required-escalation',
+            type: 'BOT',
+            content: lowConfidenceResult.response,
+            isAiGenerated: true,
+            responseKey: 'PRIMARY_AI_RESPONSE',
+            responseState: 'PENDING',
+            responseJobId: 'job-recovery',
+            escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+            createdAt: new Date('2026-04-23T10:00:20Z'),
+        };
+
+        /**
+         * Row shape that routes into recoverPendingResponse: no owed-escalation
+         * marker (that arm is checked first) and delivery never confirmed.
+         */
+        const pendingDeliveryRow = {
+            id: 'msg-pending-delivery',
+            type: 'BOT',
+            content: highConfidenceResult.response,
+            isAiGenerated: true,
+            responseKey: 'PRIMARY_AI_RESPONSE',
+            responseState: 'PENDING',
+            responseJobId: 'job-recovery',
+            responseError: 'Discord API 503',
+            escalationRequiredReason: null,
+            deliveryConfirmed: false,
+            createdAt: new Date('2026-04-23T10:00:20Z'),
+        };
+
+        function stageRow(row: Record<string, unknown>): void {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [...sampleTicket.messages, row],
+            });
+        }
+
+        const requiredEscalationJob = () => ({ ticketId: 'tkt-1', source: 'discord' as const });
+        const pendingDeliveryJob = () => ({
+            ticketId: 'tkt-1',
+            source: 'discord' as const,
+            pendingResponseRecovery: { messageId: pendingDeliveryRow.id },
+        });
+
+        beforeEach(() => {
+            mockPrismaMessage.updateMany.mockResolvedValue({ count: 0 });
+        });
+
+        describe.each([
+            ['required-escalation recovery', requiredEscalationRow, requiredEscalationJob],
+            ['pending-delivery recovery', pendingDeliveryRow, pendingDeliveryJob],
+        ])('%s', (_label, row, makePayload) => {
+            it('fails loudly when the response is still PENDING, so no human was summoned', async () => {
+                stageRow(row);
+                mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'PENDING' });
+                const context = makeContext({ jobId: 'job-recovery' });
+
+                const result = await handleAiResponse(makePayload(), context);
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('was not queued');
+                expect(result.error).toContain('response state is PENDING');
+                // The transaction rolled back: no ESCALATION row exists.
+                expect(mockPrismaJob.create).not.toHaveBeenCalled();
+                // A failing attempt must not look complete on the DEAD_LETTER row.
+                expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+                // Recovery never regenerates or reposts.
+                expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+                expect(mockPostResponse).not.toHaveBeenCalled();
+            });
+
+            it('fails loudly when the response row cannot be found', async () => {
+                stageRow(row);
+                mockPrismaMessage.findUnique.mockResolvedValue(null);
+
+                const result = await handleAiResponse(
+                    makePayload(),
+                    makeContext({ jobId: 'job-recovery' }),
+                );
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('response state is missing');
+            });
+
+            it('fails loudly when the response state cannot be read', async () => {
+                stageRow(row);
+                mockPrismaMessage.findUnique.mockRejectedValue(new Error('db down'));
+
+                const result = await handleAiResponse(
+                    makePayload(),
+                    makeContext({ jobId: 'job-recovery' }),
+                );
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('unreadable (db down)');
+            });
+
+            it('succeeds with escalated:true when another actor already escalated the row', async () => {
+                stageRow(row);
+                mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'ESCALATED' });
+                const context = makeContext({ jobId: 'job-recovery' });
+
+                const result = await handleAiResponse(makePayload(), context);
+
+                expect(result.success).toBe(true);
+                // A human is on it — just not because of this attempt.
+                expect(result.data?.escalated).toBe(true);
+                expect(mockPrismaJob.create).not.toHaveBeenCalled();
+                expect(context.reportProgress).toHaveBeenCalledWith(100);
+            });
+
+            it('succeeds without claiming a handoff when the response is already DELIVERED', async () => {
+                stageRow(row);
+                mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'DELIVERED' });
+                const context = makeContext({ jobId: 'job-recovery' });
+
+                const result = await handleAiResponse(makePayload(), context);
+
+                expect(result.success).toBe(true);
+                // Nothing may contradict a DELIVERED row: no handoff was owed and
+                // the stuck-delivery premise of this recovery no longer holds.
+                expect(result.data).toMatchObject({
+                    skipped: true,
+                    escalated: false,
+                    deliveryFailed: false,
+                    reason: 'already_answered',
+                });
+                expect(mockPrismaJob.create).not.toHaveBeenCalled();
+                expect(context.reportProgress).toHaveBeenCalledWith(100);
+            });
+        });
+
+        it('still reports escalated:true when the required-escalation retry does queue it', async () => {
+            // Guards the committed-enqueue arm the no-op handling sits next to.
+            stageRow(requiredEscalationRow);
+            mockPrismaMessage.updateMany.mockResolvedValue({ count: 1 });
+
+            const result = await handleAiResponse(
+                requiredEscalationJob(),
+                makeContext({ jobId: 'job-recovery' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({
+                escalated: true,
+                reason: 'escalation_recovered',
+            });
+            expect(mockPrismaMessage.findUnique).not.toHaveBeenCalled();
+        });
+
+        it('still reports escalated:true when the pending-delivery recovery does queue it', async () => {
+            stageRow(pendingDeliveryRow);
+            mockPrismaMessage.updateMany.mockResolvedValue({ count: 1 });
+
+            const result = await handleAiResponse(
+                pendingDeliveryJob(),
+                makeContext({ jobId: 'job-recovery' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({
+                escalated: true,
+                deliveryFailed: true,
+                reason: 'delivery_recovered',
+            });
+            expect(mockPrismaMessage.findUnique).not.toHaveBeenCalled();
+        });
+    });
+
+    // Lifecycle state is carried by dedicated columns, never by a prefix inside
+    // responseError.
+    //
+    // responseError is the free-text "what went wrong" column an operations
+    // surface renders verbatim, so a `DELIVERY_CONFIRMED:` value there showed the
+    // opposite of its meaning — a delivered answer displayed as a failure. The two
+    // signals are sub-states of a PENDING primary response, not outcomes, so they
+    // are not MessageResponseState values either: `deliveryConfirmed` is a
+    // boolean, and `escalationRequiredReason` is one nullable column holding both
+    // the fact that a handoff is owed and the reason to enqueue, so the flag and
+    // its payload cannot drift apart.
+    describe('lifecycle state stays out of responseError', () => {
+        /** Every responseError value this run wrote, ignoring explicit clears. */
+        function writtenResponseErrors(): string[] {
+            return mockPrismaMessage.update.mock.calls
+                .map((call: Array<{ data: Record<string, unknown> }>) => call[0].data.responseError)
+                .filter((value: unknown): value is string => typeof value === 'string');
+        }
+
+        it('records a confirmed delivery on its own column and keeps responseError as error text', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPrismaMessage.update.mockImplementation(
+                async (args: { data: Record<string, unknown> }) => {
+                    if (args.data.responseState === 'DELIVERED') {
+                        throw new Error('DB write conflict');
+                    }
+                    return {};
+                },
+            );
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-confirmed-column' }),
+            );
+
+            expect(result.success).toBe(true);
+            const confirmations = mockPrismaMessage.update.mock.calls.filter(
+                (call: Array<{ data: Record<string, unknown> }>) =>
+                    call[0].data.deliveryConfirmed === true,
+            );
+            expect(confirmations).toHaveLength(1);
+            // The only thing responseError may carry is the write failure itself.
+            const errors = writtenResponseErrors();
+            expect(errors).toHaveLength(1);
+            expect(errors[0]).toContain('DB write conflict');
+            // No value written to the free-text column may be a state token.
+            for (const error of errors) {
+                expect(error).not.toMatch(/^[A-Z][A-Z_]+:/);
+            }
+        });
+
+        it('records an owed escalation on its own column and never in responseError', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
             mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
 
             const result = await handleAiResponse(
                 { ticketId: 'tkt-1', source: 'discord' },
-                makeContext(),
+                makeContext({ jobId: 'job-owed-column' }),
             );
 
-            expect(mockPostResponse).toHaveBeenCalled();
+            expect(result.success).toBe(false);
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: {
+                    escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                },
+            });
+            // The reason is not an error, so it must not reach responseError —
+            // delivery succeeded here, only the handoff is outstanding.
+            expect(writtenResponseErrors()).toEqual([]);
+        });
+
+        it.each([
+            ['DELIVERY_CONFIRMED: fabricated confirmation'],
+            ['ESCALATION_REQUIRED: fabricated reason'],
+        ])('ignores responseError %j when the state columns are unset', async (spoofedError) => {
+            // An upstream platform error message is free text this handler
+            // does not author, so it must not be able to drive the lifecycle.
+            // These rows carry text in the exact old marker shape, prefix
+            // included, while both state columns say otherwise.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-spoofed-markers',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-someone-else',
+                        deliveryConfirmed: false,
+                        escalationRequiredReason: null,
+                        responseError: spoofedError,
+                        createdAt: new Date(),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-spoofed-markers' }),
+            );
+
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            // Neither an escalation from the fake ESCALATION_REQUIRED text...
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.updateMany).not.toHaveBeenCalled();
+            // ...nor a DELIVERED repair from the fake DELIVERY_CONFIRMED text.
+            expect(mockPrismaMessage.update).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('recovers an owed escalation whose responseError holds an unrelated real error', async () => {
+            // Separate columns mean both can be set at once, which the single
+            // prefix could never represent. The owed handoff must still win: its
+            // transition is what ends the PENDING state, and no branch here
+            // reposts to the reporter.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-owed-with-error',
+                        type: 'BOT',
+                        content: lowConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-owed-with-error',
+                        deliveryConfirmed: true,
+                        escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                        responseError:
+                            'Delivery succeeded but the DELIVERED state write failed: DB write conflict',
+                        createdAt: new Date(),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-owed-with-error' }),
+            );
+
             expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                reason: 'escalation_recovered',
+            });
+            expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ type: 'ESCALATION' }),
+            });
+            expect(mockPrismaJob.create.mock.calls[0][0].data.payload).toEqual({
+                ticketId: 'tkt-1',
+                reason: 'Low AI confidence (25%) — automated escalation',
+            });
+            // The ESCALATED transition clears the owed-handoff marker, and only
+            // that: responseError is diagnostic text a human picking the thread
+            // up still needs, so the compare-and-set must leave it alone.
+            expect(mockPrismaMessage.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 'msg-owed-with-error',
+                    responseKey: 'PRIMARY_AI_RESPONSE',
+                    responseState: 'PENDING',
+                },
+                data: {
+                    responseState: 'ESCALATED',
+                    escalationRequiredReason: null,
+                },
+            });
+            expect(mockPostResponse).not.toHaveBeenCalled();
         });
     });
 
@@ -1046,7 +1869,6 @@ describe('handleAiResponse', () => {
             'Hello',
             expect.objectContaining({
                 conversationHistory: [
-                    { role: 'user', content: 'Hello' },
                     { role: 'assistant', content: 'Hi there!' },
                     { role: 'user', content: 'Follow up question' },
                 ],
@@ -1098,17 +1920,17 @@ describe('handleAiResponse', () => {
             );
         });
 
-        it('still passes the interim follow-up through as conversation context', async () => {
+        it('passes the follow-up as context without repeating the opening question', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(splitThoughtTicket);
 
             await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
-            expect(mockGenerateSupportResponse.mock.calls[0]?.[1]).toMatchObject({
-                conversationHistory: [
-                    { role: 'user', content: 'How do I use CopilotKit with Next.js?' },
-                    { role: 'user', content: 'btw I am on the app router' },
-                ],
-            });
+            expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+                'How do I use CopilotKit with Next.js?',
+                expect.objectContaining({
+                    conversationHistory: [{ role: 'user', content: 'btw I am on the app router' }],
+                }),
+            );
         });
 
         it('skips leading non-USER rows to find the opening USER message', async () => {
@@ -1213,6 +2035,278 @@ describe('handleAiResponse', () => {
             expect(result.success).toBe(true);
             expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
             expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('lets only one of two concurrent handlers post a response', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            // Hold both model calls until both handlers have passed the initial
+            // history check. This makes the check-then-insert race deterministic:
+            // neither invocation can observe the other's response in its ticket
+            // snapshot.
+            let generatorsStarted = 0;
+            let releaseGenerators!: () => void;
+            const bothGeneratorsStarted = new Promise<void>((resolve) => {
+                releaseGenerators = resolve;
+            });
+            mockGenerateSupportResponse.mockImplementation(async () => {
+                generatorsStarted += 1;
+                if (generatorsStarted === 2) releaseGenerators();
+                await bothGeneratorsStarted;
+                return highConfidenceResult;
+            });
+
+            // Model the database's unique (ticketId, responseKey) constraint.
+            // Before the production insert supplies responseKey, both writes
+            // succeed and this test fails with two platform posts.
+            let responseClaimed = false;
+            mockPrismaMessage.create.mockImplementation(
+                async (args: { data: { responseKey?: string } }) => {
+                    if (args.data.responseKey === 'PRIMARY_AI_RESPONSE') {
+                        if (responseClaimed) {
+                            throw {
+                                code: 'P2002',
+                                meta: { target: ['ticketId', 'responseKey'] },
+                            };
+                        }
+                        responseClaimed = true;
+                    }
+                    return { id: `msg-${responseClaimed ? 'winner' : 'unclaimed'}` };
+                },
+            );
+
+            const results = await Promise.all([
+                handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext()),
+                handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext()),
+            ]);
+
+            expect(generatorsStarted).toBe(2);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(results.filter((result) => result.data?.skipped)).toHaveLength(1);
+            expect(results.every((result) => result.success)).toBe(true);
+        });
+
+        it('does not recover a fresh PENDING response owned by another job', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-in-flight',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-still-posting',
+                        createdAt: new Date(),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-concurrent-loser' }),
+            );
+
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('schedules exactly one delayed takeover for a fresh same-job PENDING response', async () => {
+            const now = Date.parse('2026-08-11T20:00:00.000Z');
+            const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
+            const pendingResponse = {
+                id: 'msg-same-job-in-flight',
+                type: 'BOT',
+                content: highConfidenceResult.response,
+                isAiGenerated: true,
+                responseKey: 'PRIMARY_AI_RESPONSE',
+                responseState: 'PENDING',
+                responseJobId: 'job-timed-out',
+                createdAt: new Date(now - 1_000),
+            };
+            mockPrismaTicket.findUnique
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [...sampleTicket.messages, pendingResponse],
+                })
+                .mockResolvedValueOnce({
+                    ...sampleTicket,
+                    messages: [
+                        ...sampleTicket.messages,
+                        { ...pendingResponse, responseJobId: 'job-delayed-takeover' },
+                    ],
+                });
+            mockPrismaJob.create.mockResolvedValueOnce({ id: 'job-delayed-takeover' });
+
+            try {
+                const firstRetry = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-timed-out' }),
+                );
+                const duplicateRetry = await handleAiResponse(
+                    { ticketId: 'tkt-1', source: 'discord' },
+                    makeContext({ jobId: 'job-timed-out' }),
+                );
+
+                expect(firstRetry.data).toMatchObject({
+                    skipped: true,
+                    recoveryScheduled: true,
+                    reason: 'delivery_recovery_scheduled',
+                });
+                expect(duplicateRetry.data).toMatchObject({
+                    skipped: true,
+                    reason: 'already_answered',
+                });
+                expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+                expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
+                        type: 'AI_RESPONSE',
+                        payload: {
+                            ticketId: 'tkt-1',
+                            source: 'discord',
+                            pendingResponseRecovery: {
+                                messageId: 'msg-same-job-in-flight',
+                            },
+                        },
+                        // The due time is based on the database clock fixture,
+                        // not message.createdAt or Date.now().
+                        runAt: new Date('2026-08-11T20:05:00.000Z'),
+                    }),
+                });
+                expect(mockPrismaMessage.updateMany).toHaveBeenCalledWith({
+                    where: {
+                        id: 'msg-same-job-in-flight',
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-timed-out',
+                    },
+                    data: { responseJobId: 'job-delayed-takeover' },
+                });
+                expect(mockPostResponse).not.toHaveBeenCalled();
+            } finally {
+                dateNow.mockRestore();
+            }
+        });
+
+        it('skips a delayed takeover when the original response became DELIVERED', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-delivered-before-takeover',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'DELIVERED',
+                        responseJobId: 'job-delayed-takeover',
+                        createdAt: new Date(Date.now() - PENDING_RECOVERY_AFTER_MS),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-delayed-takeover' }),
+            );
+
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('recovers only from an explicit delayed payload even when the app clock is behind', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-stale',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-takeover',
+                        // Deliberately in the app clock's future. Recovery must
+                        // be authorized by the durable payload/owner pair, not
+                        // by Date.now() arithmetic against a DB timestamp.
+                        createdAt: new Date('2099-01-01T00:00:00.000Z'),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                {
+                    ticketId: 'tkt-1',
+                    source: 'discord',
+                    pendingResponseRecovery: { messageId: 'msg-stale' },
+                },
+                makeContext({ jobId: 'job-takeover' }),
+            );
+
+            expect(result.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                reason: 'delivery_recovered',
+            });
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+            expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ type: 'ESCALATION' }),
+            });
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('atomically allows only one concurrent delayed recovery to enqueue escalation', async () => {
+            const pendingResponse = {
+                id: 'msg-concurrent-recovery',
+                type: 'BOT',
+                content: highConfidenceResult.response,
+                isAiGenerated: true,
+                responseKey: 'PRIMARY_AI_RESPONSE',
+                responseState: 'PENDING',
+                responseJobId: 'job-delayed-recovery',
+                responseError: 'Discord API 503',
+                createdAt: new Date(),
+            };
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [...sampleTicket.messages, pendingResponse],
+            });
+
+            // Model the row, not just the CAS return value: once the winner
+            // commits, the row IS ESCALATED, and the loser reads that state to
+            // decide whether the promised handoff exists. Leaving findUnique on
+            // its "row is gone" default would make the loser fail for a handoff
+            // that is in fact durable.
+            let pending = true;
+            mockPrismaMessage.updateMany.mockImplementation(async () => {
+                if (!pending) return { count: 0 };
+                pending = false;
+                return { count: 1 };
+            });
+            mockPrismaMessage.findUnique.mockImplementation(async () => ({
+                responseState: pending ? 'PENDING' : 'ESCALATED',
+            }));
+
+            const payload = {
+                ticketId: 'tkt-1',
+                source: 'discord' as const,
+                pendingResponseRecovery: { messageId: pendingResponse.id },
+            };
+            const [first, second] = await Promise.all([
+                handleAiResponse(payload, makeContext({ jobId: 'job-delayed-recovery' })),
+                handleAiResponse(payload, makeContext({ jobId: 'job-delayed-recovery' })),
+            ]);
+
+            expect(first.success).toBe(true);
+            expect(second.success).toBe(true);
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+            expect(mockPostResponse).not.toHaveBeenCalled();
         });
 
         it('drives progress to 100 so the skipped job is not left looking hung', async () => {
@@ -1349,6 +2443,153 @@ describe('handleAiResponse', () => {
             await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
             expect(mockGenerateSupportResponse).toHaveBeenCalled();
+        });
+    });
+
+    // The response row's columns have to agree with each other. Each case here is
+    // a pair of writes (or a write and a read) that previously contradicted itself.
+    describe('response-state bookkeeping stays self-consistent', () => {
+        it('keeps the delivery failure in responseError when the escalation commits', async () => {
+            // The escalation caused BY a delivery failure is the one that most
+            // needs the failure text: recoverPendingResponse renders it into the
+            // reason, and the human taking the thread over reads it on the row.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error('Teams 403 wrong region'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-preserve-error' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.escalated).toBe(true);
+            // The delivery path recorded the failure...
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: { responseError: 'Teams 403 wrong region' },
+            });
+            // ...and the ESCALATED compare-and-set did not touch that column.
+            const casCalls = mockPrismaMessage.updateMany.mock.calls.filter(
+                (call: Array<{ data: Record<string, unknown> }>) =>
+                    call[0].data.responseState === 'ESCALATED',
+            );
+            expect(casCalls).toHaveLength(1);
+            expect(casCalls[0][0].data).toEqual({
+                responseState: 'ESCALATED',
+                escalationRequiredReason: null,
+            });
+            expect(Object.keys(casCalls[0][0].data)).not.toContain('responseError');
+        });
+
+        it('clears the owed-escalation marker when the row settled DELIVERED', async () => {
+            // A row saying "a human is required" next to a state saying delivered
+            // is a combination no path can act on — requiredEscalationReason only
+            // reads a PENDING row — so accepting DELIVERED has to clear it.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPrismaMessage.updateMany.mockResolvedValue({ count: 0 });
+            mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'DELIVERED' });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-orphan-marker' }),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.escalated).toBe(false);
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: { escalationRequiredReason: null },
+            });
+            // The marker was written first, then cleared — in that order.
+            const markerWrites = mockPrismaMessage.update.mock.calls.filter(
+                (call: Array<{ data: Record<string, unknown> }>) =>
+                    'escalationRequiredReason' in call[0].data,
+            );
+            expect(markerWrites).toHaveLength(2);
+            expect(markerWrites[0][0].data.escalationRequiredReason).toContain('Low AI confidence');
+            expect(markerWrites[1][0].data.escalationRequiredReason).toBeNull();
+        });
+
+        it('fails the job when the orphaned escalation marker cannot be cleared', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPrismaMessage.updateMany.mockResolvedValue({ count: 0 });
+            mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'DELIVERED' });
+            mockPrismaMessage.update.mockImplementation(
+                async (args: { data: Record<string, unknown> }) => {
+                    if (args.data.escalationRequiredReason === null) {
+                        throw new Error('DB write conflict');
+                    }
+                    return {};
+                },
+            );
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-orphan-marker-stuck' }),
+            );
+
+            // Silently succeeding would ship the contradiction this fix removes.
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('owed-escalation marker could not be cleared');
+        });
+
+        it('does not repair a non-primary AI BOT row as the ticket answer', async () => {
+            // priorAiResponse falls back to the first AI BOT row when no keyed
+            // primary exists, so the confirmed-delivery repair must check the key
+            // the same way the recovery branches below it do.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-unkeyed-bot',
+                        type: 'BOT',
+                        content: 'Some other AI-generated BOT message',
+                        isAiGenerated: true,
+                        responseKey: null,
+                        responseState: 'PENDING',
+                        responseJobId: 'job-someone-else',
+                        deliveryConfirmed: true,
+                        createdAt: new Date('2026-04-23T10:00:10Z'),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext({ jobId: 'job-unkeyed-repair' }),
+            );
+
+            // Still an already-answered skip — but no row is promoted to
+            // "the ticket's one response" on the strength of an unkeyed BOT row.
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockPrismaMessage.update).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('classifies title only, never the string "null", when description is absent', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, description: null });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockClassifyTicket).toHaveBeenCalledWith(sampleTicket.title);
+            const classified = mockClassifyTicket.mock.calls[0][0] as string;
+            expect(classified).not.toContain('null');
+            expect(classified).not.toContain('\n');
+        });
+
+        it('still classifies title and description together when both exist', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockClassifyTicket).toHaveBeenCalledWith(
+                `${sampleTicket.title}\n${sampleTicket.description}`,
+            );
         });
     });
 });
