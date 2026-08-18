@@ -32,6 +32,10 @@ export {
     SUPPORTED_PLATFORMS,
 } from './registry.js';
 
+// Ticket sourceId key builder — the single definition shared by ticket
+// creation, reply lookup, and the bots' own "is this thread tracked?" checks.
+export { buildTicketSourceId } from './source-id.js';
+
 // Inbound handler
 export { InboundHandler } from './inbound.js';
 export type { InboundHandlerConfig, CreateJobFn } from './inbound.js';

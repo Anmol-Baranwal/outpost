@@ -30,9 +30,10 @@ function makeCardContext(action: string, overrides: Record<string, unknown> = {}
     return {
         activity: {
             type: 'invoke',
+            // The cards send only `action` — no ticket identifier. The handlers
+            // resolve the ticket from `conversation.id`.
             value: {
                 action,
-                ticketDisplayId: 'TKT-AB12',
             },
             from: {
                 id: 'user-456',

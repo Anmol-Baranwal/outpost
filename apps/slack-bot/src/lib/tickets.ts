@@ -1,16 +1,23 @@
 import { prisma } from '@copilotkit/outpost/db';
+import { TicketSource, buildTicketSourceId } from '@copilotkit/outpost/shared';
 import { config } from '../config.js';
 
 /**
  * Find a ticket by its Slack thread timestamp and channel ID.
- * Tickets from Slack use a composite sourceId of "channelId:threadTs"
- * so we can distinguish threads across channels.
+ *
+ * The composite "channelId:threadTs" key is built by buildTicketSourceId — the
+ * same helper InboundHandler stores tickets with — so this lookup can never
+ * search for a spelling nothing was written under. A null key (missing channel
+ * or ts) means no ticket can carry it, so there is nothing to query.
  */
 export async function findTicketByThreadTs(channelId: string, threadTs: string) {
+    const sourceId = buildTicketSourceId(TicketSource.SLACK, threadTs, channelId);
+    if (sourceId === null) return null;
+
     return prisma.ticket.findFirst({
         where: {
             source: 'SLACK',
-            sourceId: `${channelId}:${threadTs}`,
+            sourceId,
         },
     });
 }

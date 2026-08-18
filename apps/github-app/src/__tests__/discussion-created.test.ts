@@ -8,6 +8,7 @@ const mockHandleResult = {
     ticketId: 'ticket-disc-id',
     displayId: 'TKT-DS01',
     isNewTicket: true,
+    isOrphanedReply: false,
     aiJobEnqueued: true,
     messageId: 'message-disc-id',
 };
