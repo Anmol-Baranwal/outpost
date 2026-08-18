@@ -135,9 +135,15 @@ const sampleTicket = {
     },
     messages: [
         {
+            // `isAiGenerated` is spelled out on every message fixture in this
+            // file: the DB column is non-nullable, so a row that omits it is a
+            // shape the handler never sees. Leaving it off let the
+            // one-response-per-ticket guard be satisfied by `undefined` instead
+            // of by a real `false`.
             id: 'msg-1',
             type: 'USER',
             content: 'How do I use CopilotKit with Next.js?',
+            isAiGenerated: false,
             createdAt: new Date('2026-04-23T10:00:00Z'),
         },
     ],
@@ -290,7 +296,7 @@ describe('handleAiResponse', () => {
         expect(result.data?.confidenceScore).toBe(0.92);
         expect(result.data?.escalated).toBe(false);
 
-        // Pipeline should have been called with the latest user message
+        // Pipeline should have been called with the message that opened the ticket
         expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
             'How do I use CopilotKit with Next.js?',
             expect.objectContaining({
@@ -745,6 +751,187 @@ describe('handleAiResponse', () => {
         expect(mockPostResponse).not.toHaveBeenCalled();
     });
 
+    // ── Undelivered responses always end up with a human ──────────────────
+    //
+    // The one-response-per-ticket guard reads the BOT Message row, which is
+    // committed BEFORE the platform post-back. So once generation has happened,
+    // no retry and no manual re-enqueue can ever deliver that answer — the guard
+    // skips them all, correctly. The consequence is that every path where the
+    // answer failed to reach the reporter has to hand the thread to a human
+    // right here, in this run, or the reporter is silently abandoned while the
+    // database claims they were answered.
+    //
+    // These tests pin that: a delivery failure always produces an ESCALATION
+    // job, the pre-post-back writes can never abort the job before delivery is
+    // attempted, and the one outcome with neither delivery nor escalation is
+    // reported as a job failure instead of a success.
+    describe('delivery failures escalate to a human', () => {
+        /** Reject only the suggestedResponse write, not the classification one. */
+        function failSuggestedResponseWrite(message: string): void {
+            mockPrismaTicket.update.mockImplementation(
+                async (args: { data: Record<string, unknown> }) => {
+                    if (args.data.suggestedResponse !== undefined) {
+                        throw new Error(message);
+                    }
+                    return {};
+                },
+            );
+        }
+
+        /** The single ESCALATION job payload, asserting exactly one was created. */
+        function escalationPayload(): Record<string, unknown> {
+            const calls = mockPrismaJob.create.mock.calls.filter(
+                (call: Array<{ data: { type: string } }>) => call[0].data.type === 'ESCALATION',
+            );
+            expect(calls).toHaveLength(1);
+            return calls[0][0].data.payload as Record<string, unknown>;
+        }
+
+        it('enqueues an ESCALATION job when post-back throws', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.escalated).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(true);
+            expect(escalationPayload()).toEqual(
+                expect.objectContaining({
+                    ticketId: 'tkt-1',
+                    reason: expect.stringContaining('not delivered'),
+                }),
+            );
+            // The reason has to name the delivery failure so the human picking it
+            // up knows the answer exists but never landed.
+            expect(escalationPayload().reason).toContain('Discord API 503');
+        });
+
+        it('enqueues an ESCALATION job when the adapter cannot be constructed', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGetAdapter.mockImplementation(() => {
+                throw new Error('Missing DISCORD_BOT_TOKEN');
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(true);
+            expect(escalationPayload().reason).toContain('adapter misconfigured');
+        });
+
+        it('names the delivery failure even when confidence is also low', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            // One escalation, and it reports the more actionable of the two facts.
+            expect(escalationPayload().reason).toContain('not delivered');
+        });
+
+        it('does not escalate a delivered high-confidence response', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+        });
+
+        it('still attempts post-back when the suggestedResponse write throws', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            failSuggestedResponseWrite('DB write conflict');
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // The failed write must not abort the job between the BOT row and the
+            // post-back — that is the window the guard makes unrecoverable.
+            expect(mockPostResponse).toHaveBeenCalled();
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+        });
+
+        it('escalates when the suggestedResponse write throws and there is no adapter', async () => {
+            // With no adapter, suggestedResponse IS the delivery path.
+            mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+            mockHasAdapter.mockReturnValue(false);
+            failSuggestedResponseWrite('DB write conflict');
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'web' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(true);
+            expect(escalationPayload().reason).toContain('DB write conflict');
+        });
+
+        it('does not treat a failed externalCommentId write as a delivery failure', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockResolvedValue('999888');
+            mockPrismaMessage.update.mockRejectedValueOnce(new Error('DB write conflict'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // The response reached the reporter; only the bookkeeping row failed.
+            expect(result.success).toBe(true);
+            expect(result.data?.deliveryFailed).toBe(false);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+        });
+
+        it('reports job failure when the answer was neither delivered nor escalated', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+            mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // Nothing reached the reporter and no human was pulled in; a silent
+            // success here is exactly the outcome this fix exists to prevent.
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('Discord API 503');
+            expect(result.error).toContain('queue unavailable');
+        });
+
+        it('still reports success when only a low-confidence escalation fails to enqueue', async () => {
+            // The reporter did get the answer here, so the historical fail-soft
+            // behaviour stands — the failure mode is different in kind.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPrismaJob.create.mockRejectedValue(new Error('queue unavailable'));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(mockPostResponse).toHaveBeenCalled();
+            expect(result.success).toBe(true);
+        });
+    });
+
     it('succeeds even if shadow mode message logging fails', async () => {
         const originalShadow = process.env.SHADOW_MODE;
         try {
@@ -820,24 +1007,31 @@ describe('handleAiResponse', () => {
                     id: 'msg-1',
                     type: 'USER',
                     content: 'Hello',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:00:00Z'),
                 },
                 {
+                    // A human reply sent from the dashboard: BOT row, but not
+                    // the AI's answer, so it must not trip the guard and
+                    // short-circuit this test before history is built.
                     id: 'msg-2',
                     type: 'BOT',
                     content: 'Hi there!',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:01:00Z'),
                 },
                 {
                     id: 'msg-3',
                     type: 'SYSTEM',
                     content: 'Ticket escalated',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:02:00Z'),
                 },
                 {
                     id: 'msg-4',
                     type: 'USER',
                     content: 'Follow up question',
+                    isAiGenerated: false,
                     createdAt: new Date('2026-04-23T10:03:00Z'),
                 },
             ],
@@ -846,8 +1040,10 @@ describe('handleAiResponse', () => {
 
         await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
 
+        // Question is the OPENING message; the later USER turn is history, not
+        // the thing being answered.
         expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
-            'Follow up question',
+            'Hello',
             expect.objectContaining({
                 conversationHistory: [
                     { role: 'user', content: 'Hello' },
@@ -856,6 +1052,304 @@ describe('handleAiResponse', () => {
                 ],
             }),
         );
+    });
+
+    // ── The answered message is the OPENING message ───────────────────────
+    //
+    // Outpost gets exactly one response per ticket, so which message that
+    // response addresses is the whole ballgame. Replies are persisted as USER
+    // messages by design, which is why "latest USER row" is not a safe proxy for
+    // "the question": a reporter who splits a thought across two Discord
+    // messages can land a second USER row before the job dequeues.
+    describe('answers the message that opened the ticket', () => {
+        /** Reporter follow-up landed before the job ran — the classic Discord split. */
+        const splitThoughtTicket = {
+            ...sampleTicket,
+            messages: [
+                {
+                    id: 'msg-1',
+                    type: 'USER',
+                    content: 'How do I use CopilotKit with Next.js?',
+                    isAiGenerated: false,
+                    createdAt: new Date('2026-04-23T10:00:00Z'),
+                },
+                {
+                    id: 'msg-2',
+                    type: 'USER',
+                    content: 'btw I am on the app router',
+                    isAiGenerated: false,
+                    createdAt: new Date('2026-04-23T10:00:04Z'),
+                },
+            ],
+        };
+
+        it('generates against the opening message, not a later follow-up', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(splitThoughtTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[0]).toBe(
+                'How do I use CopilotKit with Next.js?',
+            );
+        });
+
+        it('still passes the interim follow-up through as conversation context', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(splitThoughtTicket);
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[1]).toMatchObject({
+                conversationHistory: [
+                    { role: 'user', content: 'How do I use CopilotKit with Next.js?' },
+                    { role: 'user', content: 'btw I am on the app router' },
+                ],
+            });
+        });
+
+        it('skips leading non-USER rows to find the opening USER message', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    {
+                        id: 'msg-0',
+                        type: 'SYSTEM',
+                        content: 'Ticket created from Discord thread',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T09:59:59Z'),
+                    },
+                    {
+                        id: 'msg-1',
+                        type: 'USER',
+                        content: 'Runtime returns 500 on /api/copilotkit',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:00Z'),
+                    },
+                    {
+                        id: 'msg-2',
+                        type: 'USER',
+                        content: 'here is the stack trace',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:06Z'),
+                    },
+                ],
+            });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[0]).toBe(
+                'Runtime returns 500 on /api/copilotkit',
+            );
+        });
+
+        it('falls back to the description when the ticket has no USER message', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    {
+                        id: 'msg-0',
+                        type: 'SYSTEM',
+                        content: 'Imported from Linear',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:00Z'),
+                    },
+                ],
+            });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse.mock.calls[0]?.[0]).toBe(
+                'I want to add AI features to my Next.js app using CopilotKit.',
+            );
+        });
+    });
+
+    // ── One response per ticket ───────────────────────────────────────────
+    //
+    // The invariant: Outpost answers the message that opens a ticket and never
+    // posts in that thread again, whoever speaks next. The enqueue sites no
+    // longer queue on replies, but this guard is what makes the rule hold — it
+    // reads the ticket's own history, so a caller added later cannot route
+    // around it.
+    //
+    // The pipeline is mocked at the class seam here (not driven through LLMock)
+    // on purpose: the assertion these tests exist to make is that NO model call
+    // happens at all, and `mockGenerateSupportResponse` not being called is the
+    // direct expression of that.
+    describe('one response per ticket', () => {
+        /** A ticket that already carries the AI's single answer. */
+        const answeredTicket = {
+            ...sampleTicket,
+            messages: [
+                {
+                    id: 'msg-1',
+                    type: 'USER',
+                    content: 'How do I use CopilotKit with Next.js?',
+                    isAiGenerated: false,
+                    createdAt: new Date('2026-04-23T10:00:00Z'),
+                },
+                {
+                    id: 'msg-2',
+                    type: 'BOT',
+                    content: 'Here is how to use CopilotKit with Next.js...',
+                    isAiGenerated: true,
+                    createdAt: new Date('2026-04-23T10:00:20Z'),
+                },
+            ],
+        };
+
+        it('skips generation when the ticket already has an AI response', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('drives progress to 100 so the skipped job is not left looking hung', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+            const ctx = makeContext();
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, ctx);
+
+            // The skip is a successful completion, so it must walk the ladder to
+            // 100 like the normal path. Returning after reportProgress(20) would
+            // persist a job stuck at 20% forever on the Job row.
+            expect(ctx.reportProgress).toHaveBeenCalledWith(100);
+            expect(ctx.reportProgress).toHaveBeenLastCalledWith(100);
+        });
+
+        it('does not post anything to the platform for an already-answered ticket', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.create).not.toHaveBeenCalled();
+            expect(mockPrismaTicket.update).not.toHaveBeenCalled();
+        });
+
+        it('reports success so the job is not retried forever', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(answeredTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            // A failure verdict would put an unchangeable decision through the
+            // retry ladder. Asserting `skipped` alongside it matters: without it
+            // this test also passes on the ordinary answer path, so it would
+            // stop proving anything if the guard were removed.
+            expect(result.success).toBe(true);
+            expect(result.error).toBeUndefined();
+            expect(result.data).toMatchObject({ skipped: true });
+        });
+
+        it('skips even when a human replied after the AI response', async () => {
+            // The exact case that prompted this: a maintainer posted the real
+            // solution, and the bot answered again 14 seconds later.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...answeredTicket,
+                messages: [
+                    ...answeredTicket.messages,
+                    {
+                        id: 'msg-3',
+                        type: 'USER',
+                        content: 'Here is the actual fix, from a maintainer.',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-05-06T20:06:09Z'),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data).toMatchObject({ skipped: true });
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+        });
+
+        it('still answers a ticket whose only messages are from users', async () => {
+            // Guard must not swallow the first, legitimate response.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data).not.toMatchObject({ skipped: true });
+            expect(mockGenerateSupportResponse).toHaveBeenCalled();
+            expect(mockPostResponse).toHaveBeenCalled();
+        });
+
+        it('does not treat a human BOT-channel reply as the ticket answer', async () => {
+            // A teammate answering from the dashboard persists as type 'BOT'
+            // with isAiGenerated: false — the outbound channel is the bot, the
+            // author is not. That is not Outpost's one response, so the AI's
+            // own single answer must still go out.
+            //
+            // Together with the SYSTEM case below this pins both halves of the
+            // guard's predicate independently: drop `m.type === 'BOT'` and the
+            // SYSTEM test goes red; drop `&& m.isAiGenerated` and this one does.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-human',
+                        type: 'BOT',
+                        content: 'Hey, a maintainer here — can you share your version?',
+                        isAiGenerated: false,
+                        createdAt: new Date('2026-04-23T10:00:10Z'),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.data).not.toMatchObject({ skipped: true });
+            expect(mockGenerateSupportResponse).toHaveBeenCalled();
+            expect(mockPostResponse).toHaveBeenCalled();
+        });
+
+        it('does not treat a SYSTEM shadow-mode log as the ticket answer', async () => {
+            // Shadow mode writes SYSTEM + isAiGenerated rows alongside the BOT
+            // row. Only the BOT row means "the reporter has been answered", so a
+            // ticket carrying just a SYSTEM row must still be answerable.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-shadow',
+                        type: 'SYSTEM',
+                        content: 'shadow log',
+                        isAiGenerated: true,
+                        createdAt: new Date('2026-04-23T10:00:10Z'),
+                    },
+                ],
+            });
+
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+
+            expect(mockGenerateSupportResponse).toHaveBeenCalled();
+        });
     });
 });
 

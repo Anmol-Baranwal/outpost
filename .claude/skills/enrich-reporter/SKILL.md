@@ -14,11 +14,14 @@ Spawn an `Explore` subagent (or any read-only general-purpose) with this prompt:
 ## Subagent prompt template
 
 ```
-For each GitHub username below, run:
+For each GitHub username below, run BOTH:
   gh api users/<login> --jq '{login, name, company, bio, blog, twitter_username}'
+  gh api users/<login>/social_accounts    # ← the person's OWN self-linked LinkedIn / X / site — authoritative
 
 Return a compact one-line-per-user table:
-  login | name | company | profile_url | company_url | bio | blog | twitter
+  login | name | company | profile_url | company_url | linkedin_url | bio | blog | twitter
+
+  - linkedin_url = the `linkedin` URL from `social_accounts` if present (the self-linked, authoritative profile — never a search guess); else blank. The prospect pass reuses this instead of searching.
 
   - profile_url = `https://github.com/<login>` (always — used to link the handle on every card).
   - company_url = the company's website for enterprise reporters (e.g. Amazon → https://www.amazon.com, Nvidia → https://www.nvidia.com); blank for indie. Used to link the 🏢 Company badge. Don't guess a URL — leave blank if unsure.

@@ -2,13 +2,26 @@
  * AI_RESPONSE job handler.
  *
  * The most critical handler in Outpost. Processes AI_RESPONSE jobs by:
- *   1. Loading the ticket and its messages from the database
- *   2. Running the AI pipeline to generate a support response
- *   3. Classifying the ticket inline (priority, type, tags)
- *   4. Formatting the response for the source platform
- *   5. Persisting the AI response as a Message record
- *   6. Enqueuing an ESCALATION job if confidence is too low, or if the pipeline
- *      suppressed an ungrounded draft
+ *   1.  Loading the ticket and its messages from the database
+ *   1b. Finishing immediately, as a success, if the ticket already holds an AI
+ *       response — one response per ticket (see the gate below)
+ *   2.  Running the AI pipeline to generate a support response
+ *   3.  Classifying the ticket inline (priority, type, tags)
+ *   4.  Formatting the response for the source platform
+ *   5.  Persisting the AI response as a Message record, and the formatted text
+ *       on the ticket as suggestedResponse
+ *   5b. Posting the response back to the source platform through its adapter —
+ *       except under SHADOW_MODE=true, where the response is instead logged as a
+ *       SYSTEM message on the ticket and nothing is posted anywhere
+ *   6.  Enqueuing an ESCALATION job if confidence is too low, if the pipeline
+ *       suppressed an ungrounded draft, or if the response never reached the
+ *       reporter because platform delivery failed
+ *
+ * Delivery failure is escalated rather than swallowed because of the guard in
+ * step 1b (one response per ticket): once the BOT Message row exists, a retry or
+ * a manual re-enqueue is skipped, so an undelivered answer would otherwise leave
+ * the reporter permanently silent while the database claims they were answered.
+ * A human is the only remaining path, so the handler always pulls one in.
  *
  * The pipeline itself handles Pathfinder retrieval, Claude generation,
  * confidence scoring, platform-specific formatting, and the groundedness gate —
@@ -75,7 +88,62 @@ export async function handleAiResponse(
 
     await context.reportProgress(20);
 
-    // 2. Build conversation history from DB messages
+    // 1b. ONE RESPONSE PER TICKET — RE-ANSWER guard.
+    //
+    // Outpost answers exactly one message per ticket: the one that opened it.
+    // Every later message in that thread gets no AI reply, no matter who sent
+    // it — the original reporter, a third party, or a team member. The agent is
+    // a first line of defence and a human owns the thread from the moment the
+    // first response lands.
+    //
+    // What this gate does and does not do, because the distinction matters:
+    //
+    // The invariant is enforced at the enqueue sites, not here. Three of them
+    // exist — InboundHandler.handleNewTicket (Discord, Slack and Teams all
+    // funnel through it), handleShadowThreadCreate in the Discord bot's
+    // shadow-mode path, and the Postmark webhook's new-email branch — and every
+    // one enqueues only for a message that opens a ticket. Their refusal to
+    // enqueue for anything else is what holds the rule.
+    //
+    // This gate catches the second answer to a ticket that already has one: a
+    // retried job, a manual re-enqueue, or a caller added later that does not
+    // respect the rule. It CANNOT stand in for those refusals, so do not lean
+    // on it as if it could. It only sees messages on the ticket, so it cannot
+    // tell a first answer from a first answer to the wrong message: a ticket
+    // freshly minted around a mid-thread reply carries no prior AI response and
+    // sails straight through here. That case (an orphaned reply, no ticket found
+    // for the thread) is refused where the ticket is created — see
+    // InboundHandler.handleReply.
+    //
+    // Success, not failure: the job did what it should — nothing. Returning an
+    // error would put it through the retry ladder for a decision that will
+    // never change.
+    const priorAiResponse = ticket.messages.find(
+        (m: { type: string; isAiGenerated: boolean }) => m.type === 'BOT' && m.isAiGenerated,
+    );
+    if (priorAiResponse) {
+        console.log(
+            `[AI Response] Ticket ${ticketId} already answered — skipping. ` +
+                `Outpost posts one response per ticket; a human owns this thread now.`,
+        );
+        // Walk the ladder to 100 like every other successful exit. This job
+        // succeeded — it decided to do nothing — so anything reading job
+        // progress (dashboard, ops query) must see it finished, not parked at
+        // 20% looking hung. Failure exits deliberately leave progress where it
+        // stopped: the job row records status FAILED next to it, so a partial
+        // number is the honest reading there.
+        await context.reportProgress(100);
+        return {
+            success: true,
+            data: { ticketId, skipped: true, reason: 'already_answered' },
+        };
+    }
+
+    // 2. Build conversation history from DB messages.
+    //
+    // Deliberately the FULL non-SYSTEM history, including any message that
+    // arrived after the one being answered. See the question selection below for
+    // why the two are allowed to disagree.
     const conversationHistory = ticket.messages
         .filter((m: { type: string }) => m.type !== 'SYSTEM')
         .map((m: { type: string; content: string }) => ({
@@ -83,11 +151,28 @@ export async function handleAiResponse(
             content: m.content,
         }));
 
-    // Determine the latest user message as the question
-    const latestUserMessage = [...ticket.messages]
-        .reverse()
-        .find((m: { type: string }) => m.type === 'USER');
-    const question = latestUserMessage?.content ?? ticket.description ?? ticket.title;
+    // The question is the message that OPENED the ticket — the same message the
+    // one-response-per-ticket invariant above says we get to answer.
+    //
+    // `ticket.messages` is loaded `orderBy: { createdAt: 'asc' }`, so the FIRST
+    // USER row is the opening message. Scanning from the other end and taking
+    // the LATEST USER row was wrong: replies are still persisted as USER
+    // messages (correctly — they belong in the thread's history), so a reporter
+    // who splits a thought across two Discord messages in the seconds between
+    // ticket creation and this job running had the ticket's one and only answer
+    // aimed at the follow-up fragment instead of the question that opened it.
+    // One shot, spent on the wrong sentence.
+    //
+    // The interim follow-up deliberately STAYS in `conversationHistory`. Those
+    // two inputs answer different questions: `question` is what to respond to,
+    // `conversationHistory` is what the responder knows. A follow-up is usually
+    // the same thought continued — a stack trace, a version number, "on Next 15"
+    // — and it is exactly the detail that makes the single answer good, so
+    // dropping it would trade one bug for a worse answer. Suppressing it would
+    // also need a second policy for the non-USER rows after the opening, with no
+    // evidence behind it.
+    const openingUserMessage = ticket.messages.find((m: { type: string }) => m.type === 'USER');
+    const question = openingUserMessage?.content ?? ticket.description ?? ticket.title;
 
     // Determine platform target for formatting
     const platform = payload.source ?? toPlatformTarget(ticket.source);
@@ -114,6 +199,15 @@ export async function handleAiResponse(
         );
     }
     console.log(`[AI Response] Confidence calibration: ${confidenceCalibration.toFixed(4)}`);
+
+    // Why the response never reached the reporter, when it didn't. Set by the
+    // post-back arm below and consumed by the escalation step: the one-response-
+    // per-ticket guard makes an undelivered answer unrecoverable by retry, so a
+    // human has to take the thread.
+    let deliveryFailure: string | null = null;
+    // Set when the ESCALATION enqueue itself failed after a delivery failure —
+    // the one case where the job must not report success (see the return below).
+    let escalationEnqueueError: string | null = null;
 
     let pipelineResult;
     try {
@@ -168,13 +262,28 @@ export async function handleAiResponse(
             },
         });
 
-        // Store the formatted response on the ticket for bots to pick up
-        await prisma.ticket.update({
-            where: { id: ticket.id },
-            data: {
-                suggestedResponse: pipelineResult.formatted.text,
-            },
-        });
+        // Store the formatted response on the ticket for bots to pick up.
+        //
+        // Non-fatal on purpose. The BOT Message row is already committed above,
+        // which arms the one-response-per-ticket guard — so if this write threw,
+        // the job would abort before post-back and every retry would be skipped
+        // by that guard, leaving the reporter permanently unanswered. Log it,
+        // remember it, and keep going so delivery still happens.
+        let suggestedResponseError: string | null = null;
+        try {
+            await prisma.ticket.update({
+                where: { id: ticket.id },
+                data: {
+                    suggestedResponse: pipelineResult.formatted.text,
+                },
+            });
+        } catch (error) {
+            suggestedResponseError = error instanceof Error ? error.message : String(error);
+            console.error(
+                `[AI Response] Failed to store suggestedResponse for ticket ${ticketId}:`,
+                suggestedResponseError,
+            );
+        }
 
         // 5b. Post the response back to the source platform — unconditionally.
         //
@@ -227,17 +336,20 @@ export async function handleAiResponse(
             try {
                 adapter = getAdapter(ticketSource);
             } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
                 console.error(
                     `[AI Response] Platform adapter misconfigured for ${ticket.source} on ticket ${ticketId}:`,
-                    error instanceof Error ? error.message : String(error),
+                    message,
                 );
                 // Don't attempt postResponse — adapter init failed (permanent error)
                 adapter = null;
+                deliveryFailure = `platform adapter misconfigured: ${message}`;
             }
 
             if (adapter) {
+                let externalCommentId: string | undefined;
                 try {
-                    const externalCommentId = await adapter.postResponse(
+                    externalCommentId = await adapter.postResponse(
                         {
                             id: ticket.id,
                             sourceId: ticket.sourceId,
@@ -246,41 +358,68 @@ export async function handleAiResponse(
                         },
                         pipelineResult.formatted,
                     );
-                    if (externalCommentId) {
-                        await prisma.message.update({
-                            where: { id: aiMessage.id },
-                            data: { externalCommentId },
-                        });
-                    }
                     console.log(
                         `[AI Response] Posted response to ${ticket.source} for ticket ${ticketId}`,
                     );
                 } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
                     console.error(
                         `[AI Response] Failed to post response to ${ticket.source} for ticket ${ticketId}:`,
-                        error instanceof Error ? error.message : String(error),
+                        message,
                     );
+                    deliveryFailure = message;
+                }
+
+                // Recording the external comment ID is bookkeeping for an
+                // already-delivered response, so it gets its own try: a failure
+                // here must not be mistaken for a delivery failure.
+                if (externalCommentId) {
+                    try {
+                        await prisma.message.update({
+                            where: { id: aiMessage.id },
+                            data: { externalCommentId },
+                        });
+                    } catch (error) {
+                        console.error(
+                            `[AI Response] Failed to record externalCommentId for ticket ${ticketId}:`,
+                            error instanceof Error ? error.message : String(error),
+                        );
+                    }
                 }
             }
+        } else if (suggestedResponseError) {
+            // No adapter for this source, so suggestedResponse WAS the delivery
+            // path — and that write failed. Nothing reached the reporter.
+            deliveryFailure = `no platform adapter for ${ticket.source} and suggestedResponse could not be stored: ${suggestedResponseError}`;
         }
 
         await context.reportProgress(85);
 
-        // 6. Enqueue ESCALATION when confidence is below threshold, or when the
-        // response was withheld — nothing reached the reporter in that case, so a
-        // human has to pick it up regardless of what the score says.
-        if (pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE || pipelineResult.suppressed) {
+        // 6. Enqueue ESCALATION when platform delivery failed, when the response
+        // was withheld, or when confidence is below threshold — in the first two
+        // cases nothing useful reached the reporter, so a human has to pick it up
+        // regardless of what the score says. Delivery failure wins the reason slot
+        // because it is the most actionable: the answer exists but is undelivered
+        // and, thanks to the one-response-per-ticket guard, undeliverable by retry.
+        const escalationReason = deliveryFailure
+            ? `AI response generated but not delivered to ${ticket.source} (${deliveryFailure}) — needs a human to answer the reporter`
+            : pipelineResult.suppressed
+              ? `AI response withheld (${pipelineResult.groundedness.reasons.join('; ')}) — needs a human answer`
+              : pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE
+                ? `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`
+                : null;
+
+        if (escalationReason) {
             try {
                 await createJob(JobType.ESCALATION, {
                     ticketId: ticket.id,
-                    reason: pipelineResult.suppressed
-                        ? `AI response withheld (${pipelineResult.groundedness.reasons.join('; ')}) — needs a human answer`
-                        : `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation`,
+                    reason: escalationReason,
                 });
             } catch (error) {
+                escalationEnqueueError = error instanceof Error ? error.message : String(error);
                 console.error(
                     `[AI Response] Failed to create escalation job for ticket ${ticketId}:`,
-                    error instanceof Error ? error.message : String(error),
+                    escalationEnqueueError,
                 );
             }
         }
@@ -293,8 +432,29 @@ export async function handleAiResponse(
     console.log(
         `[AI Response] Ticket ${ticketId}: confidence=${pipelineResult.confidenceLevel} ` +
             `(${(pipelineResult.confidenceScore * 100).toFixed(0)}%), latency=${pipelineResult.latencyMs}ms` +
-            `${pipelineResult.suppressed ? ', ungrounded draft withheld' : ''}`,
+            `${pipelineResult.suppressed ? ', ungrounded draft withheld' : ''}` +
+            `${deliveryFailure ? `, delivery failed (${deliveryFailure})` : ''}`,
     );
+
+    const escalated =
+        deliveryFailure !== null ||
+        pipelineResult.suppressed ||
+        pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE;
+
+    // An undelivered answer with no escalation behind it is the one outcome that
+    // leaves the reporter silent and no human involved, and the guard blocks any
+    // retry from repairing it. Report failure so the attempt is recorded as failed
+    // and surfaces to an operator rather than being logged and forgotten. Other
+    // escalation-enqueue failures keep the historical success result: in those the
+    // response did reach the reporter.
+    if (deliveryFailure && escalationEnqueueError) {
+        return {
+            success: false,
+            error:
+                `Ticket ${ticketId}: AI response not delivered (${deliveryFailure}) and ` +
+                `escalation could not be enqueued (${escalationEnqueueError}) — needs manual attention`,
+        };
+    }
 
     return {
         success: true,
@@ -303,10 +463,11 @@ export async function handleAiResponse(
             confidenceLevel: pipelineResult.confidenceLevel,
             confidenceScore: pipelineResult.confidenceScore,
             latencyMs: pipelineResult.latencyMs,
-            escalated:
-                pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE ||
-                pipelineResult.suppressed,
+            escalated,
             suppressed: pipelineResult.suppressed,
+            // Not `delivered` — shadow mode deliberately posts nothing, so only
+            // the failure is a fact worth reporting.
+            deliveryFailed: deliveryFailure !== null,
         },
     };
 }

@@ -81,11 +81,12 @@ export async function handleThreadCreate(thread: ThreadChannel, newlyCreated: bo
         const handler = new InboundHandler({ prisma, createJob: createJobFn });
         const result = await handler.handle(inboundMessage);
 
-        // Post acknowledgment in the thread (Discord-specific UX)
-        await adapter.postSystemMessage(
-            { id: result.ticketId, sourceId: thread.id, channel: parentId, source: adapter.platform },
-            `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your question...`,
-        );
+        // No acknowledgment post. This used to announce
+        // "\uD83C\uDFAB Ticket TKT-XXXXXXXX created..." in the thread, which leaked an
+        // internal identifier to the public server and spent a bot message
+        // saying nothing the reporter can act on. displayId is for the dashboard
+        // and team slash commands only — never for reporter-facing copy.
+        // The AI response itself is the only message the reporter needs.
 
         console.log(`[Discord Bot] Created ticket ${result.displayId} for thread ${thread.id}`);
     } catch (error) {

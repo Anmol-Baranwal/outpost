@@ -139,7 +139,8 @@ describe('InboundHandler (Slack-focused)', () => {
             vi.mocked(mockPrisma.ticket.findFirst).mockResolvedValue(TICKET);
         });
 
-        it('appends a message and enqueues AI response for non-team-members', async () => {
+        // One response per ticket — a thread reply never gets its own AI answer.
+        it('appends a message without enqueuing an AI response for non-team-members', async () => {
             const result = await handler.handle(makeThreadReply());
 
             expect(result.isNewTicket).toBe(false);
@@ -153,13 +154,7 @@ describe('InboundHandler (Slack-focused)', () => {
                 }),
             });
 
-            expect(mockCreateJob).toHaveBeenCalledWith(
-                'AI_RESPONSE',
-                expect.objectContaining({
-                    ticketId: 'ticket-1',
-                    source: 'slack',
-                }),
-            );
+            expect(mockCreateJob).not.toHaveBeenCalled();
         });
 
         it('reopens RESOLVED ticket when customer replies', async () => {

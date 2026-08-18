@@ -67,3 +67,6 @@ coverage/
 package-lock.json
 yarn.lock
 .claude/worktrees/
+
+# Local AI review pipeline session state (create-review / review-changes)
+.chalk/

@@ -1,6 +1,6 @@
 ---
 name: enrich-prospect
-description: Deep enrichment for community-sourced enterprise PROSPECTS (the 🎯 Prospective enterprise customers subsection). For each prospect, find their LinkedIn profile, verify the LinkedIn employer matches the company on their GitHub (keep searching if it doesn't), then list the company website + company size (ARR / latest funding round / employee count). Runs as a general-purpose subagent (many web searches) so the orchestrator's context stays small. Invoked by weekly-report (enterprise section) and the enterprise skill.
+description: Deep enrichment for community-sourced enterprise PROSPECTS (the 🎯 Prospective enterprise customers subsection). For each prospect, resolve their LinkedIn from their GitHub self-linked accounts FIRST (search only if none is self-linked), verify the employer matches, capture their full name, then list the company website + company size (ARR / latest funding round / employee count). Runs as a general-purpose subagent (many web searches) so the orchestrator's context stays small. Invoked by weekly-report (enterprise section) and the enterprise skill.
 ---
 
 # Deep-enrich enterprise prospects
@@ -18,15 +18,18 @@ You are deep-enriching enterprise sales prospects for a community report. Accura
 
 For EACH prospect below (handle + the issue/thread that surfaced them):
 
-1. Seed from GitHub:
+1. Seed from GitHub — INCLUDING the self-linked accounts:
    gh api users/<login> --jq '{login, name, company, bio, blog, twitter_username, email, location}'
-   Capture their name, the company field, and any employer clue in bio/blog.
+   gh api users/<login>/social_accounts    # ← the authoritative self-linked LinkedIn / X / etc.
+   Capture their name, the company field, employer clues in bio/blog, AND the `social_accounts` URLs.
 
-2. Find their LinkedIn profile:
-   - WebSearch: "<name> <company> LinkedIn", then "<name> <role from bio> LinkedIn", then "<github handle> LinkedIn".
-   - The candidate profile's CURRENT employer MUST match the GitHub company (or a bio/blog employer clue). This is the match gate.
-   - IF IT DOESN'T MATCH, KEEP SEARCHING — try the blog/personal site, the company team/about page, the Twitter/X bio, a plain Google-style query ("<name>" "<company>"), a GitHub-email search. Only accept a LinkedIn URL when the employer lines up.
-   - If after real effort you cannot confirm the same person, DO NOT link a guess. Output `Name: <name> — LinkedIn not confirmed` and say what you tried.
+2. **Resolve the LinkedIn URL + full name — work this ladder IN ORDER, stop at the first step that yields a confirmed profile:**
+   a. **Self-linked = authoritative (try FIRST, before any search).** If `social_accounts` has a `linkedin` URL, that IS the profile — use it verbatim, no search, no guessing. Also check the `blog` field (people put their LinkedIn there). A self-linked URL always beats a search hit. *(Miss precedent: the agent name-searched and linked a different person `in/nchatlapalli` when GitHub `social_accounts` already listed `in/navaifanatic`.)*
+   b. **Only if nothing is self-linked, search — Google-style web search.** Try, in order: `"<name>" "<company>" LinkedIn`, then `<name> <role from bio> LinkedIn`, then `<github handle> LinkedIn`, then a plain `"<name>" "<company>"`. Also try the company team/about page, the X/Twitter bio, and a GitHub-email search. (`WebSearch` is the tool; it's a general web/Google search.)
+   c. **Match gate — applies to any SEARCHED profile (skip for a self-linked URL, which is already theirs).** Accept a searched profile ONLY when its CURRENT employer matches the GitHub `company` (or a clear bio/blog employer). If it doesn't line up, it's a different person — keep searching. Also apply the stale-employer rule ("ex-"/"previously" ≠ current).
+   d. **Full name — from the authoritative source, NOT GitHub `name`.** GitHub `name` is often just a first name or a handle. Read the self-linked blog/site (or the LinkedIn) for the complete first + last name. *(Precedent: GitHub `name` was "Naveen"; his blog gave "Naveen Chatlapalli" — a first name alone is a flub on a sales list.)*
+   e. **Verify the published name matches the profile.** LinkedIn usually returns HTTP 999 to fetchers, so confirm the full name against a *fetchable* self-owned source — their blog, or a LinkedIn article they authored (byline). The name on the report must match the linked profile.
+   f. **If still unconfirmed after all of the above, DO NOT link a guess.** Output `Name: <name> — LinkedIn not confirmed` and list what you tried, so a human can finish it.
 
 3. Company website: find the official company site (not a directory page). Prefer the root domain.
 
@@ -46,18 +49,13 @@ Return, per prospect, the exact block format in "Output block" below. Cite a rea
 
 ## Match gate (identity accuracy)
 
-- **The LinkedIn person's current employer must match the GitHub `company` (or a clear bio/blog employer).** If GitHub says `@commercetools` and the first LinkedIn hit works somewhere else, that's a different person — keep searching.
-- **Never link a "maybe".** A wrong LinkedIn link in a sales handoff is a real cost. When unconfirmed, write `LinkedIn not confirmed` and list what was tried, so a human can finish it.
-- **Stale-employer rule (same as enrich-reporter):** if the bio says "ex-", "previously", "formerly", that employer does NOT count as current — it disqualifies both the prospect classification and the match.
+The identity procedure is the ordered ladder in **step 2 of the subagent prompt above** (self-link first → search → match-gate → full name → verify name↔profile → else not-confirmed). Don't restate it here. This section carries only the one calibration rule the ladder doesn't:
+
+- **Don't over-hedge a lead that checks out.** When the self-linked profile, the GitHub `company` field, and a corroborating web search all point to the SAME current employer, mark the prospect **confirmed** — don't leave it "verify before outreach." Reserve `LinkedIn not confirmed` / `employer unconfirmed` for a genuine gap (no self-linked profile AND search can't line the employer up). Precedent: Parker Roan self-linked his LinkedIn, GitHub `company` said Shipt, and a search returned "Software Engineer at Shipt" — three matching signals = confirmed, not a maybe.
 
 ## Company size — what counts
 
-Report the single best available signal, most-recent only:
-
-- **ARR** — only if publicly stated (rare for private co's).
-- **Funding — latest round ONLY.** "Series C, $120M, Oct 2024." Do not list the full round history; the current stage is what sales needs.
-- **Employees** — a real count or a LinkedIn size band.
-- **Unknown** — `size unknown (private, no public figures)`. Honest beats invented.
+See **step 4 of the subagent prompt above** for the rule. One signal, most-recent only: ARR (only if publicly stated) → latest funding round ONLY (e.g. "Series C, $120M, Oct 2024", not the full history) → employee count / LinkedIn size band → else `size unknown (private, no public figures)`. Never fabricate a number.
 
 ## Output block (the required format)
 
