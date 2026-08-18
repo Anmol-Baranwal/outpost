@@ -36,6 +36,7 @@ vi.mock('discord.js', async (importOriginal) => {
 import { handleThreadCreate } from '../events/thread-create.js';
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob } from '@copilotkit/outpost/queue';
+import { PlatformDiscordAdapter } from '@copilotkit/outpost/shared/platforms';
 
 function makeThread(overrides: Record<string, unknown> = {}) {
     return {
@@ -125,6 +126,49 @@ describe('handleThreadCreate', () => {
                 source: 'discord',
             }),
         );
+    });
+
+    // The new-ticket path is the one place where the sender still decides
+    // whether an AI job is enqueued: a community reporter's thread gets an
+    // answer (test above), a team member's does not. Replies never enqueue for
+    // anyone, so this assertion cannot live on the reply path.
+    it('creates a ticket but does not enqueue an AI response when a team member opens the thread', async () => {
+        vi.mocked(prisma.user.findFirst).mockResolvedValue({
+            id: 'u-1',
+            email: 'team@copilotkit.ai',
+        } as ReturnType<typeof prisma.user.findFirst> extends Promise<infer T> ? T : never);
+        vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
+            id: 'tm-1',
+        } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
+
+        const thread = makeThread();
+        await handleThreadCreate(thread, true);
+
+        // The ticket and its first message are still recorded.
+        expect(prisma.ticket.create).toHaveBeenCalled();
+        expect(prisma.message.create).toHaveBeenCalled();
+
+        // But the bot does not answer its own team.
+        expect(createJob).not.toHaveBeenCalled();
+    });
+
+    // The bot used to open every thread with "🎫 Ticket TKT-XXXXXXXX created…",
+    // publishing an internal identifier into a public server and spending a bot
+    // message on nothing the reporter can act on. The AI answer is the only
+    // message the bot sends.
+    it('posts no acknowledgment message and never emits the ticket displayId', async () => {
+        const postSystemMessage = vi.spyOn(
+            PlatformDiscordAdapter.prototype,
+            'postSystemMessage',
+        );
+
+        const thread = makeThread();
+        await handleThreadCreate(thread, true);
+
+        expect(postSystemMessage).not.toHaveBeenCalled();
+        expect(thread.send).not.toHaveBeenCalled();
+
+        postSystemMessage.mockRestore();
     });
 
     it('handles threads with no starter message content gracefully', async () => {

@@ -30,9 +30,17 @@ export class LabelMapper {
 
     constructor(config: LabelMapperConfig) {
         this.rules = config.rules;
-        this.excludeSet = new Set(
-            (config.exclude ?? []).map((l) => l.toLowerCase()),
-        );
+        this.excludeSet = new Set((config.exclude ?? []).map((l) => l.toLowerCase()));
+    }
+
+    /**
+     * The labels this mapper excludes, lowercased.
+     *
+     * Exposed so a mapper rebuilt from persisted config can inherit the factory's
+     * exclusions instead of silently dropping them.
+     */
+    getExcludeList(): string[] {
+        return [...this.excludeSet];
     }
 
     /**
@@ -132,4 +140,73 @@ export function createLinearLabelMapper(): LabelMapper {
             { externalPrefix: 'Type: ', outpostPrefix: '' },
         ],
     });
+}
+
+// ─── Persisted Config Loading ─────────────────────────────────────────────
+
+/** Must match the key used by apps/web/src/app/api/sync/mappings/route.ts. */
+const MAPPING_CONFIG_KEY = 'sync.mappingConfig';
+
+/** Minimal Prisma subset needed to load a persisted mapping config. */
+export interface LabelMapperDb {
+    systemConfig: {
+        findUnique(args: {
+            where: { key: string };
+        }): Promise<{ key: string; value: string } | null>;
+    };
+}
+
+interface PersistedLabelRuleEntry {
+    externalPrefix: string;
+    outpostPrefix: string;
+}
+
+/**
+ * Build a LabelMapper for `plugin`, preferring the persisted SystemConfig
+ * row (written by the /api/sync/mappings dashboard) over the hardcoded
+ * factory defaults. Falls back to the hardcoded default whenever the
+ * config row is missing, malformed, or has no rules for this plugin.
+ *
+ * Mirrors loadStatusMap in status-map.ts. Note the persisted labelRules
+ * carry only prefix rules (externalPrefix/outpostPrefix); the `exclude`
+ * list is not dashboard-editable, so a persisted config produces a mapper
+ * with no exclusions.
+ */
+export async function loadLabelMapper(
+    plugin: 'linear' | 'github',
+    db: LabelMapperDb,
+): Promise<LabelMapper> {
+    const fallback = plugin === 'linear' ? createLinearLabelMapper() : createGitHubLabelMapper();
+
+    const row = await db.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
+    if (!row) return fallback;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(row.value);
+    } catch {
+        return fallback;
+    }
+
+    const entries = (parsed as { labelRules?: Record<string, PersistedLabelRuleEntry[]> })
+        ?.labelRules?.[plugin];
+    if (!Array.isArray(entries) || entries.length === 0) return fallback;
+
+    const rules: LabelPrefixRule[] = [];
+    for (const entry of entries) {
+        if (typeof entry?.externalPrefix === 'string' && typeof entry?.outpostPrefix === 'string') {
+            rules.push({
+                externalPrefix: entry.externalPrefix,
+                outpostPrefix: entry.outpostPrefix,
+            });
+        }
+    }
+    if (rules.length === 0) return fallback;
+
+    // Carry the factory's `exclude` list across. Persisting only `rules` meant the
+    // first save silently dropped GitHub's wontfix/duplicate/invalid exclusions —
+    // the operator changed a prefix and lost label filtering with nothing logged.
+    // The persisted shape has no `exclude` field yet, so the factory default is
+    // the authority; when it gains one, prefer the persisted value here.
+    return new LabelMapper({ rules, exclude: fallback.getExcludeList() });
 }

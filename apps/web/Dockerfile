@@ -65,7 +65,13 @@ COPY --from=installer --chown=outpost:outpost /app/node_modules/.pnpm/@prisma+cl
 # Prisma schema and migrations for migrate deploy on startup
 COPY --from=installer --chown=outpost:outpost /app/packages/outpost/db/prisma ./packages/outpost/db/prisma
 # Prisma CLI for running migrations at startup (installed with all transitive deps)
-RUN npm install --prefix /opt/prisma --no-save prisma@6
+# Pinned in lockstep with apps/worker/Dockerfile. web and worker run migrate deploy
+# against the SAME database, and the worker's start.sh now fails its deploy on any
+# schema difference -- so if web applies migrations with a different 6.x CLI than the
+# worker verifies with, an unrelated web-side bump can hard-fail worker deploys with a
+# drift message describing drift that does not exist. A CI step asserts both literals
+# match the lockfile.
+RUN npm install --prefix /opt/prisma --no-save prisma@6.19.3
 
 USER outpost
 ENV NODE_ENV=production
