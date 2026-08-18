@@ -5,6 +5,7 @@ vi.mock('@copilotkit/outpost/db', () => mockPrisma());
 
 import { findTicketByConversationId, isTeamMember } from '../lib/tickets.js';
 import { prisma } from '@copilotkit/outpost/db';
+import { TicketSource, buildTicketSourceId } from '@copilotkit/outpost/shared';
 
 describe('findTicketByConversationId', () => {
     beforeEach(() => {
@@ -24,6 +25,31 @@ describe('findTicketByConversationId', () => {
             },
         });
         expect(result).toEqual(ticket);
+    });
+
+    it('queries by the sourceId buildTicketSourceId derives', async () => {
+        // The reader must go through the shared helper InboundHandler writes
+        // with. Inlining the conversation ID is harmless only until the
+        // derivation changes, at which point reader and writer silently disagree.
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+
+        await findTicketByConversationId('conv-abc');
+
+        expect(prisma.ticket.findFirst).toHaveBeenCalledWith({
+            where: {
+                source: 'TEAMS',
+                sourceId: buildTicketSourceId(TicketSource.TEAMS, 'conv-abc'),
+            },
+        });
+    });
+
+    it('skips the query entirely for an unaddressable conversation', async () => {
+        // buildTicketSourceId yields no key for an empty conversation ID.
+        // A `sourceId: null` filter would match any keyless row, so don't query.
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+
+        expect(await findTicketByConversationId('')).toBeNull();
+        expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
     });
 
     it('returns null when no ticket found', async () => {
