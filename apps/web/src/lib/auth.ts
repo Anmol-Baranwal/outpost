@@ -5,7 +5,12 @@ import GithubProvider from 'next-auth/providers/github';
 import { prisma } from '@copilotkit/outpost/db';
 import { verifyPassword } from '@copilotkit/outpost/shared';
 
-const AUTH_PROVIDER = process.env.AUTH_PROVIDER ?? 'credentials';
+// `||` rather than `??`, matching the client's read in src/app/login/page.tsx. A blank value
+// is easy to produce in a dashboard, and `??` would accept '' — the server would then fall
+// through to the `default:` arm below and throw `Unknown AUTH_PROVIDER:` while the client
+// silently fell back to credentials. Both halves must treat empty as "not configured" for
+// the two to stay in agreement.
+const AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'credentials';
 
 // ─── Provider Factories ────────────────────────────────────────────────────
 

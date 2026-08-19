@@ -11,7 +11,7 @@
  * That is exactly what shipped: the Linear priority defaults read '0 (None)'..
  * '4 (Low)' while LinearAdapter maps with String(data.priority) -> '0'..'4'.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TicketPriority, TicketStatus } from '@copilotkit/outpost/shared';
 import {
     loadStatusMap,
@@ -25,6 +25,7 @@ import {
 const mockSystemConfigFindUnique = vi.fn();
 const mockSystemConfigUpsert = vi.fn();
 const mockExternalIdentityFindMany = vi.fn();
+const mockTransaction = vi.fn();
 const mockGetServerSession = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
@@ -34,6 +35,17 @@ vi.mock('@copilotkit/outpost/db', () => ({
             upsert: (...a: unknown[]) => mockSystemConfigUpsert(...a),
         },
         externalIdentity: { findMany: (...a: unknown[]) => mockExternalIdentityFindMany(...a) },
+        // The PUT path reads and writes in one transaction so a concurrent save cannot
+        // drop label rules. The callback receives the same mocked client.
+        $transaction: async (fn: (tx: unknown) => unknown) => {
+            mockTransaction(fn);
+            return fn({
+                systemConfig: {
+                    findUnique: (...a: unknown[]) => mockSystemConfigFindUnique(...a),
+                    upsert: (...a: unknown[]) => mockSystemConfigUpsert(...a),
+                },
+            });
+        },
     },
 }));
 
@@ -123,5 +135,190 @@ describe('mappings round-trip: GET defaults -> PUT -> load as the worker does', 
 
         expect(loaded.toOutpost(['wontfix', 'bug'])).toEqual(factory.toOutpost(['wontfix', 'bug']));
         expect(loaded.toOutpost(['wontfix'])).toEqual([]);
+    });
+});
+
+describe('PUT /api/sync/mappings — labelRules preservation and empty-array rejection', () => {
+    const VALID_STATUS = { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] };
+    const VALID_PRIORITY = { linear: [{ externalPriority: '1', outpostPriority: 'CRITICAL' }] };
+    const SAVED_LABEL_RULES = { github: [{ externalPrefix: 'bug', outpostPrefix: 'defect' }] };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockExternalIdentityFindMany.mockResolvedValue([]);
+        mockSystemConfigUpsert.mockResolvedValue({});
+    });
+
+    function put(body: Record<string, unknown>) {
+        return PUT(
+            new Request('http://localhost:3000/api/sync/mappings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            }) as never,
+        );
+    }
+
+    function persistedValue() {
+        return JSON.parse(mockSystemConfigUpsert.mock.calls[0][0].update.value);
+    }
+
+    it('carries forward existing labelRules when the PUT omits the key', async () => {
+        // The upsert replaces the whole row, so omitting labelRules used to drop
+        // previously persisted rules — a silent wipe reachable through a door the
+        // `labelRules: {}` rejection did not cover.
+        mockSystemConfigFindUnique.mockResolvedValue({
+            value: JSON.stringify({
+                statusMappings: VALID_STATUS,
+                priorityMappings: VALID_PRIORITY,
+                labelRules: SAVED_LABEL_RULES,
+            }),
+        });
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: VALID_PRIORITY,
+        });
+
+        expect(res.status).toBe(200);
+        expect(persistedValue().labelRules).toEqual(SAVED_LABEL_RULES);
+    });
+
+    it('rejects an empty per-plugin labelRules array, as the sibling validator does', async () => {
+        // loadLabelMapper treats [] as "nothing persisted, use defaults", so saving
+        // it would show an empty list while the worker kept applying built-in rules.
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: VALID_PRIORITY,
+            labelRules: { linear: [] },
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
+    it('still writes an explicitly supplied labelRules value', async () => {
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: VALID_PRIORITY,
+            labelRules: SAVED_LABEL_RULES,
+        });
+
+        expect(res.status).toBe(200);
+        expect(persistedValue().labelRules).toEqual(SAVED_LABEL_RULES);
+    });
+});
+
+describe('PUT /api/sync/mappings — atomicity, un-carriable rows, and label validation', () => {
+    const VALID_STATUS = { linear: [{ externalStatus: 'Done', outpostStatus: 'RESOLVED' }] };
+    const VALID_PRIORITY = { linear: [{ externalPriority: '1', outpostPriority: 'CRITICAL' }] };
+    const SAVED_LABEL_RULES = { github: [{ externalPrefix: 'bug', outpostPrefix: 'defect' }] };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockExternalIdentityFindMany.mockResolvedValue([]);
+        mockSystemConfigUpsert.mockResolvedValue({});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    function put(body: Record<string, unknown>) {
+        return PUT(
+            new Request('http://localhost:3000/api/sync/mappings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            }) as never,
+        );
+    }
+
+    it('carries labelRules forward inside a transaction, not as two statements', async () => {
+        // Read-then-write as separate statements lets a concurrent PUT land between them
+        // and lose its rules. Pin that both happen through $transaction.
+        mockSystemConfigFindUnique.mockResolvedValue({
+            value: JSON.stringify({
+                statusMappings: VALID_STATUS,
+                priorityMappings: VALID_PRIORITY,
+                labelRules: SAVED_LABEL_RULES,
+            }),
+        });
+
+        const res = await put({ statusMappings: VALID_STATUS, priorityMappings: VALID_PRIORITY });
+
+        expect(res.status).toBe(200);
+        expect(mockTransaction).toHaveBeenCalledTimes(1);
+        const persisted = JSON.parse(mockSystemConfigUpsert.mock.calls[0][0].update.value);
+        expect(persisted.labelRules).toEqual(SAVED_LABEL_RULES);
+    });
+
+    it('says so when existing labelRules are unusable and cannot be carried', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        mockSystemConfigFindUnique.mockResolvedValue({
+            value: JSON.stringify({
+                statusMappings: VALID_STATUS,
+                priorityMappings: VALID_PRIORITY,
+                labelRules: { linear: 'not-an-array' },
+            }),
+        });
+
+        const res = await put({ statusMappings: VALID_STATUS, priorityMappings: VALID_PRIORITY });
+
+        expect(res.status).toBe(200);
+        const persisted = JSON.parse(mockSystemConfigUpsert.mock.calls[0][0].update.value);
+        // Unusable rules are dropped rather than persisted...
+        expect(persisted.labelRules).toBeUndefined();
+        // ...but the drop is reported, so it is not silent.
+        expect(errorSpy.mock.calls.flat().join(' ')).toContain('labelRules');
+    });
+
+    it('returns the persisted config so the client can store what was actually saved', async () => {
+        mockSystemConfigFindUnique.mockResolvedValue({
+            value: JSON.stringify({
+                statusMappings: VALID_STATUS,
+                priorityMappings: VALID_PRIORITY,
+                labelRules: SAVED_LABEL_RULES,
+            }),
+        });
+
+        const body = await (
+            await put({ statusMappings: VALID_STATUS, priorityMappings: VALID_PRIORITY })
+        ).json();
+
+        // The request omitted labelRules; the response must still show them, otherwise the
+        // dashboard drops rules that are saved.
+        expect(body.labelRules).toEqual(SAVED_LABEL_RULES);
+    });
+
+    it('rejects a non-string label on a priority entry', async () => {
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: {
+                linear: [{ externalPriority: '1', outpostPriority: 'CRITICAL', label: 42 }],
+            },
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockSystemConfigUpsert).not.toHaveBeenCalled();
+    });
+
+    it('accepts a string label', async () => {
+        mockSystemConfigFindUnique.mockResolvedValue(null);
+
+        const res = await put({
+            statusMappings: VALID_STATUS,
+            priorityMappings: {
+                linear: [{ externalPriority: '1', outpostPriority: 'CRITICAL', label: 'Urgent' }],
+            },
+        });
+
+        expect(res.status).toBe(200);
     });
 });

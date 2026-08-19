@@ -9,6 +9,7 @@ import {
     Tooltip,
     ResponsiveContainer,
 } from 'recharts';
+import { monthLabel } from '@/lib/month-window';
 
 export interface TrendDataPoint {
     day: number;
@@ -17,27 +18,54 @@ export interface TrendDataPoint {
 
 interface TicketsTrendProps {
     data: TrendDataPoint[];
+    /** Human label for the selected month, e.g. "July 2026". */
     month: string;
+    /** Selected month key, e.g. "2026-07". */
+    monthKey: string;
+    /** Selectable month keys, ascending. */
+    availableMonths: string[];
+    onMonthChange: (key: string) => void;
     totalTickets: number;
 }
 
-export function TicketsTrend({ data, month, totalTickets }: TicketsTrendProps) {
+export function TicketsTrend({
+    data,
+    month,
+    monthKey,
+    availableMonths,
+    onMonthChange,
+    totalTickets,
+}: TicketsTrendProps) {
     const hasData = data.length > 0 && data.some((d) => d.count > 0);
 
     return (
         <div className="rounded-lg border border-border bg-card p-6">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
                     <h3 className="text-lg font-semibold text-card-foreground">
                         Tickets Trend
                     </h3>
                     <p className="text-sm text-muted-foreground">{month}</p>
                 </div>
-                <div className="text-right">
-                    <p className="text-2xl font-bold text-card-foreground" data-testid="trend-total">
-                        {totalTickets}
-                    </p>
-                    <p className="text-xs text-muted-foreground">total tickets</p>
+                <div className="flex items-center gap-4">
+                    <select
+                        aria-label="Select month"
+                        value={monthKey}
+                        onChange={(e) => onMonthChange(e.target.value)}
+                        className="rounded-md border border-border bg-transparent px-2 py-1 text-sm text-foreground hover:border-input focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                        {availableMonths.map((key) => (
+                            <option key={key} value={key}>
+                                {monthLabel(key)}
+                            </option>
+                        ))}
+                    </select>
+                    <div className="text-right">
+                        <p className="text-2xl font-bold text-card-foreground" data-testid="trend-total">
+                            {totalTickets}
+                        </p>
+                        <p className="text-xs text-muted-foreground">total tickets</p>
+                    </div>
                 </div>
             </div>
 

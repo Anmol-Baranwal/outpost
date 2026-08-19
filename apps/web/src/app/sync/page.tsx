@@ -9,6 +9,7 @@ import { SyncEventLog } from '@/components/sync/sync-event-log';
 import type { EventLogFilters } from '@/components/sync/sync-event-log';
 import type { SystemSyncStatus, SyncEvent } from '@/lib/mock-sync';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-fetch';
 
 export default function SyncPage() {
     const [systems, setSystems] = useState<SystemSyncStatus[]>([]);
@@ -19,7 +20,7 @@ export default function SyncPage() {
 
     const fetchStatus = useCallback(async () => {
         try {
-            const res = await fetch('/api/sync/status');
+            const res = await apiFetch('/api/sync/status');
             const data = await res.json();
             setSystems(data.systems);
         } catch {
@@ -32,7 +33,7 @@ export default function SyncPage() {
             const params = new URLSearchParams();
             if (filters?.sourcePlugin) params.set('sourcePlugin', filters.sourcePlugin);
             if (filters?.status) params.set('status', filters.status);
-            const res = await fetch(`/api/sync/events?${params.toString()}`);
+            const res = await apiFetch(`/api/sync/events?${params.toString()}`);
             const data = await res.json();
             setEvents(data.events);
         } catch {
@@ -42,7 +43,7 @@ export default function SyncPage() {
 
     const fetchConflicts = useCallback(async () => {
         try {
-            const res = await fetch('/api/sync/conflicts');
+            const res = await apiFetch('/api/sync/conflicts');
             const data = await res.json();
             setConflicts(data.conflicts);
         } catch {
@@ -60,7 +61,7 @@ export default function SyncPage() {
         setForcing(plugin);
         setForceNotice(null);
         try {
-            const res = await fetch('/api/sync/force', {
+            const res = await apiFetch('/api/sync/force', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ plugin }),
@@ -90,7 +91,7 @@ export default function SyncPage() {
 
     async function handleResolveConflict(id: string, resolution: 'outpost' | 'external') {
         try {
-            await fetch(`/api/sync/conflicts/${id}/resolve`, {
+            await apiFetch(`/api/sync/conflicts/${id}/resolve`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ resolution }),

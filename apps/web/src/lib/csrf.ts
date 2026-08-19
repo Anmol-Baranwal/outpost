@@ -5,10 +5,22 @@ import type { NextRequest } from 'next/server';
  * Double-submit cookie CSRF protection.
  *
  * Pattern:
- *   1. Middleware sets a `csrf` cookie with a random token on every response.
+ *   1. Middleware sets a `csrf` cookie on responses it reaches, minting a token only
+ *      when the request does not already carry one. The token is NOT re-randomised
+ *      per response, and paths that return before `setCsrfCookie` (static assets, and
+ *      any path matching the early returns in `middleware.ts`) get no cookie at all.
  *   2. Mutating requests (POST/PUT/PATCH/DELETE) to protected /api/ routes must
  *      echo the same value back in the `X-CSRF-Token` header.
- *   3. Comparison uses `crypto.timingSafeEqual` to prevent timing side-channels.
+ *   3. Comparison is a manual constant-time XOR loop (see `safeEqual`). There is no
+ *      `timingSafeEqual` on this path — see that function's note.
+ *
+ * Known limitations, tracked as follow-up work rather than fixed here:
+ *   - The cookie is adopted from the request if present and is bound to nothing (no
+ *     session, no HMAC, no `__Host-` prefix), so a party who can write the cookie can
+ *     choose the token. `sameSite: 'strict'` and next-auth's `Lax` session cookie limit
+ *     the practical reach.
+ *   - Exemptions are expressed as bare prefix matches in two places (`CSRF_EXEMPT_PREFIXES`
+ *     here and `PUBLIC_PATHS` in `middleware.ts`) with no path-segment boundary.
  */
 
 export function generateCsrfToken(): string {
@@ -16,12 +28,19 @@ export function generateCsrfToken(): string {
 }
 
 /**
- * Compare two strings in constant time.  Returns false if either is missing or
- * if they differ in length.
+ * Compare two strings in constant time.  Returns false when they differ.
  *
- * Next.js middleware runs on the Edge Runtime where `node:crypto` is not
- * available, so we use the Web Crypto `subtle.timingSafeEqual` when present
- * and fall back to a manual XOR loop (still constant-time, just not FIPS).
+ * Next.js middleware runs on the Edge Runtime, where `node:crypto`'s
+ * `timingSafeEqual` is unavailable. Web Crypto has no `timingSafeEqual` either —
+ * `crypto.subtle.timingSafeEqual` is a Cloudflare Workers extension, not a standard
+ * API, so do not re-add a probe for it expecting it to fire on Node or Edge. This is
+ * a manual XOR loop: constant-time over the compared bytes, not FIPS-validated.
+ *
+ * The early return compares UTF-16 string length while the loop compares UTF-8 bytes.
+ * For inputs whose byte length differs despite equal string length, `bBuf[i]` is
+ * `undefined`, `x ^ undefined` is `x ^ 0`, and `mismatch` stays non-zero — i.e. it
+ * fails closed and returns false. Tokens are `crypto.randomUUID()` (ASCII), so the
+ * divergent case is unreachable today.
  */
 function safeEqual(a: string, b: string): boolean {
     if (a.length !== b.length) return false;
@@ -29,13 +48,8 @@ function safeEqual(a: string, b: string): boolean {
     const aBuf = encoder.encode(a);
     const bBuf = encoder.encode(b);
 
-    // Web Crypto timingSafeEqual (available in Node 20+, newer Edge runtimes)
-    if (typeof crypto !== 'undefined' && crypto.subtle && 'timingSafeEqual' in crypto.subtle) {
-        return (crypto.subtle as { timingSafeEqual(a: BufferSource, b: BufferSource): boolean })
-            .timingSafeEqual(aBuf, bBuf);
-    }
-
-    // Fallback: manual constant-time comparison
+    // Manual constant-time comparison. See the note above on why there is no
+    // timingSafeEqual probe here.
     let mismatch = 0;
     for (let i = 0; i < aBuf.length; i++) {
         mismatch |= aBuf[i]! ^ bBuf[i]!;
@@ -51,7 +65,10 @@ const CSRF_EXEMPT_PREFIXES = [
     '/api/setup',
 ];
 
-const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// Exported so api-fetch.test.ts can assert its client-side copy has not drifted. The
+// copy exists because this module imports `next/server` and cannot reach the client
+// bundle; a method present in one set and not the other silently drops CSRF coverage.
+export const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
  * Returns `true` when the request is a mutating API call that needs CSRF
@@ -59,7 +76,10 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 export function requiresCsrfValidation(request: NextRequest): boolean {
     const { pathname } = request.nextUrl;
-    if (!MUTATING_METHODS.has(request.method)) return false;
+    // Uppercased before lookup: the Fetch spec normalises only DELETE/GET/HEAD/OPTIONS/
+    // POST/PUT, so `method: 'patch'` arrives lowercase and a case-sensitive check would
+    // return false here — skipping CSRF validation entirely on the six PATCH routes.
+    if (!MUTATING_METHODS.has(request.method.toUpperCase())) return false;
     if (!pathname.startsWith('/api/')) return false;
     if (CSRF_EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) return false;
     return true;
@@ -91,8 +111,12 @@ export function validateCsrfToken(request: NextRequest): NextResponse | null {
 }
 
 /**
- * Attach (or refresh) the `csrf` cookie on an outgoing response.
- * If the request already carries one we reuse it; otherwise we mint a new one.
+ * Attach the `csrf` cookie to an outgoing response.
+ *
+ * If the request already carries one we adopt that value verbatim; otherwise we mint a
+ * new one. The token is therefore never rotated — not on login, not on privilege change
+ * — and the adopted value is not verified against anything. Both are noted as follow-up
+ * work in this module's header.
  */
 export function setCsrfCookie(request: NextRequest, response: NextResponse): NextResponse {
     const existing = request.cookies.get('csrf')?.value;

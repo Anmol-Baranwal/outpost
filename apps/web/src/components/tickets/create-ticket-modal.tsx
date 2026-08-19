@@ -8,6 +8,7 @@ import {
     TicketSource,
 } from '@copilotkit/outpost/shared';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface CreateTicketModalProps {
     open: boolean;
@@ -125,7 +126,7 @@ export function CreateTicketModal({ open, onClose, onCreated }: CreateTicketModa
         setError(null);
 
         try {
-            const res = await fetch('/api/tickets', {
+            const res = await apiFetch('/api/tickets', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

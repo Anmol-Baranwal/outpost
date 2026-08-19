@@ -4,12 +4,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockTicketCount = vi.fn();
 const mockTicketFindMany = vi.fn();
+const mockTicketFindFirst = vi.fn();
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
         ticket: {
             count: (...args: unknown[]) => mockTicketCount(...args),
             findMany: (...args: unknown[]) => mockTicketFindMany(...args),
+            findFirst: (...args: unknown[]) => mockTicketFindFirst(...args),
         },
     },
     TicketStatus: {
@@ -77,6 +79,13 @@ function userSession(memberId = 'tm-1') {
     };
 }
 
+function statsRequest(month?: string): Request {
+    const url = month
+        ? `http://localhost/api/dashboard/stats?month=${month}`
+        : 'http://localhost/api/dashboard/stats';
+    return new Request(url);
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Dashboard API', () => {
@@ -89,6 +98,7 @@ describe('Dashboard API', () => {
 
     describe('GET /api/dashboard/stats', () => {
         it('returns aggregated ticket stats', async () => {
+            mockTicketFindFirst.mockResolvedValue({ createdAt: new Date() });
             // Mock the 6 parallel queries:
             // totalTickets, openTickets, slaBreaches, ticketsWithFirstResponse, resolvedTickets, monthlyTickets
             mockTicketCount
@@ -114,7 +124,7 @@ describe('Dashboard API', () => {
                 ])
                 .mockResolvedValueOnce([]); // monthlyTickets
 
-            const res = await statsGet();
+            const res = await statsGet(statsRequest());
 
             expect(res.status).toBe(200);
             const body = await res.json();
@@ -128,6 +138,7 @@ describe('Dashboard API', () => {
         });
 
         it('handles no tickets gracefully', async () => {
+            mockTicketFindFirst.mockResolvedValue({ createdAt: new Date() });
             mockTicketCount
                 .mockResolvedValueOnce(0)
                 .mockResolvedValueOnce(0)
@@ -137,7 +148,7 @@ describe('Dashboard API', () => {
                 .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]);
 
-            const res = await statsGet();
+            const res = await statsGet(statsRequest());
 
             expect(res.status).toBe(200);
             const body = await res.json();
@@ -149,9 +160,10 @@ describe('Dashboard API', () => {
         });
 
         it('returns 500 on database error', async () => {
+            mockTicketFindFirst.mockResolvedValue({ createdAt: new Date() });
             mockTicketCount.mockRejectedValue(new Error('DB failed'));
 
-            const res = await statsGet();
+            const res = await statsGet(statsRequest());
 
             expect(res.status).toBe(500);
             const body = await res.json();
@@ -162,6 +174,10 @@ describe('Dashboard API', () => {
             const now = new Date();
             const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
+            // Oldest ticket in the current month, so the current month stays selectable.
+            mockTicketFindFirst.mockResolvedValue({
+                createdAt: new Date(now.getFullYear(), now.getMonth(), 1),
+            });
             mockTicketCount
                 .mockResolvedValueOnce(1)
                 .mockResolvedValueOnce(1)
@@ -173,13 +189,121 @@ describe('Dashboard API', () => {
                     { createdAt: new Date() }, // ticket created today
                 ]);
 
-            const res = await statsGet();
+            const res = await statsGet(statsRequest());
             const body = await res.json();
 
             expect(body.trend).toHaveLength(daysInMonth);
             // At least one day should have count > 0 (today)
             const todaysEntry = body.trend.find((d: { day: number; count: number }) => d.day === now.getDate());
             expect(todaysEntry?.count).toBe(1);
+        });
+
+        it('returns the requested month, its label, and selectable months', async () => {
+            mockTicketFindFirst.mockResolvedValue({ createdAt: new Date(2026, 4, 20) });
+            mockTicketCount
+                .mockResolvedValueOnce(4)   // totalTickets for the window
+                .mockResolvedValueOnce(2)   // openTickets
+                .mockResolvedValueOnce(0);  // slaBreaches
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([{ createdAt: new Date(2026, 5, 4) }]);
+
+            const res = await statsGet(statsRequest('2026-06'));
+            const body = await res.json();
+
+            expect(res.status).toBe(200);
+            expect(body.monthKey).toBe('2026-06');
+            expect(body.month).toBe('June 2026');
+            expect(body.trend).toHaveLength(30);
+            expect(body.trend.find((d: { day: number; count: number }) => d.day === 4)?.count).toBe(1);
+            expect(body.availableMonths[0]).toBe('2026-05');
+            expect(body.availableMonths).toContain('2026-06');
+        });
+
+        it('scopes totalTickets to the selected month, not all time', async () => {
+            mockTicketFindFirst.mockResolvedValue({ createdAt: new Date(2026, 5, 4) });
+            mockTicketCount
+                .mockResolvedValueOnce(4)
+                .mockResolvedValueOnce(1)
+                .mockResolvedValueOnce(0);
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]);
+
+            const res = await statsGet(statsRequest('2026-06'));
+            const body = await res.json();
+
+            expect(body.totalTickets).toBe(4);
+            // The count must be constrained by a createdAt window.
+            const countArgs = mockTicketCount.mock.calls[0][0] as {
+                where?: { createdAt?: { gte: Date; lte: Date } };
+            };
+            expect(countArgs?.where?.createdAt?.gte).toEqual(new Date(2026, 5, 1, 0, 0, 0, 0));
+            expect(countArgs?.where?.createdAt?.lte).toEqual(new Date(2026, 5, 30, 23, 59, 59, 999));
+        });
+
+        it('falls back to the newest month with tickets for a malformed month param', async () => {
+            // Both findFirst calls (oldest, newest) resolve to January 2026, so
+            // the newest month with data IS January — not the calendar month.
+            mockTicketFindFirst.mockResolvedValue({ createdAt: new Date(2026, 0, 1) });
+            mockTicketCount
+                .mockResolvedValueOnce(0)
+                .mockResolvedValueOnce(0)
+                .mockResolvedValueOnce(0);
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]);
+
+            const res = await statsGet(statsRequest('garbage'));
+            const body = await res.json();
+
+            expect(res.status).toBe(200);
+            expect(body.monthKey).toBe('2026-01');
+        });
+
+        it('defaults to the newest month with tickets, not the empty calendar month', async () => {
+            // The regression this guards: totalTickets used to be an all-time
+            // count, so it was never 0. Scoped to a month, defaulting to the
+            // calendar month made the dashboard read 0 with an empty chart for
+            // the first days of every month.
+            mockTicketFindFirst
+                .mockResolvedValueOnce({ createdAt: new Date(2026, 5, 4) })   // oldest
+                .mockResolvedValueOnce({ createdAt: new Date(2026, 6, 30) }); // newest
+            mockTicketCount
+                .mockResolvedValueOnce(47)
+                .mockResolvedValueOnce(47)
+                .mockResolvedValueOnce(0);
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]);
+
+            const res = await statsGet(statsRequest());
+            const body = await res.json();
+
+            expect(body.monthKey).toBe('2026-07');
+            expect(body.month).toBe('July 2026');
+            expect(body.totalTickets).toBe(47);
+        });
+
+        it('offers only the current month when there are no tickets', async () => {
+            mockTicketFindFirst.mockResolvedValue(null);
+            mockTicketCount
+                .mockResolvedValueOnce(0)
+                .mockResolvedValueOnce(0)
+                .mockResolvedValueOnce(0);
+            mockTicketFindMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([]);
+
+            const res = await statsGet(statsRequest());
+            const body = await res.json();
+
+            expect(body.availableMonths).toHaveLength(1);
         });
     });
 

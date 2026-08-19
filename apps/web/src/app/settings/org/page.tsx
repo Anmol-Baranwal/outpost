@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Building2, Save } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface OrgData {
     id: string;
@@ -31,7 +32,7 @@ export default function OrgSettingsPage() {
 
     const fetchOrg = useCallback(async () => {
         try {
-            const res = await fetch('/api/org');
+            const res = await apiFetch('/api/org');
             if (!res.ok) return;
             const data = await res.json();
             setOrg(data);
@@ -60,7 +61,7 @@ export default function OrgSettingsPage() {
         setSuccess(false);
 
         try {
-            const res = await fetch('/api/org', {
+            const res = await apiFetch('/api/org', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, email, logoUrl, tagline }),

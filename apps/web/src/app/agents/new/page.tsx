@@ -5,13 +5,14 @@ import { Bot } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { AgentForm } from '@/components/agents/agent-form';
 import type { AgentFormData } from '@/components/agents/agent-form';
+import { apiFetch } from '@/lib/api-fetch';
 
 export default function NewAgentPage() {
     const router = useRouter();
 
     const handleSubmit = async (data: AgentFormData) => {
         // In production this would POST to /api/agents
-        const res = await fetch('/api/agents', {
+        const res = await apiFetch('/api/agents', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),

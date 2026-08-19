@@ -18,24 +18,42 @@ interface StatsResponse {
     openTickets: number;
     trend: TrendDataPoint[];
     month: string;
+    monthKey: string;
+    availableMonths: string[];
     year: number;
 }
 
 export default function DashboardPage() {
     const [stats, setStats] = useState<StatsResponse | null>(null);
+    // null until the first response tells us which month the server picked.
+    // Once set, it also drives the dropdown directly, so the operator's choice
+    // wins over the last response and the selector never appears to jump back
+    // while a slower request is still in flight.
+    const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
 
     useEffect(() => {
+        // Switching months twice in quick succession leaves two requests in
+        // flight. Without this guard, a slower earlier response can land last
+        // and overwrite the newer selection — the chart would show a month the
+        // operator already navigated away from, with nothing to correct it.
+        let cancelled = false;
+
         async function fetchStats() {
             try {
-                const res = await fetch('/api/dashboard/stats');
+                const query = selectedMonth ? `?month=${selectedMonth}` : '';
+                const res = await fetch(`/api/dashboard/stats${query}`);
                 const data: StatsResponse = await res.json();
-                setStats(data);
+                if (!cancelled) setStats(data);
             } catch {
                 // Will show loading/empty states
             }
         }
         fetchStats();
-    }, []);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedMonth]);
 
     const slaMetrics: SlaMetrics | undefined = stats
         ? {
@@ -66,6 +84,9 @@ export default function DashboardPage() {
                     <TicketsTrend
                         data={stats?.trend ?? []}
                         month={stats?.month ?? ''}
+                        monthKey={selectedMonth ?? stats?.monthKey ?? ''}
+                        availableMonths={stats?.availableMonths ?? []}
+                        onMonthChange={setSelectedMonth}
                         totalTickets={stats?.totalTickets ?? 0}
                     />
                     <FaqSection />
