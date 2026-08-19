@@ -48,7 +48,17 @@ export default function MappingsPage() {
                 body: JSON.stringify(updatedConfig),
             });
             if (res.ok) {
-                setConfig(updatedConfig);
+                // Store what the server persisted, not what was sent. A PUT that omits
+                // labelRules has them carried forward server-side, so echoing the request
+                // body back into state would drop rules that are actually saved — they
+                // would vanish from the editor until the next page load.
+                const saved = (await res.json().catch(() => null)) as MappingConfig | null;
+                setConfig(saved ?? updatedConfig);
+                // A successful PUT means a saved configuration is now in effect, so the
+                // "no saved mapping configuration" / "using built-in defaults for …"
+                // notices no longer describe reality. Without this they sit on screen
+                // next to "Mappings saved successfully", contradicting it.
+                setProvenance({});
                 setSaveMessage('Mappings saved successfully.');
             } else {
                 setSaveMessage('Failed to save mappings.');

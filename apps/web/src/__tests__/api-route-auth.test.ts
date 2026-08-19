@@ -14,9 +14,19 @@ const mockAccountFindMany = vi.fn();
 const mockTicketGroupBy = vi.fn();
 const mockExternalIdentityFindMany = vi.fn();
 const mockSystemConfigFindUnique = vi.fn().mockResolvedValue(null);
+const mockSystemConfigUpsert = vi.fn().mockResolvedValue({});
 
 vi.mock('@copilotkit/outpost/db', () => ({
     prisma: {
+        // The mappings PUT reads and writes in one transaction so a concurrent save
+        // cannot drop label rules; the callback receives the same mocked client.
+        $transaction: async (fn: (tx: unknown) => unknown) =>
+            fn({
+                systemConfig: {
+                    findUnique: (...args: unknown[]) => mockSystemConfigFindUnique(...args),
+                    upsert: (...args: unknown[]) => mockSystemConfigUpsert(...args),
+                },
+            }),
         account: {
             create: (...args: unknown[]) => mockAccountCreate(...args),
             findMany: (...args: unknown[]) => mockAccountFindMany(...args),
