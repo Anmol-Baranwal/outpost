@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Mail, FileText, RotateCcw, Save, Eye, ChevronLeft } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface TemplateEntry {
     slug: string;
@@ -42,7 +43,7 @@ export default function TemplatesPage() {
 
     const fetchTemplates = useCallback(async () => {
         try {
-            const res = await fetch('/api/templates');
+            const res = await apiFetch('/api/templates');
             if (!res.ok) throw new Error('Failed to load templates');
             const data = await res.json();
             setTemplates(data);
@@ -62,7 +63,7 @@ export default function TemplatesPage() {
         setPreview(null);
 
         try {
-            const res = await fetch(`/api/templates/${slug}`);
+            const res = await apiFetch(`/api/templates/${slug}`);
             if (!res.ok) throw new Error('Failed to load template');
             const data: TemplateDetail = await res.json();
             setSelected(data);
@@ -77,7 +78,7 @@ export default function TemplatesPage() {
         if (!selected) return;
 
         try {
-            const res = await fetch(`/api/templates/${selected.slug}/preview`, {
+            const res = await apiFetch(`/api/templates/${selected.slug}/preview`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
@@ -98,7 +99,7 @@ export default function TemplatesPage() {
         setSuccess(null);
 
         try {
-            const res = await fetch(`/api/templates/${selected.slug}`, {
+            const res = await apiFetch(`/api/templates/${selected.slug}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ subject: editSubject, body: editBody }),
@@ -119,7 +120,7 @@ export default function TemplatesPage() {
         setSuccess(null);
 
         try {
-            const res = await fetch(`/api/templates/${selected.slug}`, {
+            const res = await apiFetch(`/api/templates/${selected.slug}`, {
                 method: 'DELETE',
             });
             if (!res.ok) throw new Error('Reset failed');

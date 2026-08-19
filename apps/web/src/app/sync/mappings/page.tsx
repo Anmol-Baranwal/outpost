@@ -5,6 +5,7 @@ import { Settings2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { MappingEditor } from '@/components/sync/mapping-editor';
 import type { MappingConfig } from '@/lib/mock-sync';
+import { apiFetch } from '@/lib/api-fetch';
 
 /** Provenance the mappings API reports alongside the config it serves. */
 interface ConfigProvenance {
@@ -22,7 +23,7 @@ export default function MappingsPage() {
     useEffect(() => {
         async function fetchMappings() {
             try {
-                const res = await fetch('/api/sync/mappings');
+                const res = await apiFetch('/api/sync/mappings');
                 const data = await res.json();
                 setConfig(data);
                 setProvenance({
@@ -41,7 +42,7 @@ export default function MappingsPage() {
         setSaving(true);
         setSaveMessage(null);
         try {
-            const res = await fetch('/api/sync/mappings', {
+            const res = await apiFetch('/api/sync/mappings', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatedConfig),

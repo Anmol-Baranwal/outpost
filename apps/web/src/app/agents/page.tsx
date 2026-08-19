@@ -6,6 +6,7 @@ import { Bot, Plus, Search, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { AgentTable } from '@/components/agents/agent-table';
 import type { Agent } from '@/components/agents/agent-table';
+import { apiFetch } from '@/lib/api-fetch';
 
 export default function AgentsPage() {
     const router = useRouter();
@@ -20,7 +21,7 @@ export default function AgentsPage() {
             const url = searchTerm?.trim()
                 ? `/api/agents?search=${encodeURIComponent(searchTerm.trim())}`
                 : '/api/agents';
-            const res = await fetch(url);
+            const res = await apiFetch(url);
             if (res.ok) {
                 const data = await res.json();
                 setAgents(data.agents ?? []);
@@ -41,7 +42,7 @@ export default function AgentsPage() {
         async (id: string) => {
             setError(null);
             try {
-                const res = await fetch(`/api/agents/${id}/run`, { method: 'POST' });
+                const res = await apiFetch(`/api/agents/${id}/run`, { method: 'POST' });
                 if (res.ok) {
                     await fetchAgents(search);
                 } else {
@@ -66,7 +67,7 @@ export default function AgentsPage() {
         async (id: string) => {
             setError(null);
             try {
-                const res = await fetch(`/api/agents/${id}`, { method: 'DELETE' });
+                const res = await apiFetch(`/api/agents/${id}`, { method: 'DELETE' });
                 if (res.ok) {
                     await fetchAgents(search);
                 } else {
