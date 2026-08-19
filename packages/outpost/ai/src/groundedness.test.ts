@@ -66,6 +66,54 @@ describe('extractCopilotKitIdentifiers', () => {
         ]);
     });
 
+    // ---- #147: the gate used to require the literal substring `copilotkit`, which
+    // exempted every name the model is actually likely to invent. These pin the
+    // widened surface; the false-positive block below pins its edges.
+
+    it('picks up an invented hook that is not literally CopilotKit-named', () => {
+        expect(extractCopilotKitIdentifiers('Call `useCopilotFabricated()` first.')).toEqual([
+            'useCopilotFabricated',
+        ]);
+        expect(extractCopilotKitIdentifiers('Register with `useCopilotReadable`.')).toEqual([
+            'useCopilotReadable',
+        ]);
+    });
+
+    it('picks up an invented PascalCase component that is not literally CopilotKit-named', () => {
+        expect(extractCopilotKitIdentifiers('Wrap it in `<CopilotInvented />`.')).toEqual([
+            'CopilotInvented',
+        ]);
+        expect(extractCopilotKitIdentifiers('Use the `CopilotSidebar` component.')).toEqual([
+            'CopilotSidebar',
+        ]);
+    });
+
+    // The shape in the issue report: a fabricated neighbour of a real hook plus a
+    // fabricated neighbour of a real component. Under the old substring guard this
+    // returned [] and the response published.
+    it('extracts both halves of the #147 reproduction', () => {
+        expect(
+            extractCopilotKitIdentifiers('Call `useCopilotFabricated()` and `<CopilotInvented />`'),
+        ).toEqual(['useCopilotFabricated', 'CopilotInvented']);
+    });
+
+    it('picks up a kebab-case CSS class under the widened selector rule', () => {
+        expect(
+            extractCopilotKitIdentifiers('Override `.copilot-chat` and `.copilotSidebarPanel`.'),
+        ).toEqual(['copilot-chat', 'copilotSidebarPanel']);
+    });
+
+    // The reason the rules are shapes and not a `/copilot/i` substring test: a
+    // false positive here withholds a CORRECT answer from a real reporter, and
+    // `copilot` on its own is a word we and our users both use in prose.
+    it('ignores the English word "copilot" and its inflections', () => {
+        expect(
+            extractCopilotKitIdentifiers(
+                'GitHub `Copilot` is unrelated; many `copilots` exist and `copiloting` is a word.',
+            ),
+        ).toEqual([]);
+    });
+
     it('ignores generic React vocabulary so real answers are not penalized', () => {
         const ids = extractCopilotKitIdentifiers(
             'Use `useRef`, `useLayoutEffect` and `setSelectionRange` to restore the cursor.',
@@ -482,6 +530,22 @@ const urlSource = (
     sourceUrl,
 });
 
+/**
+ * Documents the two shapes #147 widened the gate to cover, under their real
+ * names, so a corpus row can assert that a CORRECT answer naming them is still
+ * published. Without a row in this direction the widening is only pinned where
+ * it suppresses.
+ */
+const API_DOCS: SearchResult[] = [
+    {
+        title: 'Actions',
+        content:
+            'Register an action with useCopilotAction inside the CopilotChat component. ' +
+            'CopilotSidebar is the docked variant.',
+        score: 0.9,
+    },
+];
+
 /** A source with no `sourceUrl` at all, so URL text cannot accidentally ground anything. */
 const NO_URL_DOCS: SearchResult[] = [
     { title: 'CopilotChat', content: 'CopilotChat renders a chat window.', score: 0.9 },
@@ -669,6 +733,44 @@ const CORPUS: CorpusRow[] = [
         // 0.35 claim + 2 × 0.15 identifiers = 0.65, clipped to the ceiling.
         penalty: MAX_GROUNDEDNESS_PENALTY,
         unsourcedIdentifiers: ['copilotKitGhostA', 'copilotKitGhostB'],
+    },
+    // ---- #147: the gate no longer requires the literal substring `copilotkit` ---
+    {
+        // The failure the issue reports: both names are neighbours of real API
+        // names, neither contains the product name, and under the old substring
+        // guard this extracted nothing and published.
+        shape: 'two invented names that are neighbours of real API names (#147)',
+        response: 'Call `useCopilotFabricated()` and mount `<CopilotInvented />`.',
+        suppress: true,
+        claimCharged: false,
+        unsourcedIdentifiers: ['useCopilotFabricated', 'CopilotInvented'],
+    },
+    {
+        // The other direction, and the one that costs a real reporter if the
+        // widening is too loose: documented names must still publish.
+        shape: 'documented hook and component named without the literal product name',
+        response: 'Register it with `useCopilotAction()` inside `<CopilotChat />`.',
+        sources: API_DOCS,
+        suppress: false,
+        claimCharged: false,
+        penalty: 0,
+        unsourcedIdentifiers: [],
+    },
+    {
+        shape: 'invented kebab-case CSS classes under the widened selector rule',
+        response: 'Override `.copilot-ghost-panel` and `.copilot-ghost-input` to fix it.',
+        suppress: true,
+        claimCharged: false,
+        unsourcedIdentifiers: ['copilot-ghost-panel', 'copilot-ghost-input'],
+    },
+    {
+        // `copilot` is an English word. Prose about the product must never reach
+        // the gate, or the widening withholds correct answers.
+        shape: 'the English word "copilot" in prose is not an identifier (#147 edge)',
+        response: 'GitHub Copilot is a separate product; plenty of copilots exist.',
+        suppress: false,
+        claimCharged: false,
+        unsourcedIdentifiers: [],
     },
     {
         shape: 'grounded answer that asserts nothing it cannot support',

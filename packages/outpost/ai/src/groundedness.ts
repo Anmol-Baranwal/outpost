@@ -175,19 +175,66 @@ const HEDGE_PATTERNS: RegExp[] = [
 
 /**
  * CopilotKit-specific identifiers the response invents out of thin air. Scoped
- * deliberately narrow — CSS classes and backticked tokens that carry our own
- * name — so generic React vocabulary (`useRef`, `useLayoutEffect`) never trips
- * it. `@copilotkit/*` package specifiers are excluded: those are stable public
- * knowledge and routinely correct even when absent from the retrieved page.
+ * to CSS classes and backticked tokens whose NAME SHAPE marks them as ours (see
+ * `COPILOTKIT_IDENTIFIER_SHAPES`), so generic React vocabulary (`useRef`,
+ * `useLayoutEffect`) never trips it. `@copilotkit/*` package specifiers are
+ * excluded: those are stable public knowledge and routinely correct even when
+ * absent from the retrieved page.
  *
  * Fenced code blocks are NOT excluded: #6167 put its two invented class names
  * inside a ```css fence, which is where fabricated identifiers usually live.
  */
-// Case-insensitive: an invented `.copilotkit-input` or `.CopilotKitInput` is just
-// as ungrounded as `.copilotKitInput`, and the `/copilotkit/i` guard below already
-// treats the name case-insensitively.
-const CSS_CLASS_PATTERN = /\.(copilotkit[A-Za-z0-9_-]*)/gi;
+// Case-insensitive, and matched on `copilot` rather than `copilotkit`: a
+// selector-prefixed name starting with our product word is ours whatever
+// follows, so an invented `.copilot-chat` is caught alongside `.copilotKitInput`.
+// The leading `.` is what makes this safe to widen — it marks a selector, not
+// the English word.
+const CSS_CLASS_PATTERN = /\.(copilot[A-Za-z0-9_-]*)/gi;
 const BACKTICKED_PATTERN = /`([^`\n]{1,80})`/g;
+
+/**
+ * What counts as "a CopilotKit identifier".
+ *
+ * The signal these feed is the ONLY thing that can withhold a response (#143
+ * made claim wording penalty-only), so this list is the whole gate. It used to
+ * be the literal substring `copilotkit`, which exempted every name the model is
+ * actually likely to invent — `useCopilotAction`, `CopilotChat`,
+ * `CopilotSidebar`, `CopilotTextarea` are all neighbours of real API names and
+ * none of them contain the product name in full (#147).
+ *
+ * Answering that with a looser `/copilot/i` would have been worse than the bug:
+ * a false positive here withholds a CORRECT answer from a real reporter, and
+ * `copilot` on its own is an English word we and our users both use in prose.
+ * So this is a list of SHAPES rather than a substring test — each one is a form
+ * a name can only plausibly take if it is naming our API surface.
+ */
+const COPILOTKIT_IDENTIFIER_SHAPES: RegExp[] = [
+    // 1. Carries the product name outright: `CopilotKit`, `copilotKitInput`,
+    //    `CopilotKitProvider`, `copilotkit-popup`. The original rule, kept
+    //    because it is the one that needs no casing convention to hold.
+    /copilotkit/i,
+    // 2. PascalCase component: `CopilotChat`, `CopilotSidebar`, `CopilotPopup`,
+    //    `CopilotTextarea`, `CopilotRuntime`. The required second capital is what
+    //    keeps English out — bare `Copilot`, `copilots` and `copiloting` are
+    //    prose about the product, not claims about an API that exists.
+    /^Copilot[A-Z0-9_]/,
+    // 3. Hook: `useCopilotAction`, `useCopilotReadable`, `useCopilotChat`. Same
+    //    required capital, same reason.
+    /^useCopilot[A-Z0-9_]/,
+];
+
+/**
+ * True when a name is shaped like part of CopilotKit's API surface.
+ *
+ * Deliberately NOT covered: the `CoAgent` / `useCoAgent` family. Those are ours
+ * too, but no shape rule separates them from generic React vocabulary without
+ * reaching for a hand-maintained name list — and a stale allowlist fails in the
+ * direction that withholds correct answers. They stay outside the gate until
+ * something better than a substring is available for them.
+ */
+function isCopilotKitIdentifier(segment: string): boolean {
+    return COPILOTKIT_IDENTIFIER_SHAPES.some((shape) => shape.test(segment));
+}
 
 /** `<Foo>`, `<Foo />`, `</Foo>` — JSX is how a component name is usually written. */
 const JSX_WRAPPER = /^<\/?\s*([A-Za-z_$][\w$.-]*)\s*\/?>$/;
@@ -261,11 +308,14 @@ function stripUrls(text: string): string {
  * Reduce a backticked token to the CopilotKit-named identifiers it declares.
  *
  * Widened past the bare-name guard it started with, because the identifier signal
- * is now the whole gate: `useCopilotKitFoo()`, `<CopilotKitFoo />` and
+ * is now the whole gate: `useCopilotAction()`, `<CopilotChat />` and
  * `window.copilotKitFoo` are the same claim as `copilotKitFoo`, and letting a
  * fabrication through on syntax alone would defeat the check. Package specifiers
  * (`@copilotkit/react-core`) stay excluded — they are stable public knowledge, not
  * a claim about the retrieved page.
+ *
+ * Which names count is `isCopilotKitIdentifier`; this function only handles the
+ * syntax a name can be written in.
  *
  * Anything that isn't identifier-shaped after unwrapping (prose, a fenced snippet,
  * a path) yields nothing.
@@ -275,7 +325,12 @@ function identifierSegments(rawToken: string): string[] {
     if (!token) return [];
     // Package specifier, including subpath imports.
     if (token.startsWith('@')) return [];
-    if (!/copilotkit/i.test(token)) return [];
+    // No early substring guard here any more. The shape rules are anchored, so
+    // they cannot be applied to a still-wrapped token (`<CopilotChat />`), and
+    // the per-segment filter at the bottom runs after unwrapping and decides the
+    // same question correctly. `IDENTIFIER_PATH` already rejects prose, so
+    // dropping the pre-filter costs a little work on non-identifier tokens and
+    // buys the gate every name it used to exempt.
 
     const jsx = JSX_WRAPPER.exec(token);
     if (jsx) token = jsx[1];
@@ -287,7 +342,7 @@ function identifierSegments(rawToken: string): string[] {
 
     // A dotted form names a member; report the segments that carry our name so the
     // grounding lookup compares something a source could plausibly contain.
-    return token.split('.').filter((segment) => segment && /copilotkit/i.test(segment));
+    return token.split('.').filter((segment) => segment && isCopilotKitIdentifier(segment));
 }
 
 /**
