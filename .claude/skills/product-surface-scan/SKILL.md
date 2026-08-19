@@ -52,7 +52,7 @@ Snapshot as of 2026-07-10 (source-linked in the pages above). The scan **replace
 - **Self-Hosted Enterprise Intelligence** — same platform in your own K8s/VPC/air-gapped boundary via the `copilot-intelligence` Helm chart; unlocked by a **license key** (offline validation).
 - **Threads & Persistence** — persistent server-side thread containers (full event history, resumable). Free-but-limited (200 threads / 3-day / 1 GB), paid above.
 - **CopilotKit Inspector** — real-time + historical interaction monitoring, replay, decision tracing, perf/error tracking.
-- **Premium UI components** — platform-gated UI (e.g. **Fully Headless Chat UI**). **The Angular SDK is open source (MIT), same as React** — verified on /product + npm 2026-07-21; optional premium UI extras exist but the SDK itself is not paid. (A products PDF still mislabels the Angular client "Premium" — that PDF is stale.)
+- **Premium UI components** — platform-gated UI (e.g. **Fully Headless Chat UI**). **The Angular SDK is open source (MIT), same as React** — verified on /product + npm 2026-07-21; optional premium UI extras exist but the SDK itself is not paid. (A products PDF still mislabels the Angular client "Premium" — that PDF is stale.) **2026-07-31 re-check: no live page carries a literal premium label for the Angular SDK, Fully Headless UI, *or* Inspector — `/pricing` lists Inspector on the free Developer tier. Treat all three as unlabelled until a scan can quote otherwise.**
 - **Analytics & Self-Learning** — perf dashboard, SQL-queryable lakehouse for compliance/audit, OTLP observability, in-context RL / per-user prompt mutation. **Status: "Coming Soon"** on both /product and the Intelligence page (verified 2026-07-21) — there is no "Early Access" label; don't invent one.
 - **Enterprise security bundle** — SOC 2 Type II, SSO + RBAC, offline licensing.
 - **Support / SLA** — Dedicated Slack Support (Team+), SLA + priority bug fixes + dedicated engineering hrs + roadmap input (Enterprise).
@@ -90,7 +90,7 @@ Apply to every issue/thread when deciding whether it belongs in 🏢 Enterprise.
 
 **Worked calls (this cycle):**
 - agno AgentOS auth header (`ag-ui#2130`) → **NO.** Third-party framework's endpoint auth; a feature request against the OSS dojo integration → Demand, not Enterprise.
-- Angular MIT-vs-Premium question (`@copilotkit/angular`) → **YES.** The Angular SDK is a premium/Enterprise-marked component; a "which tier is this?" question hits a commercial surface directly. (Note any live drift: the scan may show Angular as Enterprise while a maintainer says it's going OSS — surface that contradiction.)
+- Angular SDK bug (`@copilotkit/angular`) → **NO, as of the 2026-07-31 scan.** No live page labels the Angular SDK premium — `/product` carries no license label and the landing page only says Angular support is "Now available". An Angular-only bug is Pain/Demand. **Only a "which tier is this?" / pricing question about Angular is YES**, and then it's the *question* that hits the commercial surface, not the SDK. Same rule for Fully Headless UI and for Inspector: `/pricing` lists Inspector on the **free** Developer tier, so "Inspector is Premium" is unsupported. **Route on the question, never on assumed gating — if the live scan can't quote a label, there is no gate.**
 - Multi-tenant Slack bot (`@copilotkit/bot-slack`) → **YES.** Slack/Teams deployment is a paid ecosystem surface.
 - Thread-reloading with LangGraph (`#2200`, resolved via Enterprise Intelligence) → **YES.** Threads/persistence + the Intelligence Platform.
 
