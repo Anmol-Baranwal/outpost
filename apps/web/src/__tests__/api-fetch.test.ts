@@ -48,6 +48,35 @@ describe('apiFetch', () => {
         await apiFetch('/api/sync/mappings', { method, body: '{}' });
 
         expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBe(TOKEN);
+        // Every other assertion in this file reads mock.calls[0], which cannot see a
+        // duplicated or retried request. Pin the count so a wrapper that fires twice —
+        // e.g. a retry that re-sends a mutation, or one that retries cross-origin still
+        // carrying the token — fails here instead of passing silently.
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns the exact Response from fetch, neither re-wrapped nor dropped', async () => {
+        // Without this, a wrapper that returns `new Response()`, or returns undefined and
+        // only awaits fetch for its side effect, passes every other test in this file:
+        // they all assert on what was SENT and never on what came back.
+        const upstream = new Response('{"ok":true}', { status: 201 });
+        fetchMock.mockResolvedValueOnce(upstream);
+
+        const returned = await apiFetch('/api/tickets', { method: 'POST', body: '{}' });
+
+        expect(returned).toBe(upstream);
+        expect(returned.status).toBe(201);
+    });
+
+    it('returns the exact Response on the non-mutating passthrough path too', async () => {
+        // GET short-circuits before the header logic, a separate return statement.
+        const upstream = new Response('[]', { status: 200 });
+        fetchMock.mockResolvedValueOnce(upstream);
+
+        const returned = await apiFetch('/api/tickets');
+
+        expect(returned).toBe(upstream);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('stays in sync with the middleware’s own method set', async () => {
@@ -93,6 +122,11 @@ describe('apiFetch', () => {
         await apiFetch('https://evil.example.com/collect', { method: 'POST', body: '{}' });
 
         expect(headersOf(fetchMock.mock.calls[0]).get('X-CSRF-Token')).toBeNull();
+        // A retry would land in calls[1] and leak the token past the calls[0] assertion.
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(
+            fetchMock.mock.calls.every((c) => headersOf(c).get('X-CSRF-Token') === null),
+        ).toBe(true);
     });
 
     it('does send the token to an absolute same-origin URL', async () => {
