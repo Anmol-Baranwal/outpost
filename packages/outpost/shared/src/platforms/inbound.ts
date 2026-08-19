@@ -108,6 +108,28 @@ export interface InboundHandlerConfig {
 }
 
 /**
+ * Per-call options for `InboundHandler.handle`.
+ */
+export interface HandleOptions {
+    /**
+     * Platform-specific metadata to store on `ticket.additionalInfo` when a new
+     * ticket is created for a genuine thread start.
+     *
+     * It is passed in rather than written by the caller after `handle` returns
+     * because the AI_RESPONSE enqueue happens inside `handle`: once that job row
+     * exists the worker may claim it immediately, so anything the worker reads
+     * off the ticket has to be committed with the ticket itself. Teams' Bot
+     * Framework `conversationReference` is the live case — a worker that reads
+     * the ticket before the reference lands falls back to a hardcoded global
+     * `serviceUrl` and delivery fails for tenants in other regions.
+     *
+     * Ignored on replies, including the orphaned-reply fallback that files a
+     * ticket for a conversation Outpost was never part of.
+     */
+    ticketAdditionalInfo?: Record<string, unknown>;
+}
+
+/**
  * The InboundHandler processes normalized messages from any platform.
  *
  * Usage:
@@ -135,10 +157,22 @@ export class InboundHandler {
      * only for a genuine thread start from a non-team-member — never for a
      * reply, and never for the orphaned-reply fallback below.
      */
-    async handle(message: InboundMessage): Promise<InboundResult> {
+    async handle(
+        message: InboundMessage,
+        options: HandleOptions = {},
+    ): Promise<InboundResult> {
         if (message.isThreadStart) {
-            return this.handleNewTicket(message, { answer: true, orphanedReply: false });
+            return this.handleNewTicket(message, {
+                answer: true,
+                orphanedReply: false,
+                ticketAdditionalInfo: options.ticketAdditionalInfo,
+            });
         }
+        // Deliberately NOT forwarded to handleReply: its orphaned-reply fallback
+        // creates a ticket for a conversation Outpost was never part of, and
+        // platform metadata that claims the thread (Teams' conversationReference)
+        // must not be attached to it. See the isOrphanedReply contract on
+        // InboundResult.
         return this.handleReply(message);
     }
 
@@ -160,7 +194,15 @@ export class InboundHandler {
      */
     private async handleNewTicket(
         message: InboundMessage,
-        { answer, orphanedReply }: { answer: boolean; orphanedReply: boolean },
+        {
+            answer,
+            orphanedReply,
+            ticketAdditionalInfo,
+        }: {
+            answer: boolean;
+            orphanedReply: boolean;
+            ticketAdditionalInfo?: Record<string, unknown>;
+        },
     ): Promise<InboundResult> {
         const displayId = generateTicketId();
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
@@ -199,6 +241,13 @@ export class InboundHandler {
                 sourceUrl: message.sourceUrl ?? null,
                 channel: message.channelId ?? null,
                 userId,
+                // Platform-specific routing metadata the caller needs the worker
+                // to see. Written HERE, in the same insert as the ticket, because
+                // the AI_RESPONSE enqueue below makes the ticket claimable: a
+                // caller that wrote it afterwards raced the worker, which then
+                // fell back to a default (for Teams, a hardcoded global
+                // serviceUrl) and failed delivery for tenants in other regions.
+                ...(ticketAdditionalInfo ? { additionalInfo: ticketAdditionalInfo } : {}),
             },
         });
 

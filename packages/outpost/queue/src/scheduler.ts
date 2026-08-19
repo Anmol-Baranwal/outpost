@@ -46,6 +46,15 @@ export const DEFAULT_SCHEDULED_JOBS: ScheduledJobDefinition[] = [
         intervalMs: 24 * 60 * 60 * 1000, // 24 hours
         description: 'Poll GitHub reactions on AI-authored comments for feedback signal',
     },
+    {
+        type: JobType.PENDING_RESPONSE_SWEEP,
+        payload: {},
+        // 5 minutes, matching SLA_CHECK. The handler's own age threshold decides
+        // what is stranded, so this interval only sets detection latency — a
+        // reporter owed a human waits at most one interval past that threshold.
+        intervalMs: 5 * 60 * 1000,
+        description: 'Settle primary AI responses stranded in PENDING with no live owning job',
+    },
 ];
 
 /**

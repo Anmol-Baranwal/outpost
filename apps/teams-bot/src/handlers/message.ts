@@ -60,8 +60,30 @@ export async function handleMessage(context: TurnContext): Promise<void> {
 
         if (!isMonitored) return;
 
+        // Teams-specific ConversationReference for proactive messaging.
+        //
+        // Handed to the inbound handler instead of written afterwards: handle()
+        // enqueues the AI_RESPONSE job, and the worker can claim that job the
+        // moment the row exists. A reference written after handle() returned was
+        // therefore racing the worker, which read the ticket without one and fell
+        // back to the hardcoded global serviceUrl below — wrong host for tenants
+        // in other regions, so delivery failed. Passing it in makes it durable in
+        // the same insert as the ticket, before any job can be claimed.
+        //
+        // The handler ignores it on replies, including the orphaned-reply
+        // fallback: that ticket belongs to a conversation Outpost was never part
+        // of, and storing a reference for it would claim the thread for proactive
+        // messaging (see the isOrphanedReply branch below).
+        const conversationReference = {
+            serviceUrl: activity.serviceUrl ?? 'https://smba.trafficmanager.net/teams/',
+            conversationId: activity.conversation.id,
+            botId: activity.recipient.id,
+        };
+
         // Delegate to the shared inbound handler
-        const result = await inboundHandler.handle(message);
+        const result = await inboundHandler.handle(message, {
+            ticketAdditionalInfo: { conversationReference },
+        });
 
         // An orphaned reply also reports isNewTicket: true — a ticket really was
         // created — but it is NOT a conversation Outpost opened. Teams sets
@@ -72,19 +94,6 @@ export async function handleMessage(context: TurnContext): Promise<void> {
         // would claim that thread for proactive messaging. Both are skipped; the
         // ticket still exists for a human to pick up from the dashboard.
         if (result.isNewTicket && !result.isOrphanedReply) {
-            // Store Teams-specific ConversationReference for proactive messaging
-            const conversationReference = {
-                serviceUrl: activity.serviceUrl ?? 'https://smba.trafficmanager.net/teams/',
-                conversationId: activity.conversation.id,
-                botId: activity.recipient.id,
-            };
-            await prisma.ticket.update({
-                where: { id: result.ticketId },
-                data: {
-                    additionalInfo: { conversationReference },
-                },
-            });
-
             // New ticket: post acknowledgment card.
             //
             // Teams is deliberately the only platform that still acknowledges.
@@ -101,6 +110,7 @@ export async function handleMessage(context: TurnContext): Promise<void> {
             // other platforms did.
             const card = buildTicketCreatedCard({
                 title: truncate(message.content, 200),
+                aiJobEnqueued: result.aiJobEnqueued,
             });
 
             const reply = MessageFactory.attachment(
