@@ -25,13 +25,17 @@ export async function createJob<T extends JobType>(
 }
 
 /**
- * Update the progress of a running job.
+ * Update the progress of the running job claim that owns this execution.
  * Progress is a percentage from 0 to 100.
  */
-export async function updateJobProgress(jobId: string, percent: number): Promise<void> {
+export async function updateJobProgress(
+    jobId: string,
+    percent: number,
+    claimToken: string,
+): Promise<void> {
     const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-    await prisma.job.update({
-        where: { id: jobId },
+    await prisma.job.updateMany({
+        where: { id: jobId, status: 'PROCESSING', claimToken },
         data: { progress: clamped },
     });
 }

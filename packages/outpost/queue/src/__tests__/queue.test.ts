@@ -19,11 +19,13 @@ import type { JobResult, JobHandlerContext, WorkerHealthStatus } from '../types.
 const mockPrismaJob = {
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     findFirst: vi.fn(),
 };
 
 const mockPrisma = {
     job: mockPrismaJob,
+    $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
 };
 
@@ -52,6 +54,7 @@ function makeJobRow(
         payload: unknown;
         attempts: number;
         maxAttempts: number;
+        claimToken: string;
     }> = {},
 ) {
     return {
@@ -60,6 +63,7 @@ function makeJobRow(
         payload: overrides.payload ?? { ticketId: 'tkt-1', source: 'discord' },
         attempts: overrides.attempts ?? 0,
         maxAttempts: overrides.maxAttempts ?? 5,
+        claimToken: overrides.claimToken ?? 'claim-1',
     };
 }
 
@@ -120,31 +124,31 @@ describe('updateJobProgress', () => {
     });
 
     it('updates progress clamped between 0 and 100', async () => {
-        mockPrismaJob.update.mockResolvedValue({});
+        mockPrismaJob.updateMany.mockResolvedValue({ count: 1 });
 
-        await updateJobProgress('job-1', 50);
-        expect(mockPrismaJob.update).toHaveBeenCalledWith({
-            where: { id: 'job-1' },
+        await updateJobProgress('job-1', 50, 'claim-1');
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith({
+            where: { id: 'job-1', status: 'PROCESSING', claimToken: 'claim-1' },
             data: { progress: 50 },
         });
     });
 
     it('clamps progress above 100 to 100', async () => {
-        mockPrismaJob.update.mockResolvedValue({});
+        mockPrismaJob.updateMany.mockResolvedValue({ count: 1 });
 
-        await updateJobProgress('job-1', 150);
-        expect(mockPrismaJob.update).toHaveBeenCalledWith({
-            where: { id: 'job-1' },
+        await updateJobProgress('job-1', 150, 'claim-1');
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith({
+            where: { id: 'job-1', status: 'PROCESSING', claimToken: 'claim-1' },
             data: { progress: 100 },
         });
     });
 
     it('clamps negative progress to 0', async () => {
-        mockPrismaJob.update.mockResolvedValue({});
+        mockPrismaJob.updateMany.mockResolvedValue({ count: 1 });
 
-        await updateJobProgress('job-1', -10);
-        expect(mockPrismaJob.update).toHaveBeenCalledWith({
-            where: { id: 'job-1' },
+        await updateJobProgress('job-1', -10, 'claim-1');
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith({
+            where: { id: 'job-1', status: 'PROCESSING', claimToken: 'claim-1' },
             data: { progress: 0 },
         });
     });
@@ -156,6 +160,8 @@ describe('Worker', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
+        mockPrisma.$executeRaw.mockResolvedValue(0);
+        mockPrismaJob.updateMany.mockResolvedValue({ count: 1 });
         worker = new Worker({
             pollIntervalMs: 100,
             maxConcurrency: 2,
@@ -186,12 +192,155 @@ describe('Worker', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         expect(results).toEqual(['tkt-1']);
-        expect(mockPrismaJob.update).toHaveBeenCalledWith(
+        const claimSql = mockPrisma.$queryRaw.mock.calls[0][0].join(' ');
+        expect(claimSql).toContain('"claimToken" = gen_random_uuid()::text');
+        expect(claimSql).toContain('"maxAttempts", "claimToken"');
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { id: 'job-1' },
+                where: expect.objectContaining({ id: 'job-1', claimToken: 'claim-1' }),
                 data: expect.objectContaining({ status: 'COMPLETED', attempts: 1 }),
             }),
         );
+    });
+
+    it('reclaims stale processing jobs using each job type timeout before claiming', async () => {
+        const now = new Date('2026-08-11T12:00:00.000Z');
+        vi.setSystemTime(now);
+
+        await worker.stop();
+        worker = new Worker({
+            pollIntervalMs: 100,
+            maxConcurrency: 2,
+            defaultTimeoutMs: 5000,
+            jobTimeouts: {
+                [JobType.AI_RESPONSE]: 1000,
+            },
+        });
+
+        const recoveredJob = makeJobRow();
+        mockPrisma.$executeRaw.mockResolvedValue(1);
+        mockPrisma.$queryRaw.mockResolvedValueOnce([recoveredJob]);
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+        mockPrismaJob.update.mockResolvedValue({});
+
+        const handled: string[] = [];
+        worker.on(JobType.AI_RESPONSE, async (payload) => {
+            handled.push(payload.ticketId);
+            return { success: true };
+        });
+        worker.on(JobType.ESCALATION, async () => ({ success: true }));
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const firstReclaim = mockPrisma.$executeRaw.mock.calls[0];
+        expect(JSON.parse(firstReclaim[1])).toEqual([
+            { type: JobType.AI_RESPONSE, reclaim_after_ms: 31_000 },
+            { type: JobType.ESCALATION, reclaim_after_ms: 35_000 },
+        ]);
+        const reclaimSql = firstReclaim[0].join(' ');
+        expect(reclaimSql).toContain("WHERE job.status = 'PROCESSING'");
+        expect(reclaimSql).toContain('job."lockedAt" < NOW()');
+        expect(handled).toEqual(['tkt-1']);
+    });
+
+    it('does not let an old execution clobber the reclaimed claim', async () => {
+        const persisted = {
+            id: 'job-1',
+            status: 'PROCESSING',
+            claimToken: 'claim-old',
+            attempts: 0,
+            progress: null as number | null,
+        };
+        mockPrismaJob.updateMany.mockImplementation(async ({ where, data }) => {
+            if (
+                where.id !== persisted.id ||
+                where.status !== persisted.status ||
+                where.claimToken !== persisted.claimToken
+            ) {
+                return { count: 0 };
+            }
+            Object.assign(persisted, data);
+            return { count: 1 };
+        });
+
+        let oldStarted!: () => void;
+        const oldIsRunning = new Promise<void>((resolve) => {
+            oldStarted = resolve;
+        });
+        let releaseOld!: () => void;
+        const oldMayFinish = new Promise<void>((resolve) => {
+            releaseOld = resolve;
+        });
+        worker.on(JobType.AI_RESPONSE, async (payload, context) => {
+            if (payload.ticketId === 'old-execution') {
+                oldStarted();
+                await oldMayFinish;
+                await context.reportProgress(25);
+            }
+            return { success: true };
+        });
+
+        type ClaimedJob = ReturnType<typeof makeJobRow>;
+        const processJob = (
+            worker as unknown as { processJob(job: ClaimedJob): Promise<void> }
+        ).processJob.bind(worker);
+        const oldExecution = processJob(
+            makeJobRow({
+                payload: { ticketId: 'old-execution', source: 'discord' },
+                claimToken: 'claim-old',
+            }),
+        );
+        await oldIsRunning;
+
+        // Model stale reclamation followed by a new exclusive claim.
+        persisted.claimToken = 'claim-new';
+        persisted.attempts = 1;
+        const newExecution = processJob(
+            makeJobRow({
+                payload: { ticketId: 'new-execution', source: 'discord' },
+                attempts: 1,
+                claimToken: 'claim-new',
+            }),
+        );
+        await newExecution;
+
+        releaseOld();
+        await oldExecution;
+
+        expect(persisted).toMatchObject({
+            status: 'COMPLETED',
+            claimToken: null,
+            attempts: 2,
+            progress: 100,
+        });
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: {
+                    id: 'job-1',
+                    status: 'PROCESSING',
+                    claimToken: 'claim-old',
+                },
+            }),
+        );
+        expect(mockPrismaJob.update).not.toHaveBeenCalled();
+    });
+
+    it('counts crash-abandoned claims toward dead letter only after a recovery grace', async () => {
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const reclaimCall = mockPrisma.$executeRaw.mock.calls[0];
+        expect(JSON.parse(reclaimCall[1])).toEqual([
+            { type: JobType.AI_RESPONSE, reclaim_after_ms: 35_000 },
+        ]);
+        const reclaimSql = reclaimCall[0].join(' ');
+        expect(reclaimSql).toContain('job."attempts" + 1');
+        expect(reclaimSql).toContain("THEN 'DEAD_LETTER'");
+        expect(reclaimSql).toContain('"claimToken" = NULL');
     });
 
     it('marks job DEAD_LETTER after maxAttempts exhausted', async () => {
@@ -207,9 +356,9 @@ describe('Worker', () => {
         worker.start();
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(mockPrismaJob.update).toHaveBeenCalledWith(
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { id: 'job-1' },
+                where: expect.objectContaining({ id: 'job-1', claimToken: 'claim-1' }),
                 data: expect.objectContaining({
                     status: 'DEAD_LETTER',
                     attempts: 5,
@@ -232,9 +381,9 @@ describe('Worker', () => {
         worker.start();
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(mockPrismaJob.update).toHaveBeenCalledWith(
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { id: 'job-1' },
+                where: expect.objectContaining({ id: 'job-1', claimToken: 'claim-1' }),
                 data: expect.objectContaining({
                     status: 'PENDING',
                     attempts: 2,
@@ -268,7 +417,7 @@ describe('Worker', () => {
         await vi.advanceTimersByTimeAsync(200);
 
         // Should have been marked as retryable (attempt 1 of 5)
-        expect(mockPrismaJob.update).toHaveBeenCalledWith(
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 data: expect.objectContaining({
                     status: 'PENDING',
@@ -288,7 +437,7 @@ describe('Worker', () => {
         worker.start();
         await vi.advanceTimersByTimeAsync(0);
 
-        expect(mockPrismaJob.update).toHaveBeenCalledWith(
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 data: expect.objectContaining({
                     status: 'FAILED',
@@ -329,7 +478,7 @@ describe('Worker', () => {
         await vi.advanceTimersByTimeAsync(100);
 
         // All 3 should complete (they run concurrently via Promise.allSettled)
-        expect(mockPrismaJob.update).toHaveBeenCalledTimes(3);
+        expect(mockPrismaJob.updateMany).toHaveBeenCalledTimes(3);
     });
 
     it('provides accurate health check information', () => {
@@ -374,6 +523,66 @@ describe('Worker', () => {
         expect(jobFinished).toBe(true);
     });
 
+    it('shares the active-job drain across repeated stop calls', async () => {
+        let jobFinished = false;
+        const jobRow = makeJobRow();
+        mockPrisma.$queryRaw.mockResolvedValueOnce([jobRow]);
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+        mockPrismaJob.update.mockResolvedValue({});
+
+        worker.on(JobType.AI_RESPONSE, async () => {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            jobFinished = true;
+            return { success: true };
+        });
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const signalStop = worker.stop();
+        let appStopResolved = false;
+        const appStop = worker.stop().then(() => {
+            appStopResolved = true;
+        });
+
+        await Promise.resolve();
+        expect(appStopResolved).toBe(false);
+        expect(jobFinished).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(300);
+        await Promise.all([signalStop, appStop]);
+
+        expect(jobFinished).toBe(true);
+        expect(appStopResolved).toBe(true);
+    });
+
+    it('waits for an in-flight poll and does not claim after shutdown begins', async () => {
+        let releaseReclaim!: () => void;
+        mockPrisma.$executeRaw.mockImplementationOnce(
+            () =>
+                new Promise<number>((resolve) => {
+                    releaseReclaim = () => resolve(0);
+                }),
+        );
+
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+        worker.start();
+
+        const stopPromise = worker.stop();
+        let stopped = false;
+        void stopPromise.then(() => {
+            stopped = true;
+        });
+        await Promise.resolve();
+        expect(stopped).toBe(false);
+
+        releaseReclaim();
+        await stopPromise;
+
+        expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+        expect(worker.healthCheck().running).toBe(false);
+    });
+
     it('handler receives context with progress reporting', async () => {
         const jobRow = makeJobRow();
         mockPrisma.$queryRaw.mockResolvedValueOnce([jobRow]);
@@ -393,8 +602,8 @@ describe('Worker', () => {
 
         expect(receivedContext).not.toBeNull();
         expect(receivedContext!.jobId).toBe('job-1');
-        // reportProgress should have called prisma.job.update with progress: 50
-        const progressCall = mockPrismaJob.update.mock.calls.find(
+        // reportProgress should fence the update to this execution's claim.
+        const progressCall = mockPrismaJob.updateMany.mock.calls.find(
             (call: Array<Record<string, Record<string, unknown>>>) => call[0].data.progress === 50,
         );
         expect(progressCall).toBeDefined();
