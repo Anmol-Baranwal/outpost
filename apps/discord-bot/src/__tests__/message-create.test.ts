@@ -176,15 +176,26 @@ describe('handleMessageCreate', () => {
         expect(createJob).not.toHaveBeenCalled();
     });
 
+    // The gate above must not swallow real replies. Asserted on the message
+    // record rather than on an enqueue: since #172/#191, `InboundHandler` never
+    // enqueues AI_RESPONSE for a reply on ANY platform — Outpost answers once per
+    // ticket, on the opening message, and a human owns the thread after that. This
+    // test predates that rule and asserted the enqueue, which is why it survived
+    // the textual merge and then failed. What it is actually here to prove is that
+    // `message.id === threadId` distinguishes the starter message from a reply,
+    // and the message record is what shows that.
     it('still processes genuine replies in the same thread', async () => {
         const reply = makeMessage({ id: 'msg-777' });
 
         await handleMessageCreate(reply);
 
-        expect(createJob).toHaveBeenCalledWith(
-            'AI_RESPONSE',
-            expect.objectContaining({ ticketId: 'ticket-1' }),
+        expect(prisma.message.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ ticketId: 'ticket-1', type: 'USER' }),
+            }),
         );
+        // And the one-answer rule still holds: a reply enqueues nothing.
+        expect(createJob).not.toHaveBeenCalled();
     });
 
     it('uses DiscordAdapter.parseInboundEvent to normalize message events', async () => {
