@@ -108,6 +108,11 @@ model Message {
     confidenceLevel    String?     // "HIGH" | "MEDIUM" | "LOW"
     feedback           String?     // "POSITIVE" | "NEGATIVE" | null (no feedback yet)
     externalCommentId  String?     // GitHub comment/discussion-comment ID this message was posted as, if applicable
+    // Inbound provider message ID this row was created FROM (Postmark MessageID today).
+    // A real column rather than a JSON key so redelivery dedup is an indexed lookup and
+    // a unique constraint, not an unindexed jsonb path scan. NULL for messages with no
+    // inbound provider ID (agent replies, AI responses, seeded data).
+    sourceMessageId    String?
     responseKey        String?     // Idempotency slot; PRIMARY_AI_RESPONSE is unique per ticket
     responseState      MessageResponseState? // Lifecycle of the primary AI response
     responseJobId      String?     // Queue job that owns a PENDING primary response
@@ -127,6 +132,7 @@ model Message {
     attachments        Json?
     createdAt          DateTime    @default(now())
 
+    @@unique([ticketId, sourceMessageId])
     @@unique([ticketId, responseKey])
     @@index([ticketId])
     @@index([isAiGenerated, feedback])
