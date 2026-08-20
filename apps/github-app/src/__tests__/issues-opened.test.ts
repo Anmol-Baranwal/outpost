@@ -9,6 +9,7 @@ const mockHandleResult = {
     ticketId: 'ticket-internal-id',
     displayId: 'TKT-GH01',
     isNewTicket: true,
+    isOrphanedReply: false,
     aiJobEnqueued: true,
     messageId: 'message-internal-id',
 };
@@ -141,17 +142,13 @@ describe('handleIssueOpened', () => {
         });
     });
 
-    it('posts an acknowledgment via adapter.postSystemMessage', async () => {
+    it('does not post a ticket-created acknowledgment comment on the issue', async () => {
         const event = makeEvent();
         await handleIssueOpened(event);
 
-        expect(mockPostSystemMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                id: 'ticket-internal-id',
-                source: 'GITHUB_ISSUE',
-            }),
-            expect.stringContaining('TKT-GH01'),
-        );
+        // The internal ticket id is noise on a public issue — the AI response is
+        // the bot's only comment in the thread.
+        expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
 
     it('handles parse failure gracefully', async () => {

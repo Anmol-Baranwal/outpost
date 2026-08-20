@@ -15,6 +15,7 @@
  *   - TRACKER_SYNC:     Push changes to external trackers
  *   - JOB_CLEANUP:      Periodic cleanup of old jobs and sync events
  *   - GITHUB_REACTION_POLL: Poll GitHub reactions on AI comments (no webhook exists)
+ *   - PENDING_RESPONSE_SWEEP: Settle AI responses stranded in PENDING by a dead job
  */
 
 import http from 'node:http';
@@ -32,13 +33,26 @@ import {
     createTrackerSyncHandler,
     handleJobCleanup,
     handleGithubReactionPoll,
-    createJob,
+    handlePendingResponseSweep,
 } from '@copilotkit/outpost/queue';
-import { SyncEngine } from '@copilotkit/outpost/shared';
+import { buildSyncEngine } from './build-sync-engine.js';
 
 // ─── Build SyncEngine for TRACKER_SYNC handler ────────────────────────────
 
-const syncEngine = new SyncEngine({ prisma: prisma as any, createJob: createJob as any });
+// BOOT SEMANTICS — deliberate change. This is a top-level await that performs
+// three database reads (the persisted status / priority / label mapping configs)
+// before this module finishes evaluating. If the database is unreachable at boot
+// the import throws, so the process exits BEFORE the health server below starts
+// listening: the container crash-loops with no /health at all rather than coming
+// up and reporting itself degraded.
+//
+// Fail-fast is the intent — a worker running with silently-defaulted mappings is
+// worse than one that is visibly down, since TRACKER_SYNC would then write wrong
+// statuses to Linear. Railway's restart policy is the retry mechanism. Note this
+// interacts with the /health honesty follow-up (#138): once /health reflects
+// worker state, a degraded-but-listening mode becomes a real option and this
+// decision is worth revisiting.
+const syncEngine = await buildSyncEngine();
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);
 
@@ -57,6 +71,7 @@ const worker = new Worker({
         [JobType.TRACKER_SYNC]: 1,
         [JobType.JOB_CLEANUP]: 1,
         [JobType.GITHUB_REACTION_POLL]: 1,
+        [JobType.PENDING_RESPONSE_SWEEP]: 1,
     },
     jobTimeouts: {
         [JobType.AI_RESPONSE]: 120_000, // 2 minutes — AI pipeline is slow
@@ -76,6 +91,7 @@ worker.on(JobType.HUBSPOT_SYNC, handleHubSpotSync);
 worker.on(JobType.TRACKER_SYNC, handleTrackerSync);
 worker.on(JobType.JOB_CLEANUP, handleJobCleanup);
 worker.on(JobType.GITHUB_REACTION_POLL, handleGithubReactionPoll);
+worker.on(JobType.PENDING_RESPONSE_SWEEP, handlePendingResponseSweep);
 
 // ─── Start Scheduler ──────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Settings, RefreshCw, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface HubSpotStatus {
     connected: boolean;
@@ -44,7 +45,7 @@ export default function SettingsPage() {
 
     const fetchStatus = useCallback(async () => {
         try {
-            const res = await fetch('/api/integrations/hubspot/status');
+            const res = await apiFetch('/api/integrations/hubspot/status');
             if (!res.ok) throw new Error('Failed to fetch status');
             const data = await res.json();
             setHubspotStatus(data);
@@ -63,7 +64,7 @@ export default function SettingsPage() {
         setError(null);
 
         try {
-            const res = await fetch('/api/integrations/hubspot/sync', {
+            const res = await apiFetch('/api/integrations/hubspot/sync', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
@@ -85,7 +86,7 @@ export default function SettingsPage() {
         setResetError(null);
 
         try {
-            const res = await fetch('/api/admin/reset', {
+            const res = await apiFetch('/api/admin/reset', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ confirmation: resetConfirmation, reseed: resetReseed }),

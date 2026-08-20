@@ -9,16 +9,18 @@ import { SyncEventLog } from '@/components/sync/sync-event-log';
 import type { EventLogFilters } from '@/components/sync/sync-event-log';
 import type { SystemSyncStatus, SyncEvent } from '@/lib/mock-sync';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-fetch';
 
 export default function SyncPage() {
     const [systems, setSystems] = useState<SystemSyncStatus[]>([]);
     const [events, setEvents] = useState<SyncEvent[]>([]);
     const [conflicts, setConflicts] = useState<SyncEvent[]>([]);
     const [forcing, setForcing] = useState<string | null>(null);
+    const [forceNotice, setForceNotice] = useState<string | null>(null);
 
     const fetchStatus = useCallback(async () => {
         try {
-            const res = await fetch('/api/sync/status');
+            const res = await apiFetch('/api/sync/status');
             const data = await res.json();
             setSystems(data.systems);
         } catch {
@@ -31,7 +33,7 @@ export default function SyncPage() {
             const params = new URLSearchParams();
             if (filters?.sourcePlugin) params.set('sourcePlugin', filters.sourcePlugin);
             if (filters?.status) params.set('status', filters.status);
-            const res = await fetch(`/api/sync/events?${params.toString()}`);
+            const res = await apiFetch(`/api/sync/events?${params.toString()}`);
             const data = await res.json();
             setEvents(data.events);
         } catch {
@@ -41,7 +43,7 @@ export default function SyncPage() {
 
     const fetchConflicts = useCallback(async () => {
         try {
-            const res = await fetch('/api/sync/conflicts');
+            const res = await apiFetch('/api/sync/conflicts');
             const data = await res.json();
             setConflicts(data.conflicts);
         } catch {
@@ -57,12 +59,29 @@ export default function SyncPage() {
 
     async function handleForceSync(plugin: string) {
         setForcing(plugin);
+        setForceNotice(null);
         try {
-            await fetch('/api/sync/force', {
+            const res = await apiFetch('/api/sync/force', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ plugin }),
             });
+            const data = await res.json().catch(() => null);
+
+            // A force sync that partially or wholly did nothing has to say so.
+            // The route skips changes whose value has no reverse mapping for this
+            // plugin — silently dropping that on the floor would just trade a
+            // silent wrong write for a silent no-write.
+            if (!res.ok) {
+                setForceNotice(data?.error ?? `Force sync failed (${res.status}).`);
+            } else if (data?.skipped > 0) {
+                setForceNotice(
+                    `Queued ${data.jobs} job(s). Skipped ${data.skipped} change(s) with no ` +
+                        `mapping for ${plugin}: ${data.unmappable.join(', ')}. Add mappings on ` +
+                        `the Mappings tab, or those tickets stay out of sync.`,
+                );
+            }
+
             await fetchStatus();
             await fetchEvents();
         } finally {
@@ -72,7 +91,7 @@ export default function SyncPage() {
 
     async function handleResolveConflict(id: string, resolution: 'outpost' | 'external') {
         try {
-            await fetch(`/api/sync/conflicts/${id}/resolve`, {
+            await apiFetch(`/api/sync/conflicts/${id}/resolve`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ resolution }),
@@ -99,24 +118,46 @@ export default function SyncPage() {
                     <div className="flex items-center justify-between mb-3">
                         <h2 className="text-sm font-semibold text-foreground">System Health</h2>
                         <div className="flex items-center gap-2">
-                            {systems.map((sys) => (
-                                <button
-                                    key={sys.plugin}
-                                    data-testid={`force-sync-${sys.plugin}`}
-                                    disabled={forcing !== null}
-                                    onClick={() => handleForceSync(sys.plugin)}
-                                    className={cn(
-                                        'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                                        'border border-border bg-background text-foreground hover:bg-muted',
-                                        'disabled:opacity-50',
-                                    )}
-                                >
-                                    <RefreshCw className={cn('h-3 w-3', forcing === sys.plugin && 'animate-spin')} />
-                                    Force {sys.plugin.charAt(0).toUpperCase() + sys.plugin.slice(1)}
-                                </button>
-                            ))}
+                            {/*
+                             * Only plugins the worker can actually sync to get a
+                             * button. A plugin can appear in System Health (it has
+                             * sync events) while having no registered outbound
+                             * adapter — forcing one of those just floods the DLQ.
+                             */}
+                            {systems
+                                .filter((sys) => sys.canForceSync)
+                                .map((sys) => (
+                                    <button
+                                        key={sys.plugin}
+                                        data-testid={`force-sync-${sys.plugin}`}
+                                        disabled={forcing !== null}
+                                        onClick={() => handleForceSync(sys.plugin)}
+                                        className={cn(
+                                            'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                                            'border border-border bg-background text-foreground hover:bg-muted',
+                                            'disabled:opacity-50',
+                                        )}
+                                    >
+                                        <RefreshCw
+                                            className={cn(
+                                                'h-3 w-3',
+                                                forcing === sys.plugin && 'animate-spin',
+                                            )}
+                                        />
+                                        Force{' '}
+                                        {sys.plugin.charAt(0).toUpperCase() + sys.plugin.slice(1)}
+                                    </button>
+                                ))}
                         </div>
                     </div>
+                    {forceNotice && (
+                        <div
+                            data-testid="force-sync-notice"
+                            className="mb-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground"
+                        >
+                            {forceNotice}
+                        </div>
+                    )}
                     <SyncHealthCards systems={systems} />
                 </div>
 

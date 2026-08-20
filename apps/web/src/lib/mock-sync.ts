@@ -33,6 +33,12 @@ export interface SystemSyncStatus {
     lastSuccessfulSync: string;
     pendingCount: number;
     failedCount: number;
+    /**
+     * Whether the worker has a registered outbound adapter for this plugin.
+     * Served by /api/sync/status; gates the force-sync control. Optional so the
+     * mock fixtures below stay valid — treat a missing value as "not syncable".
+     */
+    canForceSync?: boolean;
     /** Average round-trip latency in milliseconds */
     p50LatencyMs: number;
     p95LatencyMs: number;
@@ -46,6 +52,14 @@ export interface StatusMappingEntry {
 export interface PriorityMappingEntry {
     externalPriority: string;
     outpostPriority: string;
+    /**
+     * Display-only human text for `externalPriority`. #95 split the display text out
+     * of the persisted key, so the key is now the raw adapter value ('0'–'4') and this
+     * carries what an operator recognises ('Urgent', 'High', …). Not persisted-critical
+     * and not editable — the editor renders it beside the key so the priority tab does
+     * not show bare numbers.
+     */
+    label?: string;
 }
 
 export interface IdentityMappingEntry {
@@ -213,12 +227,17 @@ export const MOCK_MAPPING_CONFIG: MappingConfig = {
         ],
     },
     priorityMappings: {
+        // Keys are the adapter's real lookup values — LinearAdapter maps with
+        // String(data.priority), i.e. '0'..'4'. The human text lives in `label`. The
+        // previous fixture used '0 (None)'-style keys, which is the unmatchable-key shape
+        // #95 fixed on the persistence side; leaving it here would have re-canonicalized
+        // the bug and left the editor's label rendering uncovered.
         linear: [
-            { externalPriority: '0 (None)', outpostPriority: 'MEDIUM' },
-            { externalPriority: '1 (Urgent)', outpostPriority: 'CRITICAL' },
-            { externalPriority: '2 (High)', outpostPriority: 'HIGH' },
-            { externalPriority: '3 (Medium)', outpostPriority: 'MEDIUM' },
-            { externalPriority: '4 (Low)', outpostPriority: 'LOW' },
+            { externalPriority: '0', outpostPriority: 'MEDIUM', label: 'None' },
+            { externalPriority: '1', outpostPriority: 'CRITICAL', label: 'Urgent' },
+            { externalPriority: '2', outpostPriority: 'HIGH', label: 'High' },
+            { externalPriority: '3', outpostPriority: 'MEDIUM', label: 'Medium' },
+            { externalPriority: '4', outpostPriority: 'LOW', label: 'Low' },
         ],
         github: [
             { externalPriority: 'critical', outpostPriority: 'CRITICAL' },

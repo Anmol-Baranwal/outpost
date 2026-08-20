@@ -39,12 +39,35 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
 | outpost-slack-bot   | Worker     | 3002                      | GET /health     |
 | outpost-teams-bot   | Web        | 3978 (bot), 3003 (health) | GET /health     |
 | outpost-linear-sync | Web        | 3004                      | GET /health     |
-| outpost-worker      | Worker     | 3003 (3005 locally)       | GET /health     |
+| outpost-worker      | Worker     | 3005 (image default)      | GET /health     |
 | outpost-db          | PostgreSQL | --                        | --              |
 
 Ports are the code's defaults (`process.env.PORT`/`HEALTH_PORT` fallback) — Railway may assign different values via its own `PORT` env var per service.
 
-Note that the worker and the Teams bot both read the same `HEALTH_PORT` variable and both default to `3003`. That is fine on Railway, where each service runs in its own container, but it collides when running them together locally — which is why `.env.example` sets `HEALTH_PORT=3005`.
+**Five** services read the same `HEALTH_PORT` variable, each with a different fallback:
+
+| Service               | Fallback in code | Pinned by its Dockerfile |
+| --------------------- | ---------------- | ------------------------ |
+| `outpost-discord-bot` | 3001             | `ENV HEALTH_PORT=3001`   |
+| `outpost-slack-bot`   | 3002             | `ENV HEALTH_PORT=3002`   |
+| `outpost-teams-bot`   | 3003             | `ENV HEALTH_PORT=3003`   |
+| `outpost-linear-sync` | 3004             | (not pinned)             |
+| `outpost-worker`      | 3003             | `ENV HEALTH_PORT=3005`   |
+
+What separates them in a deployed environment is each image pinning its own value — not the
+variable itself. So a single `HEALTH_PORT` in a shared local `.env` collapses **all five**
+onto that one port rather than separating anything: `.env.example`'s `HEALTH_PORT=3005` suits
+running one service at a time, and running several together needs a per-process override.
+
+One further asymmetry: the worker resolves `PORT ?? HEALTH_PORT ?? 3003`
+(`apps/worker/src/index.ts`), so a platform-injected `PORT` **overrides** `HEALTH_PORT` — and
+since its Dockerfile probes 3005 unconditionally, an injected `PORT` moves the listener while
+the health check keeps checking 3005.
+
+Several services use `PORT` and `HEALTH_PORT` for **different** listeners rather than as
+alternatives — the Teams bot serves health on `HEALTH_PORT` (3003) and the Bot Framework
+endpoint on `PORT` (3978), and Linear sync reads both as well. Only the worker treats them as
+a fallback chain.
 
 ## Environment Variables
 
@@ -133,10 +156,20 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 
 1. Install dependencies (`pnpm install --frozen-lockfile`)
 2. Generate Prisma client
-3. Build all packages
-4. Lint
+3. Verify the Prisma schema and that a migration directory exists
+4. Build all packages
 5. Type check
 6. Run tests
+
+**Lint does not run in CI**, despite the job being named "Lint, Typecheck & Test" and branch
+protection requiring that check. ESLint 9 defaults to flat config while the repo still uses
+`.eslintrc.cjs`, and the `ESLINT_USE_FLAT_CONFIG=false` opt-out does not survive turbo's
+environment sanitization. Enabling it is tracked in
+[#141](https://github.com/CopilotKit/outpost/issues/141); until that lands, treat a green
+check as covering build, types and tests only.
+
+`apps/web` is linted by `next lint` against its own `apps/web/.eslintrc.cjs`; every other
+workspace uses the root `.eslintrc.cjs`.
 
 ## Environments (staging → production)
 
@@ -144,12 +177,12 @@ Railway hosts two environments in the `outpost` project, each with its **own** P
 
 `main` is the known-good release line: it is what production runs. Development work — features, fixes, chores — happens on branches, which merge into `staging` for integration testing. Nothing reaches `main` until it has soaked on staging.
 
-| | staging | production |
-| --- | --- | --- |
-| Deploys from | `staging` branch (CI-gated) | `main` (CI-gated) |
-| Web URL | `outpost-web-staging.up.railway.app` | `outpost.copilotkit.ai` |
-| Database | own Postgres (isolated) | own Postgres |
-| Role | integration / soak | known good |
+|              | staging                              | production              |
+| ------------ | ------------------------------------ | ----------------------- |
+| Deploys from | `staging` branch (CI-gated)          | `main` (CI-gated)       |
+| Web URL      | `outpost-web-staging.up.railway.app` | `outpost.copilotkit.ai` |
+| Database     | own Postgres (isolated)              | own Postgres            |
+| Role         | integration / soak                   | known good              |
 
 Four services carry deploy triggers in both environments: `outpost-web`, `outpost-github-app`, `outpost-discord-bot`, `outpost-worker`. The remaining three (`outpost-slack-bot`, `outpost-teams-bot`, `outpost-linear-sync`) are optional integrations — deployed manually / left offline until their credentials are configured.
 
@@ -163,10 +196,18 @@ response as a shadow `Message` row (`author: outpost-shadow`, `attachments.shado
 carrying the text it would have posted, plus confidence and latency. Inspect those rows
 to verify agent behavior without replying to real users.
 
-`SHADOW_MODE` gates both outbound paths: the `AI_RESPONSE` handler (every auto-response
-to a user, posted via the platform adapters) and the `ONBOARDING_DIGEST` job, which
-posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` using raw REST.
-With shadow mode on, the digest is logged instead of posted.
+`SHADOW_MODE` is read by **more than one service**, and each one gates a different point
+in the flow. Set it consistently across an environment rather than on a single service:
+
+| Service               | What the flag changes                                                                                                                                                                                                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `outpost-discord-bot` | At ingest. `thread-create.ts` and `message-create.ts` call `isShadowMode()` and divert to `handleShadowThreadCreate` / `handleShadowMessage`, recording the ticket and a shadow response silently instead of running the normal visible flow (`src/lib/shadow-mode.ts`).                                                                      |
+| `outpost-worker`      | At post-back. The `AI_RESPONSE` handler checks the flag immediately before `adapter.postResponse` and persists the response as a shadow `Message` row instead of posting (`queue/src/handlers/ai-response.ts`). Also gates `ONBOARDING_DIGEST`, which posts a daily digest straight to Discord via `DISCORD_DIGEST_CHANNEL_ID` over raw REST. |
+
+For Discord either gate alone is enough to stop a post, so they are belt-and-braces. The
+worker's gate is the one that covers **every** platform (GitHub, Slack, Teams) plus the
+digest job, because that is where the adapter call lives — so a staging environment must
+have it set on `outpost-worker`, not only on a bot.
 
 When adding any new outbound post path, check `SHADOW_MODE` before posting — otherwise
 staging will deliver to real users regardless of the flag.
@@ -222,7 +263,7 @@ All seven services expose health endpoints returning JSON:
 - Slack bot: `GET /health` (port 3002)
 - Teams bot: `GET /health` (port 3003)
 - Linear sync: `GET /health` (port 3004)
-- Worker: `GET /health` (port 3003 by default; `HEALTH_PORT=3005` locally to avoid clashing with the Teams bot)
+- Worker: `GET /health` (port 3005 — set by `ENV HEALTH_PORT=3005` in its Dockerfile; a platform-injected `PORT` takes precedence over `HEALTH_PORT`)
 
 ## Database Setup
 
@@ -232,9 +273,36 @@ After provisioning PostgreSQL (Railway supports pgvector via `CREATE EXTENSION`)
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-Then run migrations:
+The schema is managed by **versioned Prisma migrations** (`packages/outpost/db/prisma/migrations/`).
+Both `apps/web/start.sh` and `apps/worker/start.sh` run `prisma migrate deploy` on every
+container start, so a deployed environment migrates itself — there is no manual step for
+staging or production.
+
+Because two services migrate, a deploy that restarts web and worker together has **two
+concurrent migrators** against one database. Prisma takes an advisory lock, so the second
+waits rather than corrupting state, but it can fail its startup if the first migration
+outlasts the lock timeout — a restart clears it. Worth knowing before adding a third
+migrating service, and worth consolidating onto a single migrate step (or a release-phase
+job) if migrations grow long.
+
+To apply migrations by hand (e.g. against a fresh local database):
 
 ```bash
 pnpm db:generate
-pnpm db:push
+pnpm --filter @copilotkit/outpost exec prisma migrate deploy --schema db/prisma/schema.prisma
 ```
+
+> **Do not run `pnpm db:push` against staging or production.** `prisma db push` syncs the
+> schema without recording a migration, which puts the database out of step with the
+> migration history and makes the next `migrate deploy` fail or clobber changes. It is for
+> throwaway local databases and prototyping only.
+
+To create a new migration during development, use
+`prisma migrate dev --name <description>` and commit the generated directory.
+
+### Backups
+
+Railway's managed Postgres handles storage-level durability, but there is **no documented
+application-level backup/restore procedure yet** — no scheduled `pg_dump`, and no rehearsed
+restore. Treat that as an open gap before relying on this database for anything you cannot
+reconstruct.

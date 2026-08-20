@@ -57,19 +57,8 @@ export async function handleDiscussionCreated(
             },
         });
 
-        // Post acknowledgment comment on the discussion
-        // Store the discussion node_id on the ticket ref for routing
-        const ticketRef = {
-            id: result.ticketId,
-            sourceId: `${repository.full_name}#${discussion.number}`,
-            channel: repository.full_name,
-            source: 'GITHUB_DISCUSSION' as const,
-            discussionNodeId: discussion.node_id,
-        };
-        await adapter.postSystemMessage(
-            ticketRef as Parameters<typeof adapter.postSystemMessage>[0],
-            `\uD83C\uDFAB Ticket ${result.displayId} created. Our AI assistant is reviewing your question...`,
-        );
+        // Intentionally no "Ticket TKT-… created" acknowledgment comment — see
+        // the matching note in issues-opened.ts.
 
         console.log(
             `[GitHub App] Created ticket ${result.displayId} for discussion "${discussion.title}"`,

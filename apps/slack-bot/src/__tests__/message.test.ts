@@ -133,15 +133,41 @@ describe('registerMessageHandler', () => {
                 }),
             );
 
-            // SlackAdapter posts acknowledgment via postSystemMessage.
-            // The ticket ID is generated at runtime so we match the pattern.
-            expect(mockPostMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
+            // No acknowledgment post. It used to announce "TKT-XXXXXXXX created"
+            // in-channel, leaking an internal identifier to the reporter and
+            // spending an extra bot message. The AI response is the only message
+            // the bot sends.
+            expect(mockPostMessage).not.toHaveBeenCalled();
+        });
+
+        // The new-ticket path is the one place where the sender still decides
+        // whether an AI job is enqueued: a community reporter's message gets an
+        // answer (test above), a team member's does not. Replies never enqueue
+        // for anyone, so this assertion cannot live on the reply path.
+        it('creates a ticket but does not enqueue an AI response when a team member opens the thread', async () => {
+            vi.mocked(prisma.user.findFirst).mockResolvedValue({
+                id: 'u-1',
+                email: 'team@copilotkit.ai',
+            } as ReturnType<typeof prisma.user.findFirst> extends Promise<infer T> ? T : never);
+            vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
+                id: 'tm-1',
+            } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
+
+            await messageHandler({
+                event: {
+                    user: 'U_TEAM',
+                    text: 'Heads up, deploying a fix shortly',
+                    ts: '1234567890.123456',
                     channel: 'C_MONITORED',
-                    thread_ts: '1234567890.123456',
-                    text: expect.stringMatching(/TKT-[A-Z0-9]+ created/),
-                }),
-            );
+                },
+            });
+
+            // The ticket and its first message are still recorded.
+            expect(prisma.ticket.create).toHaveBeenCalled();
+            expect(prisma.message.create).toHaveBeenCalled();
+
+            // But the bot does not answer its own team.
+            expect(createJob).not.toHaveBeenCalled();
         });
 
         it('ignores messages in unmonitored channels', async () => {
@@ -193,7 +219,8 @@ describe('registerMessageHandler', () => {
             );
         });
 
-        it('appends a message and enqueues AI response for non-team-member replies', async () => {
+        // One response per ticket — thread replies are recorded, never answered.
+        it('appends a message without enqueuing an AI response for non-team-member replies', async () => {
             await messageHandler({
                 event: {
                     user: 'U_EXTERNAL',
@@ -212,41 +239,14 @@ describe('registerMessageHandler', () => {
                 }),
             });
 
-            expect(createJob).toHaveBeenCalledWith(
-                'AI_RESPONSE',
-                expect.objectContaining({
-                    ticketId: 'ticket-1',
-                    source: 'slack',
-                }),
-            );
-        });
-
-        it('does not enqueue AI response for team member replies', async () => {
-            // Set up InboundHandler's isTeamMember via prisma mocks
-            vi.mocked(prisma.user.findFirst).mockResolvedValue({
-                id: 'u-1',
-                email: 'team@copilotkit.ai',
-            } as ReturnType<typeof prisma.user.findFirst> extends Promise<infer T> ? T : never);
-            vi.mocked(prisma.teamMember.findUnique).mockResolvedValue({
-                id: 'tm-1',
-            } as ReturnType<typeof prisma.teamMember.findUnique> extends Promise<infer T> ? T : never);
-
-            await messageHandler({
-                event: {
-                    user: 'U_TEAM',
-                    text: 'Let me help you with that',
-                    ts: '1234567891.000000',
-                    thread_ts: '1234567890.123456',
-                    channel: 'C_MONITORED',
-                },
-            });
-
-            // Should still save the message
-            expect(prisma.message.create).toHaveBeenCalled();
-
-            // Should NOT enqueue AI response
             expect(createJob).not.toHaveBeenCalled();
         });
+
+        // No team-member variant of the test above: replies never enqueue for
+        // any sender, so asserting it for a team member would pass with
+        // team-member detection removed entirely. The sender-dependent
+        // assertion lives on the new-ticket path — see 'does not enqueue an AI
+        // response when a team member opens the thread'.
 
         it('reopens ticket when customer replies to a resolved ticket', async () => {
             vi.mocked(prisma.ticket.findFirst).mockResolvedValue({
@@ -268,6 +268,25 @@ describe('registerMessageHandler', () => {
                 where: { id: 'ticket-1' },
                 data: { status: 'OPEN' },
             });
+        });
+
+        it('does not query by a bare thread_ts when the reply event has no channel', async () => {
+            // The tracked-thread guard used to fall back to the bare thread_ts
+            // (and to "C123:undefined" when the ts was missing) — keys no Slack
+            // ticket is ever stored under. Without a channel there is no
+            // addressable key, so the reply must be dropped, not looked up.
+            await messageHandler({
+                event: {
+                    user: 'U_EXTERNAL',
+                    text: 'Reply with no channel',
+                    ts: '1234567891.000000',
+                    thread_ts: '1234567890.123456',
+                },
+            });
+
+            expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+            expect(prisma.message.create).not.toHaveBeenCalled();
+            expect(prisma.ticket.create).not.toHaveBeenCalled();
         });
 
         it('ignores threaded replies in untracked threads', async () => {

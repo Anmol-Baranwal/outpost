@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/page-header';
 import { AgentForm } from '@/components/agents/agent-form';
 import type { AgentFormData } from '@/components/agents/agent-form';
 import type { Agent } from '@/components/agents/agent-table';
+import { apiFetch } from '@/lib/api-fetch';
 
 export default function EditAgentPage() {
     const router = useRouter();
@@ -16,7 +17,7 @@ export default function EditAgentPage() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        fetch(`/api/agents/${params.id}`)
+        apiFetch(`/api/agents/${params.id}`)
             .then(async (res) => {
                 if (res.ok) {
                     setAgent(await res.json());
@@ -51,7 +52,7 @@ export default function EditAgentPage() {
     const handleSubmit = async (data: AgentFormData) => {
         setError(null);
         try {
-            const res = await fetch(`/api/agents/${params.id}`, {
+            const res = await apiFetch(`/api/agents/${params.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data),

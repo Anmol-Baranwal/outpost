@@ -1,11 +1,31 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import type { PlatformTarget } from '@copilotkit/outpost/shared';
 import type { GeneratedResponse, PipelineContext, SearchResult, TokenUsage } from './types.js';
-import { ConfidenceLevel, classifyConfidence } from './types.js';
+import { ConfidenceLevel, SUPPRESSED_CONFIDENCE_CAP, classifyConfidence } from './types.js';
+import type { GroundednessAssessment } from './groundedness.js';
+import { assessGroundedness } from './groundedness.js';
 import { config } from './config.js';
 
-const SYSTEM_PROMPT_PREFIX = `You are an AI support assistant for CopilotKit, an open-source framework for building AI copilots, chatbots, and AI-powered UIs.
+/**
+ * Epistemic guardrails. The generator is a SINGLE stateless model call over
+ * documentation search results — it cannot read CopilotKit's source, cannot run
+ * a repro, and cannot execute tests. Without these rules it will happily assert
+ * a confirmed root cause built from generic framework priors (see
+ * CopilotKit/CopilotKit#6167, where the bot posted "Bug Confirmed" plus invented
+ * CSS class names for a cursor-jump report it never reproduced).
+ *
+ * Every rule here exists to keep the response's claims inside what the provided
+ * Documentation Context actually supports.
+ */
+export const GROUNDING_RULES = `Grounding rules (these override the personality and formatting rules above when they conflict):
+- You have NOT read CopilotKit's source code, reproduced the user's problem, or run any test. Never write or imply otherwise.
+- Never confirm a bug. Do not write "bug confirmed", "this is a real bug", "known issue", "root cause is", or "the fix is" about behavior you cannot see. Acknowledge the report and say engineering will verify.
+- Only name identifiers — file paths, CSS class names, component names, props, hooks, config keys, version numbers — that appear verbatim in the Documentation Context. If it is not there, describe the concept in prose instead of guessing a name.
+- Mark any causal explanation as a hypothesis exactly once ("one possibility is…"), and never restate it as established fact later in the same response. If you hedge a claim, do not close by asserting it.
+- Do not prescribe fixes to CopilotKit's internals or tell maintainers what to change; that call is theirs. Workarounds the user can apply in their own code are fine.
+- Prefer "I don't have enough to answer this — escalating to the team" over a plausible-sounding answer assembled from general framework knowledge.`;
+
+export const SYSTEM_PROMPT_PREFIX = `You are an AI support assistant for CopilotKit, an open-source framework for building AI copilots, chatbots, and AI-powered UIs.
 
 Your personality:
 - Conversational and helpful, not robotic
@@ -18,7 +38,9 @@ Formatting rules:
 - Use markdown formatting throughout
 - Wrap code in fenced code blocks with language tags
 - Use bold for emphasis on key concepts
-- Keep paragraphs concise — prefer bullets over walls of text`;
+- Keep paragraphs concise — prefer bullets over walls of text
+
+${GROUNDING_RULES}`;
 
 /**
  * Per-channel guidance so the response never redirects the user to the channel
@@ -105,19 +127,25 @@ export class ResponseGenerator {
                 outputTokens: message.usage.output_tokens,
             };
 
-            const confidenceScore = this.assessConfidence(sources, responseText);
-            const confidenceLevel = classifyConfidence(confidenceScore);
+            const confidenceScore = this.assessConfidence(sources);
             const latencyMs = Date.now() - startTime;
+            // Assessed here (the response and its sources are both in hand) and
+            // applied by the pipeline — exactly once.
+            const groundedness = assessGroundedness(responseText, sources);
+            const confidenceLevel = this.classifyGroundedConfidence(
+                confidenceScore,
+                groundedness,
+            );
 
             return {
                 text: responseText,
                 confidenceScore,
                 confidenceLevel,
                 sources,
-                autoSend: confidenceScore >= AI_CONFIDENCE.AUTO_RESPOND,
                 reasoning: `Based on ${sources.length} source(s) with avg relevance ${this.avgScore(sources).toFixed(2)}`,
                 tokenUsage,
                 latencyMs,
+                groundedness,
                 degraded: false,
             };
         } catch (error) {
@@ -129,10 +157,11 @@ export class ResponseGenerator {
                 confidenceScore: 0,
                 confidenceLevel: ConfidenceLevel.LOW,
                 sources,
-                autoSend: false,
                 reasoning: `Generation failed: ${error instanceof Error ? error.message : String(error)}`,
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
                 latencyMs,
+                // The fallback copy is ours, not the model's — nothing to assess.
+                groundedness: assessGroundedness('', sources),
                 degraded: true,
             };
         }
@@ -208,14 +237,49 @@ export class ResponseGenerator {
         return messages;
     }
 
-    private assessConfidence(sources: SearchResult[], _response: string): number {
+    /**
+     * Score retrieval quality: how good the sources are, not what the response did
+     * with them.
+     *
+     * Deliberately does NOT deduct the groundedness penalty. This score feeds the
+     * pipeline's `min(generator, scorer)`, and the pipeline deducts afterwards — so
+     * subtracting here too charged the same penalty twice whenever this score was
+     * the lower of the two. The groundedness assessment travels alongside on
+     * `GeneratedResponse.groundedness` for the pipeline to apply once.
+     */
+    private assessConfidence(sources: SearchResult[]): number {
         if (sources.length === 0) return 0.2;
 
         const avgRelevance = this.avgScore(sources);
         const sourceCountBonus = Math.min(sources.length * 0.05, 0.15);
 
-        // Base confidence on source quality + count
         return Math.min(avgRelevance + sourceCountBonus, 1.0);
+    }
+
+    /**
+     * Classify the confidence LEVEL we publish for this response.
+     *
+     * `retrievalScore` is retrieval-only by design, so classifying it directly
+     * announced HIGH for any answer built on good sources — including one the
+     * groundedness gate would withhold entirely (two sources at 0.9/0.85 score
+     * 0.975 no matter how fabricated the text is). The level is a claim about the
+     * *response*, so it is classified from the penalised value, and clamped for a
+     * suppressed response the same way the pipeline clamps its own score.
+     *
+     * The penalised value is LOCAL. It is never written back to `confidenceScore`,
+     * which must stay penalty-free because it feeds the pipeline's `min()` before
+     * the pipeline performs the one and only deduction. Deducting into the score
+     * here is the double-counting bug this module just fixed.
+     */
+    private classifyGroundedConfidence(
+        retrievalScore: number,
+        groundedness: GroundednessAssessment,
+    ): ConfidenceLevel {
+        let score = Math.max(0, retrievalScore - groundedness.penalty);
+        if (groundedness.suppress) {
+            score = Math.min(score, SUPPRESSED_CONFIDENCE_CAP);
+        }
+        return classifyConfidence(score);
     }
 
     private avgScore(sources: SearchResult[]): number {

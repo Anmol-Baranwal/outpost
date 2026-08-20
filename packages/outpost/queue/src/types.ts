@@ -30,6 +30,8 @@ export enum JobType {
     JOB_CLEANUP = 'JOB_CLEANUP',
     /** Poll GitHub reactions on AI-authored comments for feedback signal */
     GITHUB_REACTION_POLL = 'GITHUB_REACTION_POLL',
+    /** Periodic sweep of primary AI responses stranded in PENDING with no live owning job */
+    PENDING_RESPONSE_SWEEP = 'PENDING_RESPONSE_SWEEP',
 }
 
 // ─── Payload Shapes ─────────────────────────────────────────────────────────
@@ -38,15 +40,21 @@ export interface AiResponsePayload {
     ticketId: string;
     threadId?: string;
     source?: PlatformTarget;
+    /**
+     * Durable authorization for a delayed PENDING-response takeover. The
+     * message ID and the job's ownership row replace worker-clock age checks.
+     */
+    pendingResponseRecovery?: {
+        messageId: string;
+    };
 }
 
 export interface TicketClassifyPayload {
     ticketId: string;
 }
 
-export interface SlaCheckPayload {
-    // No payload needed — runs against all open tickets
-}
+/** No payload needed — runs against all open tickets. */
+export type SlaCheckPayload = Record<string, never>;
 
 export interface EscalationPayload {
     ticketId: string;
@@ -79,13 +87,14 @@ export interface TrackerSyncPayload {
     changeData: Record<string, unknown>;
 }
 
-export interface JobCleanupPayload {
-    // No payload needed — runs on a fixed schedule
-}
+/** No payload needed — runs on a fixed schedule. */
+export type JobCleanupPayload = Record<string, never>;
 
-export interface GithubReactionPollPayload {
-    // No payload needed — runs against all pending-feedback AI messages
-}
+/** No payload needed — runs against all pending-feedback AI messages. */
+export type GithubReactionPollPayload = Record<string, never>;
+
+/** No payload needed — runs against every stranded PENDING primary AI response. */
+export type PendingResponseSweepPayload = Record<string, never>;
 
 /** Map from JobType to its specific payload shape */
 export interface JobPayload {
@@ -99,6 +108,7 @@ export interface JobPayload {
     [JobType.TRACKER_SYNC]: TrackerSyncPayload;
     [JobType.JOB_CLEANUP]: JobCleanupPayload;
     [JobType.GITHUB_REACTION_POLL]: GithubReactionPollPayload;
+    [JobType.PENDING_RESPONSE_SWEEP]: PendingResponseSweepPayload;
 }
 
 // ─── Job Results ────────────────────────────────────────────────────────────

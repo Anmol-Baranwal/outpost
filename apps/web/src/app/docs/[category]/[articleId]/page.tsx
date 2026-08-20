@@ -4,6 +4,7 @@ import { use, useState, useEffect, useCallback } from 'react';
 import { FileText } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { ArticleEditor } from '@/components/docs/article-editor';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface DocArticle {
     id: string;
@@ -31,7 +32,7 @@ export default function ArticlePage({ params }: ArticlePageProps) {
     useEffect(() => {
         async function fetchArticle() {
             try {
-                const res = await fetch(`/api/docs/articles/${articleId}`);
+                const res = await apiFetch(`/api/docs/articles/${articleId}`);
                 if (!res.ok) {
                     setNotFound(true);
                     return;
@@ -48,7 +49,7 @@ export default function ArticlePage({ params }: ArticlePageProps) {
     const handleSave = useCallback(async (content: string) => {
         setError(null);
         try {
-            const res = await fetch(`/api/docs/articles/${articleId}`, {
+            const res = await apiFetch(`/api/docs/articles/${articleId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content }),
@@ -71,7 +72,7 @@ export default function ArticlePage({ params }: ArticlePageProps) {
         setError(null);
         try {
             const newStatus = article.status === 'PUBLISHED' ? 'DRAFT' : 'PUBLISHED';
-            const res = await fetch(`/api/docs/articles/${articleId}`, {
+            const res = await apiFetch(`/api/docs/articles/${articleId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus }),

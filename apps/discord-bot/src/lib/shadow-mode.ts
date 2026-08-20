@@ -1,6 +1,6 @@
 import { prisma } from '@copilotkit/outpost/db';
 import { createJob, JobType } from '@copilotkit/outpost/queue';
-import { truncate } from '@copilotkit/outpost/shared';
+import { TicketSource, buildTicketSourceId, truncate } from '@copilotkit/outpost/shared';
 import type { ThreadChannel, Message } from 'discord.js';
 
 /**
@@ -27,7 +27,7 @@ export interface ShadowResponse {
 
 /**
  * Log a shadow response for later quality comparison.
- * Stored as a NOTE-type message on the ticket with metadata in attachments.
+ * Stored as a SYSTEM-type message on the ticket with metadata in attachments.
  */
 export async function logShadowResponse(response: ShadowResponse): Promise<void> {
     await prisma.message.create({
@@ -64,6 +64,13 @@ export async function handleShadowThreadCreate(
     authorId: string,
 ): Promise<string | null> {
     try {
+        // Build the lookup key through the SAME helper findTicketByThreadId
+        // reads with, so the stored key and the searched-for key cannot drift
+        // apart. null means "this thread is not addressable" (no thread ID) —
+        // the ticket is still created so the report is not dropped, but no later
+        // reply will match it.
+        const sourceId = buildTicketSourceId(TicketSource.DISCORD, thread.id);
+
         const ticket = await prisma.ticket.create({
             data: {
                 displayId,
@@ -73,7 +80,7 @@ export async function handleShadowThreadCreate(
                 priority: 'MEDIUM',
                 type: 'QUESTION',
                 source: 'DISCORD',
-                sourceId: thread.id,
+                sourceId,
                 sourceUrl: thread.url,
                 channel: thread.parentId ?? undefined,
             },
@@ -91,8 +98,10 @@ export async function handleShadowThreadCreate(
             });
         }
 
-        // Enqueue AI response — the worker should check shadow mode
-        // and call logShadowResponse instead of posting to Discord
+        // Enqueue the one AI response this ticket gets. The handler reads
+        // SHADOW_MODE itself and, when it is set, logs the generated response as
+        // a SYSTEM message on the ticket instead of posting it to Discord (it
+        // writes that row inline — it does not call logShadowResponse below).
         await createJob(JobType.AI_RESPONSE, {
             ticketId: ticket.id,
             threadId: thread.id,
@@ -132,12 +141,10 @@ export async function handleShadowMessage(
             },
         });
 
-        // Enqueue AI response (shadow mode checked at handler level via SHADOW_MODE env)
-        await createJob(JobType.AI_RESPONSE, {
-            ticketId,
-            threadId,
-            source: 'discord' as const,
-        });
+        // No AI response on a reply — shadow mode mirrors production behaviour,
+        // and production answers a ticket once, on its opening message only.
+        // Enqueuing here would make shadow traffic look chattier than the real
+        // thing, which defeats the point of shadowing.
 
         console.log(
             `[Shadow Mode] Recorded message from ${message.author.tag} on ticket ${ticketId}`,

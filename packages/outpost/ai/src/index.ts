@@ -1,12 +1,24 @@
 export { PathfinderClient } from './pathfinder.js';
-export { ResponseGenerator } from './generator.js';
+export { ResponseGenerator, GROUNDING_RULES, SYSTEM_PROMPT_PREFIX } from './generator.js';
 export { ConfidenceScorer } from './confidence.js';
 export type { ConfidenceAssessment } from './confidence.js';
+export {
+    assessGroundedness,
+    extractCopilotKitIdentifiers,
+    MAX_GROUNDEDNESS_PENALTY,
+    SUPPRESS_AT_UNSOURCED_IDENTIFIERS,
+} from './groundedness.js';
+export type { GroundednessAssessment } from './groundedness.js';
 export { TicketClassifier } from './classifier.js';
-export { ResponseFormatter } from './formatter.js';
+export {
+    AI_DISCLAIMER,
+    AI_DISCLAIMER_ESCALATED,
+    AI_DISCLAIMER_REVIEWED,
+    ResponseFormatter,
+} from './formatter.js';
 export { SearchQueryBuilder, heuristicSearchQuery } from './query.js';
 export type { SearchQuery } from './query.js';
-export { AIPipeline } from './pipeline.js';
+export { AIPipeline, SUPPRESSED_RESPONSE_TEXT } from './pipeline.js';
 export { analyzeSentiment } from './sentiment.js';
 export { scoreEngagement } from './engagement.js';
 export { getSentimentTrend } from './sentiment-trend.js';

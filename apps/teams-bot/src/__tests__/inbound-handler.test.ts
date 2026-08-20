@@ -150,14 +150,11 @@ describe('InboundHandler (Teams-focused)', () => {
             });
         });
 
-        it('enqueues AI response for non-team-member messages', async () => {
+        // One response per ticket — follow-up messages are recorded, not answered.
+        it('does not enqueue an AI response for non-team-member follow-ups', async () => {
             await handler.handle(makeMessage({ isThreadStart: false }));
 
-            expect(createJob).toHaveBeenCalledWith('AI_RESPONSE', {
-                ticketId: 'existing-ticket-id',
-                threadId: 'conv-100',
-                source: 'teams',
-            });
+            expect(createJob).not.toHaveBeenCalled();
         });
 
         it('transitions WAITING_ON_TEAM to WAITING_ON_CUSTOMER for team member messages', async () => {
@@ -234,6 +231,28 @@ describe('InboundHandler (Teams-focused)', () => {
             await handler.handle(makeMessage({ isThreadStart: false }));
 
             expect(prisma.ticket.update).not.toHaveBeenCalled();
+        });
+    });
+
+    // Teams is the platform where this is most reachable: unlike the Slack bot,
+    // apps/teams-bot/src/handlers/message.ts has no untracked-thread pre-filter,
+    // and its monitored-channel gate only runs for thread starts. So a reply in
+    // a Teams conversation Outpost never saw arrives here with no ticket.
+    describe('orphaned reply (no ticket for the conversation)', () => {
+        beforeEach(() => {
+            vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+        });
+
+        it('files a ticket for a human but never answers', async () => {
+            const result = await handler.handle(
+                makeMessage({ isThreadStart: false, content: 'thanks, that worked!' }),
+            );
+
+            expect(prisma.ticket.create).toHaveBeenCalledTimes(1);
+            expect(prisma.message.create).toHaveBeenCalledTimes(1);
+            expect(createJob).not.toHaveBeenCalled();
+            expect(result.aiJobEnqueued).toBe(false);
+            expect(result.isNewTicket).toBe(true);
         });
     });
 });

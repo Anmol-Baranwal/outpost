@@ -46,6 +46,17 @@ describe('findTicketByThreadTs', () => {
         const result = await findTicketByThreadTs('C_CHAN', '9999999999.000000');
         expect(result).toBeNull();
     });
+
+    it('skips the query entirely when channel or ts is missing', async () => {
+        // buildTicketSourceId yields no key, and no ticket can be stored under
+        // "C_CHAN:" or ":ts" — querying for one would only ever be a false miss
+        // (or, worse, a false hit on some other malformed row).
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+
+        expect(await findTicketByThreadTs('C_CHAN', '')).toBeNull();
+        expect(await findTicketByThreadTs('', '1234567890.123456')).toBeNull();
+        expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+    });
 });
 
 describe('isTeamMember', () => {

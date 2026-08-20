@@ -50,38 +50,67 @@ export async function handleMessage(context: TurnContext): Promise<void> {
     if (!message || !message.content) return;
 
     try {
-        // Channel monitoring filter: if monitoredChannelIds is configured,
-        // only process messages from those channels. If empty, monitor all.
-        if (message.isThreadStart) {
-            const channelId = message.channelId;
-            const isMonitored =
-                config.monitoredChannelIds.length === 0 ||
-                (channelId !== undefined && config.monitoredChannelIds.includes(channelId));
+        // Channel monitoring filter applies to both thread starts and replies.
+        // If the list is empty, monitor all channels (including 1:1 chats);
+        // otherwise the activity must carry an explicitly monitored channel ID.
+        const channelId = message.channelId;
+        const isMonitored =
+            config.monitoredChannelIds.length === 0 ||
+            (channelId !== undefined && config.monitoredChannelIds.includes(channelId));
 
-            if (!isMonitored) return;
-        }
+        if (!isMonitored) return;
+
+        // Teams-specific ConversationReference for proactive messaging.
+        //
+        // Handed to the inbound handler instead of written afterwards: handle()
+        // enqueues the AI_RESPONSE job, and the worker can claim that job the
+        // moment the row exists. A reference written after handle() returned was
+        // therefore racing the worker, which read the ticket without one and fell
+        // back to the hardcoded global serviceUrl below — wrong host for tenants
+        // in other regions, so delivery failed. Passing it in makes it durable in
+        // the same insert as the ticket, before any job can be claimed.
+        //
+        // The handler ignores it on replies, including the orphaned-reply
+        // fallback: that ticket belongs to a conversation Outpost was never part
+        // of, and storing a reference for it would claim the thread for proactive
+        // messaging (see the isOrphanedReply branch below).
+        const conversationReference = {
+            serviceUrl: activity.serviceUrl ?? 'https://smba.trafficmanager.net/teams/',
+            conversationId: activity.conversation.id,
+            botId: activity.recipient.id,
+        };
 
         // Delegate to the shared inbound handler
-        const result = await inboundHandler.handle(message);
+        const result = await inboundHandler.handle(message, {
+            ticketAdditionalInfo: { conversationReference },
+        });
 
-        if (result.isNewTicket) {
-            // Store Teams-specific ConversationReference for proactive messaging
-            const conversationReference = {
-                serviceUrl: activity.serviceUrl ?? 'https://smba.trafficmanager.net/teams/',
-                conversationId: activity.conversation.id,
-                botId: activity.recipient.id,
-            };
-            await prisma.ticket.update({
-                where: { id: result.ticketId },
-                data: {
-                    additionalInfo: { conversationReference },
-                },
-            });
-
-            // New ticket: post acknowledgment card
+        // An orphaned reply also reports isNewTicket: true — a ticket really was
+        // created — but it is NOT a conversation Outpost opened. Teams sets
+        // isThreadStart from `!activity.replyToId`, so a bare mid-conversation
+        // message ("thanks, that worked!") whose thread we have no ticket for
+        // lands here. Acking it would post "🎫 We've got your question" into a
+        // thread we were never part of, and storing the conversationReference
+        // would claim that thread for proactive messaging. Both are skipped; the
+        // ticket still exists for a human to pick up from the dashboard.
+        if (result.isNewTicket && !result.isOrphanedReply) {
+            // New ticket: post acknowledgment card.
+            //
+            // Teams is deliberately the only platform that still acknowledges.
+            // Discord, Slack and the GitHub App dropped their ack posts because
+            // those were plain text that printed the internal ticket displayId
+            // into a public channel and gave the reporter nothing to act on.
+            // Neither objection applies here: buildTicketCreatedCard carries no
+            // displayId (see apps/teams-bot/src/cards/ticket-created-card.ts,
+            // asserted by cards.test.ts) and an Adaptive Card is a richer surface
+            // than a plain text post — it tells the reporter which of the two
+            // things is about to happen, an AI answer or a human follow-up, off
+            // result.aiJobEnqueued. Known divergence, not an oversight; if the
+            // card ever starts rendering an identifier, drop this the way the
+            // other platforms did.
             const card = buildTicketCreatedCard({
-                ticketDisplayId: result.displayId,
                 title: truncate(message.content, 200),
+                aiJobEnqueued: result.aiJobEnqueued,
             });
 
             const reply = MessageFactory.attachment(
@@ -92,6 +121,10 @@ export async function handleMessage(context: TurnContext): Promise<void> {
 
             console.log(
                 `[Teams Bot] Created ticket ${result.displayId} for conversation ${message.threadId}`,
+            );
+        } else if (result.isOrphanedReply) {
+            console.log(
+                `[Teams Bot] Untracked mid-conversation message from ${message.platformUsername} filed as ticket ${result.displayId} (no ack card, no conversation reference)`,
             );
         } else {
             console.log(
