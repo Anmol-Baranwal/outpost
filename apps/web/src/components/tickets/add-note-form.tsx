@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface AddNoteFormProps {
     ticketId: string;
@@ -50,7 +51,7 @@ export const AddNoteForm = forwardRef<AddNoteFormHandle, AddNoteFormProps>(
 
             setSubmitting(true);
             try {
-                const res = await fetch(`/api/tickets/${ticketId}/notes`, {
+                const res = await apiFetch(`/api/tickets/${ticketId}/notes`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: text }),

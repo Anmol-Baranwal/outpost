@@ -1,7 +1,7 @@
 import type { EmitterWebhookEvent } from '@octokit/webhooks';
 import { prisma } from '@copilotkit/outpost/db';
-import { createJob } from '@copilotkit/outpost/queue';
 import { GitHubPlatformAdapter } from '@copilotkit/outpost/shared/platforms';
+import { reopensOnCustomerReply } from '@copilotkit/outpost/shared';
 import { getOctokit } from '../lib/github-client.js';
 import { findTicketBySourceId, isTeamMember } from '../lib/tickets.js';
 import { isRepoAllowed } from '../lib/repo-allowlist.js';
@@ -77,14 +77,16 @@ export async function handleIssueComment(
                 });
             }
         } else {
-            // External user (likely original poster): enqueue AI response
-            await createJob('AI_RESPONSE' as Parameters<typeof createJob>[0], {
-                ticketId: ticket.id,
-                source: 'github' as const,
-            });
+            // No AI response on comments — Outpost answers the issue body once and
+            // then stays out of the thread, whoever comments next. Not enqueuing
+            // here is what enforces that; the AI_RESPONSE handler's
+            // already-answered gate only backstops re-answering a ticket that
+            // already holds an AI response.
 
-            // Reopen ticket if it was waiting on customer or resolved
-            if (ticket.status === 'WAITING_ON_CUSTOMER' || ticket.status === 'RESOLVED') {
+            // Reopen a dormant ticket so a human sees the follow-up. The status
+            // set lives in @copilotkit/outpost/shared so this path, the shared
+            // InboundHandler, and the Postmark webhook cannot drift apart.
+            if (reopensOnCustomerReply(ticket.status)) {
                 await prisma.ticket.update({
                     where: { id: ticket.id },
                     data: { status: 'OPEN' },

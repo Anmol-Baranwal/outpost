@@ -467,7 +467,7 @@ describe('Scheduler', () => {
     });
 
     it('has correct default scheduled jobs', () => {
-        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(6);
+        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(7);
         const types = DEFAULT_SCHEDULED_JOBS.map((d) => d.type);
         expect(types).toContain(JobType.SLA_CHECK);
         expect(types).toContain(JobType.ONBOARDING_DIGEST);
@@ -475,6 +475,7 @@ describe('Scheduler', () => {
         expect(types).toContain(JobType.HUBSPOT_SYNC);
         expect(types).toContain(JobType.JOB_CLEANUP);
         expect(types).toContain(JobType.GITHUB_REACTION_POLL);
+        expect(types).toContain(JobType.PENDING_RESPONSE_SWEEP);
     });
 
     it('creates a job immediately on start if none exists', async () => {
@@ -593,10 +594,15 @@ describe('JobType enum', () => {
         expect(JobType.ESCALATION).toBe('ESCALATION');
         expect(JobType.ONBOARDING_DIGEST).toBe('ONBOARDING_DIGEST');
         expect(JobType.SLACK_MIRROR).toBe('SLACK_MIRROR');
+        expect(JobType.PENDING_RESPONSE_SWEEP).toBe('PENDING_RESPONSE_SWEEP');
     });
 
-    it('has exactly 11 job types', () => {
+    // The count is here so adding a type without registering a handler in
+    // apps/worker/src/index.ts is caught. A bare length assertion says nothing
+    // about WHICH type is missing, so the two most recently added are named
+    // above — this merge landed both at once and only the count moved.
+    it('has exactly 12 job types', () => {
         const values = Object.values(JobType);
-        expect(values).toHaveLength(11);
+        expect(values).toHaveLength(12);
     });
 });

@@ -57,7 +57,7 @@ export async function handleDiscussionCreated(
             },
         });
 
-        // Intentionally no "Ticket TKT-\u2026 created" acknowledgment comment \u2014 see
+        // Intentionally no "Ticket TKT-… created" acknowledgment comment — see
         // the matching note in issues-opened.ts.
 
         console.log(

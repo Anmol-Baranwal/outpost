@@ -41,8 +41,11 @@ services:
             # NEXT_PUBLIC_* must be passed as a BUILD arg, not runtime environment — Next
             # inlines it into the client bundle during `next build`, so the `environment:`
             # entry below has no effect on what the browser receives.
+            # No `:-credentials` default here on purpose: that would put the default in a
+            # second place that can drift from the app's own fallback. An empty value is
+            # treated as not-configured by both login/page.tsx and lib/auth.ts.
             args:
-                NEXT_PUBLIC_AUTH_PROVIDER: ${NEXT_PUBLIC_AUTH_PROVIDER:-credentials}
+                NEXT_PUBLIC_AUTH_PROVIDER: ${NEXT_PUBLIC_AUTH_PROVIDER:-}
         container_name: outpost-web
         ports:
             - '3000:3000'

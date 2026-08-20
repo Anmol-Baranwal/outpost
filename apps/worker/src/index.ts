@@ -16,6 +16,7 @@
  *   - JOB_CLEANUP:      Periodic cleanup of old jobs and sync events
  *   - GITHUB_REACTION_POLL: Poll GitHub reactions on AI comments (no webhook exists)
  * - SLACK_MIRROR: mirror a ticket or reply into the internal Slack channel
+ * - PENDING_RESPONSE_SWEEP: settle AI responses stranded in PENDING by a dead job
  */
 
 import http from 'node:http';
@@ -34,22 +35,27 @@ import {
     handleJobCleanup,
     handleGithubReactionPoll,
     handleSlackMirror,
+    handlePendingResponseSweep,
     createJob,
 } from '@copilotkit/outpost/queue';
-import { SyncEngine } from '@copilotkit/outpost/shared';
-import type { SyncEngineDeps } from '@copilotkit/outpost/shared';
+import { buildSyncEngine } from './build-sync-engine.js';
 
 // ─── Build SyncEngine for TRACKER_SYNC handler ────────────────────────────
 
-// SyncEngineDeps describes only the slice of Prisma the engine needs, using loose
-// Record<string, unknown> argument shapes. The real PrismaClient and createJob have
-// narrower signatures, so they are not assignable in the strict direction — the
-// coercion is deliberate. Asserting to the named dep types rather than `any` keeps
-// that intent explicit and makes the cast break loudly if SyncEngineDeps changes.
-const syncEngine = new SyncEngine({
-    prisma: prisma as unknown as SyncEngineDeps['prisma'],
-    createJob: createJob as SyncEngineDeps['createJob'],
-});
+// BOOT SEMANTICS — deliberate change. This is a top-level await that performs
+// three database reads (the persisted status / priority / label mapping configs)
+// before this module finishes evaluating. If the database is unreachable at boot
+// the import throws, so the process exits BEFORE the health server below starts
+// listening: the container crash-loops with no /health at all rather than coming
+// up and reporting itself degraded.
+//
+// Fail-fast is the intent — a worker running with silently-defaulted mappings is
+// worse than one that is visibly down, since TRACKER_SYNC would then write wrong
+// statuses to Linear. Railway's restart policy is the retry mechanism. Note this
+// interacts with the /health honesty follow-up (#138): once /health reflects
+// worker state, a degraded-but-listening mode becomes a real option and this
+// decision is worth revisiting.
+const syncEngine = await buildSyncEngine();
 
 const handleTrackerSync = createTrackerSyncHandler(syncEngine);
 
@@ -72,6 +78,7 @@ const worker = new Worker({
         // same TicketExternalLink row. The handler survives the race, but serial
         // processing keeps one ticket's thread in one Slack thread by construction.
         [JobType.SLACK_MIRROR]: 1,
+        [JobType.PENDING_RESPONSE_SWEEP]: 1,
     },
     jobTimeouts: {
         [JobType.AI_RESPONSE]: 120_000, // 2 minutes — AI pipeline is slow
@@ -96,6 +103,7 @@ worker.on(JobType.TRACKER_SYNC, handleTrackerSync);
 worker.on(JobType.JOB_CLEANUP, handleJobCleanup);
 worker.on(JobType.GITHUB_REACTION_POLL, handleGithubReactionPoll);
 worker.on(JobType.SLACK_MIRROR, handleSlackMirror);
+worker.on(JobType.PENDING_RESPONSE_SWEEP, handlePendingResponseSweep);
 
 // ─── Start Scheduler ──────────────────────────────────────────────────────
 

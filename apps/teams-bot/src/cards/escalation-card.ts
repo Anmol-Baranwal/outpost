@@ -1,13 +1,15 @@
 export interface EscalationCardOptions {
-    ticketDisplayId: string;
     reason: string;
 }
 
 /**
  * Build an Adaptive Card for escalation notifications.
+ *
+ * Carries no ticket displayId — this card is shown to the reporter, and the
+ * identifier is internal to the dashboard and team slash commands.
  */
 export function buildEscalationCard(options: EscalationCardOptions): Record<string, unknown> {
-    const { ticketDisplayId, reason } = options;
+    const { reason } = options;
 
     return {
         type: 'AdaptiveCard',
@@ -16,7 +18,7 @@ export function buildEscalationCard(options: EscalationCardOptions): Record<stri
         body: [
             {
                 type: 'TextBlock',
-                text: `\u26A0\uFE0F Escalation - ${ticketDisplayId}`,
+                text: '\u26A0\uFE0F Escalated',
                 weight: 'Bolder',
                 size: 'Medium',
                 color: 'Warning',

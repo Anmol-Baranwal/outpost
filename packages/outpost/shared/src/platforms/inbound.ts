@@ -3,21 +3,32 @@
  * a raw platform event into an InboundMessage.
  *
  * Handles:
- * 1. New tickets (isThreadStart=true): create Ticket + first Message + enqueue AI_RESPONSE
- * 2. Replies (isThreadStart=false): find existing ticket, create Message, reopen if needed,
- *    enqueue AI_RESPONSE unless sender is a team member
- * 3. Team member detection via ExternalIdentity -> TeamMember lookup
- * 4. Sequential display ID generation (TKT-XXXXXXXX)
+ * 1. New tickets (isThreadStart=true): create Ticket + first Message, and enqueue
+ *    AI_RESPONSE unless the sender is a team member. This is the only path here
+ *    that ever enqueues.
+ * 2. Replies (isThreadStart=false): find existing ticket, create Message, reopen if
+ *    needed. Never enqueues AI_RESPONSE, whoever sent the reply — Outpost answers
+ *    once per ticket, on the opening message only, and a human owns the thread
+ *    after that.
+ * 3. Orphaned replies (isThreadStart=false with no matching ticket): create the
+ *    Ticket + Message so the customer's words are never dropped, but do NOT
+ *    enqueue AI_RESPONSE — we never saw the message that opened the conversation.
+ *    Of the callers, only Teams actually reaches this branch; Discord, the GitHub
+ *    App and Slack drop untracked replies before calling in. See handleReply.
+ * 4. Team member detection via ExternalIdentity -> TeamMember lookup
+ * 5. Sequential display ID generation (TKT-XXXXXXXX)
  */
 
 import type { InboundMessage, InboundResult, TicketRef } from './types.js';
 import { generateTicketId, truncate } from '../utils.js';
+import { reopensOnCustomerReply } from '../constants.js';
 import { TicketSource } from '../types.js';
 import {
     readSlackMirrorConfig,
     isSlackMirrorEnabled,
     isMirrorableSource,
 } from './slack-mirror-config.js';
+import { buildTicketSourceId } from './source-id.js';
 
 /**
  * Prisma client interface — the subset of PrismaClient we actually call.
@@ -115,6 +126,28 @@ export interface InboundHandlerConfig {
 }
 
 /**
+ * Per-call options for `InboundHandler.handle`.
+ */
+export interface HandleOptions {
+    /**
+     * Platform-specific metadata to store on `ticket.additionalInfo` when a new
+     * ticket is created for a genuine thread start.
+     *
+     * It is passed in rather than written by the caller after `handle` returns
+     * because the AI_RESPONSE enqueue happens inside `handle`: once that job row
+     * exists the worker may claim it immediately, so anything the worker reads
+     * off the ticket has to be committed with the ticket itself. Teams' Bot
+     * Framework `conversationReference` is the live case — a worker that reads
+     * the ticket before the reference lands falls back to a hardcoded global
+     * `serviceUrl` and delivery fails for tenants in other regions.
+     *
+     * Ignored on replies, including the orphaned-reply fallback that files a
+     * ticket for a conversation Outpost was never part of.
+     */
+    ticketAdditionalInfo?: Record<string, unknown>;
+}
+
+/**
  * The InboundHandler processes normalized messages from any platform.
  *
  * Usage:
@@ -182,30 +215,71 @@ export class InboundHandler {
     /**
      * Process an inbound message.
      *
-     * Determines whether this is a new ticket or a reply to an existing one,
-     * creates the appropriate database records, and enqueues an AI_RESPONSE
-     * job if the sender is not a team member.
+     * Determines whether this is a new ticket or a reply to an existing one and
+     * creates the appropriate database records. An AI_RESPONSE job is enqueued
+     * only for a genuine thread start from a non-team-member — never for a
+     * reply, and never for the orphaned-reply fallback below.
      */
-    async handle(message: InboundMessage): Promise<InboundResult> {
+    async handle(
+        message: InboundMessage,
+        options: HandleOptions = {},
+    ): Promise<InboundResult> {
         if (message.isThreadStart) {
-            return this.handleNewTicket(message);
+            return this.handleNewTicket(message, {
+                answer: true,
+                orphanedReply: false,
+                ticketAdditionalInfo: options.ticketAdditionalInfo,
+            });
         }
+        // Deliberately NOT forwarded to handleReply: its orphaned-reply fallback
+        // creates a ticket for a conversation Outpost was never part of, and
+        // platform metadata that claims the thread (Teams' conversationReference)
+        // must not be attached to it. See the isOrphanedReply contract on
+        // InboundResult.
         return this.handleReply(message);
     }
 
     /**
      * Create a new ticket from a thread-start message.
+     *
+     * `answer` is an explicit decision made by the caller, never inferred from
+     * the message: `true` for a genuine thread start (the opening message is
+     * the one message Outpost is allowed to answer), `false` for the orphaned-
+     * reply fallback in `handleReply`, where we are creating a ticket around a
+     * mid-conversation message we must not answer.
+     *
+     * `orphanedReply` is surfaced on the result as `isOrphanedReply` so callers
+     * can distinguish "a real thread started" from "we filed a ticket around a
+     * message in a conversation we were never part of". It is a separate
+     * decision from `answer` on purpose — a caller must not have to infer one
+     * from the other — even though today only the orphan path passes
+     * `answer: false`.
      */
-    private async handleNewTicket(message: InboundMessage): Promise<InboundResult> {
+    private async handleNewTicket(
+        message: InboundMessage,
+        {
+            answer,
+            orphanedReply,
+            ticketAdditionalInfo,
+        }: {
+            answer: boolean;
+            orphanedReply: boolean;
+            ticketAdditionalInfo?: Record<string, unknown>;
+        },
+    ): Promise<InboundResult> {
         const displayId = generateTicketId();
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
 
-        // Build sourceId — Slack uses a composite "channelId:threadTs" key
-        // so that reply lookups match the same format.
-        let sourceId = message.threadId ?? null;
-        if (message.source === TicketSource.SLACK && message.channelId && message.threadId) {
-            sourceId = `${message.channelId}:${message.threadId}`;
-        }
+        // Build sourceId through the SAME helper handleReply's lookup uses, so
+        // the stored key and the searched-for key cannot drift apart. null here
+        // means "this thread is not addressable" (no threadId, or Slack with no
+        // channelId) — the ticket is still created so the report is not dropped,
+        // but it will never be matched by a later reply.
+        const sourceId = buildTicketSourceId(
+            message.source,
+            message.threadId,
+            message.channelId,
+        );
 
         // Find-or-create the User row for the message sender so the ticket
         // can be linked to them (needed for reporter-identity lookups like
@@ -230,6 +304,13 @@ export class InboundHandler {
                 sourceUrl: message.sourceUrl ?? null,
                 channel: message.channelId ?? null,
                 userId,
+                // Platform-specific routing metadata the caller needs the worker
+                // to see. Written HERE, in the same insert as the ticket, because
+                // the AI_RESPONSE enqueue below makes the ticket claimable: a
+                // caller that wrote it afterwards raced the worker, which then
+                // fell back to a default (for Teams, a hardcoded global
+                // serviceUrl) and failed delivery for tenants in other regions.
+                ...(ticketAdditionalInfo ? { additionalInfo: ticketAdditionalInfo } : {}),
             },
         });
 
@@ -248,11 +329,10 @@ export class InboundHandler {
             messageId = msg.id;
         }
 
-        // Check if sender is a team member — they still get a ticket but skip AI
-        const isTeam = await this.isTeamMember(message.platformUserId, message.source);
-
+        // Team members still get a ticket but no AI answer. Only consulted when
+        // the caller allowed an answer at all — otherwise the lookup is wasted.
         let aiJobEnqueued = false;
-        if (!isTeam) {
+        if (answer && !(await this.isTeamMember(message.platformUserId, message.source))) {
             await this.createJob(this.aiResponseJobType, {
                 ticketId: ticket.id,
                 threadId: message.threadId,
@@ -270,6 +350,7 @@ export class InboundHandler {
             ticketId: ticket.id,
             displayId,
             isNewTicket: true,
+            isOrphanedReply: orphanedReply,
             aiJobEnqueued,
             messageId,
         };
@@ -279,18 +360,70 @@ export class InboundHandler {
      * Handle a reply to an existing ticket thread.
      */
     private async handleReply(message: InboundMessage): Promise<InboundResult> {
-        // Look up the existing ticket by source + threadId
-        const ticket = await this.findTicketBySourceAndThread(
+        // Derive the lookup key with the same helper handleNewTicket stores
+        // with. A null key means no ticket could ever carry it, so skip the
+        // query entirely rather than searching for a synthesized placeholder.
+        const sourceId = buildTicketSourceId(
             message.source,
-            message.threadId ?? '',
+            message.threadId,
             message.channelId,
         );
 
+        const ticket = sourceId === null
+            ? null
+            : await this.findTicketBySourceId(message.source, sourceId);
+
         if (!ticket) {
-            // No existing ticket found for this thread — treat as a new ticket.
-            // This handles edge cases where a reply arrives before the thread-start
-            // event, or the original ticket was deleted.
-            return this.handleNewTicket({ ...message, isThreadStart: true });
+            // Orphaned reply: a mid-thread message whose thread we have no ticket
+            // for — the thread predates Outpost, the platform delivered the reply
+            // before the thread-start event, or the original ticket was deleted.
+            //
+            // We still create a ticket and persist the message: dropping a
+            // customer's words is worse than filing an oddly-titled ticket, and a
+            // human can pick it up from the dashboard.
+            //
+            // In practice only Teams reaches this branch. Every other caller
+            // pre-filters an untracked reply and drops it before we are called:
+            //   - Discord: apps/discord-bot/src/events/message-create.ts returns
+            //     early when findTicketByThreadId finds nothing.
+            //   - GitHub: apps/github-app/src/webhooks/issue-comment.ts returns
+            //     early on no ticket, and never routes comments through this
+            //     handler at all (its InboundHandler callers, issues-opened and
+            //     discussion-created, are thread starts only).
+            //   - Slack: apps/slack-bot/src/events/message.ts queries the ticket
+            //     itself and returns when the reply's thread is untracked.
+            // The web Postmark webhook does honour the principle, but implements
+            // it locally (see apps/web/src/app/api/webhooks/postmark/route.ts,
+            // isOrphanedReply) rather than through this path.
+            //
+            // So the preservation rationale above is the intent of this handler,
+            // not the platform-wide behaviour of Outpost today. A reviewer flagged
+            // the inconsistency; the resolution was to document it rather than
+            // change three platforms' filtering. Anyone unifying this should
+            // remove those pre-filters, not weaken this branch.
+            //
+            // We do NOT answer it. ASSUMPTION, stated so it is reviewable: the
+            // message that opened the real conversation was never seen by us, so
+            // this reply is not "the message that opened the ticket" in the
+            // product sense even though it is the ticket's first message. Outpost
+            // answers exactly one message per ticket — the opening one — and this
+            // is not it.
+            //
+            // Refusing here is the only thing that stops it. The ticket we are
+            // about to create carries no prior AI response, so the
+            // already-answered gate in the AI_RESPONSE handler would wave it
+            // straight through and answer a mid-thread "any update?" in a
+            // conversation Outpost was never part of.
+            // isOrphanedReply rides back out on the result: isNewTicket is
+            // true here (a ticket really was created), so a caller that only
+            // looks at isNewTicket would treat this like a fresh thread start
+            // and, on Teams, post an acknowledgment card plus claim the
+            // conversation for proactive messaging — bot chatter in a thread
+            // we were never part of.
+            return this.handleNewTicket(
+                { ...message, isThreadStart: true },
+                { answer: false, orphanedReply: true },
+            );
         }
 
         const authorLabel = `${message.platformUsername} (${message.platformUserId})`;
@@ -306,10 +439,21 @@ export class InboundHandler {
             },
         });
 
-        // Check if sender is a team member
+        // NO AI RESPONSE ON REPLIES — deliberate, not an omission.
+        //
+        // Outpost answers the message that opens a ticket and nothing after it.
+        // Replies only move ticket state; the thread belongs to a human from
+        // the first response onward. Enqueuing here is what made the bot chime
+        // in on follow-up questions between community members and summarise a
+        // human's answer back at them.
+        //
+        // This refusal is what enforces the invariant. The already-answered
+        // gate in the AI_RESPONSE handler
+        // (packages/outpost/queue/src/handlers/ai-response.ts) is a backstop
+        // against re-answering a ticket that already holds an AI response, not
+        // a substitute: a reply on a ticket Outpost never answered — one opened
+        // by a team member, say — would pass that gate untouched.
         const isTeam = await this.isTeamMember(message.platformUserId, message.source);
-
-        let aiJobEnqueued = false;
 
         if (isTeam) {
             // Team member replied: if ticket was WAITING_ON_TEAM, move to WAITING_ON_CUSTOMER
@@ -319,22 +463,12 @@ export class InboundHandler {
                     data: { status: 'WAITING_ON_CUSTOMER' },
                 });
             }
-        } else {
-            // Customer/external user replied: enqueue AI response
-            await this.createJob(this.aiResponseJobType, {
-                ticketId: ticket.id,
-                threadId: message.threadId,
-                source: toPlatformTarget(message.source),
+        } else if (reopensOnCustomerReply(ticket.status)) {
+            // Customer/external reply reopens a dormant ticket so a human sees it.
+            await this.prisma.ticket.update({
+                where: { id: ticket.id },
+                data: { status: 'OPEN' },
             });
-            aiJobEnqueued = true;
-
-            // Reopen the ticket if it was waiting on customer, resolved, or closed
-            if (ticket.status === 'WAITING_ON_CUSTOMER' || ticket.status === 'RESOLVED' || ticket.status === 'CLOSED') {
-                await this.prisma.ticket.update({
-                    where: { id: ticket.id },
-                    data: { status: 'OPEN' },
-                });
-            }
         }
 
         // Mirror the follow-up under the ticket's existing Slack thread. Team
@@ -349,30 +483,23 @@ export class InboundHandler {
             ticketId: ticket.id,
             displayId: ticket.displayId,
             isNewTicket: false,
-            aiJobEnqueued,
+            isOrphanedReply: false,
+            aiJobEnqueued: false,
             messageId: msg.id,
         };
     }
 
     /**
-     * Find an existing ticket by its source platform and thread/conversation ID.
+     * Find an existing ticket by source platform + an already-built sourceId.
      *
-     * For Slack, the sourceId is "channelId:threadTs" so we use channelId
-     * to reconstruct the composite key. For other platforms, sourceId is
-     * the threadId directly.
+     * Deliberately takes the finished key rather than (threadId, channelId):
+     * key construction lives in buildTicketSourceId alone, so this method
+     * cannot disagree with what handleNewTicket stored.
      */
-    private async findTicketBySourceAndThread(
+    private async findTicketBySourceId(
         source: TicketSource,
-        threadId: string,
-        channelId?: string,
+        sourceId: string,
     ): Promise<TicketRef | null> {
-        let sourceId = threadId;
-
-        // Slack uses a composite sourceId: "channelId:threadTs"
-        if (source === TicketSource.SLACK && channelId) {
-            sourceId = `${channelId}:${threadId}`;
-        }
-
         const ticket = await this.prisma.ticket.findFirst({
             where: {
                 source: source as string,

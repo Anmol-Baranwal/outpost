@@ -23,6 +23,27 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 15
 
+        # A real database, because the incident this workflow now guards against was
+        # invisible without one: `prisma validate` parses the schema and `migrate
+        # deploy` only consults the _prisma_migrations bookkeeping table, so a
+        # migration recorded as applied but never executed passes both. Production
+        # carried exactly that state for months and it only surfaced as nine days of
+        # "1/1 replicas never became healthy" in August 2026.
+        services:
+            postgres:
+                image: postgres:18-alpine
+                env:
+                    POSTGRES_USER: ci
+                    POSTGRES_PASSWORD: ci
+                    POSTGRES_DB: ci
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd "pg_isready -U ci"
+                    --health-interval 5s
+                    --health-timeout 5s
+                    --health-retries 10
+
         steps:
             - name: Checkout
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,7 +51,7 @@ jobs:
                   persist-credentials: false
 
             - name: Setup pnpm
-              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+              uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
             - name: Setup Node.js
               uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -46,12 +67,244 @@ jobs:
 
             - name: Verify Prisma schema and migrations
               env:
-                  DATABASE_URL: 'postgresql://ci:ci@localhost:5432/ci'
+                  DATABASE_URL: 'postgresql://ci:ci@127.0.0.1:5432/ci'
+                  PGPASSWORD: ci
               run: |
-                  pnpm --filter @copilotkit/outpost exec prisma validate --schema db/prisma/schema.prisma
-                  # Ensure migration directory exists with at least one migration
+                  set -e
+                  # Invoke the CLI directly, the way apps/worker/start.sh does. `pnpm exec`
+                  # remaps ANY non-zero child status to 1 (ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL),
+                  # which destroys the 0/2/other contract these assertions depend on — the
+                  # first run of this job proved it, reporting real drift (exit 2) as a
+                  # tool failure (exit 1).
+                  PRISMA="node $(cd packages/outpost && node -p "require.resolve('prisma/build/index.js')")"
+                  echo "using $PRISMA"
+                  $PRISMA validate --schema packages/outpost/db/prisma/schema.prisma
                   test -f packages/outpost/db/prisma/migrations/migration_lock.toml
-                  test -d packages/outpost/db/prisma/migrations/0001_init
+
+                  # Apply every migration to a real, empty database, then ask whether the
+                  # resulting schema actually matches schema.prisma.
+                  #
+                  # This is the check that was missing. `migrate deploy` reports success
+                  # from the _prisma_migrations table alone — it never inspects the schema
+                  # — so a migration recorded as applied but never effective is invisible
+                  # to it, and `prisma validate` only parses the file. Production ran in
+                  # exactly that state (0001_init recorded as applied, its SystemConfig
+                  # table absent) until it surfaced as nine days of undiagnosable deploy
+                  # failures in August 2026. Running the same `migrate diff` the worker's
+                  # start.sh uses closes the loop: if the migrations cannot reproduce
+                  # schema.prisma from scratch, this fails here instead of at 3am.
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+                  $PRISMA migrate diff \
+                      --from-schema-datasource packages/outpost/db/prisma/schema.prisma \
+                      --to-schema-datamodel packages/outpost/db/prisma/schema.prisma \
+                      --exit-code
+                  echo "Migrations reproduce schema.prisma exactly."
+
+                  # Re-running `migrate deploy` proves nothing on its own: the migration
+                  # rows already exist, so it applies zero SQL and would pass even if the
+                  # migration body were `SELECT 1/0`. That is the same bookkeeping-only
+                  # blind spot this whole job exists to close. To actually exercise
+                  # CREATE TABLE IF NOT EXISTS, the row has to be removed while the
+                  # correctly-shaped table stays.
+                  psql -h 127.0.0.1 -U ci -d ci -q -c \
+                      "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+                  echo "Repair migration re-runs cleanly against an already-correct table."
+
+                  # Positive control on the thing every assertion below rests on: that
+                  # this invocation style returns the child's exit code unchanged.
+                  set +e
+                  sh -c 'exit 2'; propagated=$?
+                  set -e
+                  if [ "$propagated" -ne 2 ]; then
+                      echo "FATAL: exit codes are not propagating (got $propagated for a deliberate 2)."
+                      exit 1
+                  fi
+
+            - name: Verify the SystemConfig repair path
+              env:
+                  DATABASE_URL: 'postgresql://ci:ci@127.0.0.1:5432/ci'
+                  PGPASSWORD: ci
+              run: |
+                  set -e
+                  PRISMA="node $(cd packages/outpost && node -p "require.resolve('prisma/build/index.js')")"
+                  # Reconstruct the broken production state and prove the repair fixes it.
+                  # The step above only covers a fresh database, which was never the broken
+                  # case — production had 0001_init RECORDED AS APPLIED while the table it
+                  # declares was absent, and that is the one scenario this migration exists
+                  # for. Without this, nothing tests it.
+                  psql -h 127.0.0.1 -U ci -d ci -c 'DROP TABLE IF EXISTS "SystemConfig";'
+                  psql -h 127.0.0.1 -U ci -d ci -c \
+                      "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
+
+                  # The database now looks exactly like production did on 2026-08-07:
+                  # migrations recorded, table missing. The guard must see it...
+                  # Assert exit 2 SPECIFICALLY. `migrate diff --exit-code` returns 0 for
+                  # identical, 2 for a difference, and 1 (or other) when the CLI itself
+                  # failed — so `if ! ...` would accept a broken CLI or a lost connection
+                  # as proof the guard works, having never compared anything. start.sh
+                  # treats that distinction as load-bearing; the test for it must too.
+                  set +e
+                  $PRISMA migrate diff \
+                      --from-schema-datasource packages/outpost/db/prisma/schema.prisma \
+                      --to-schema-datamodel packages/outpost/db/prisma/schema.prisma \
+                      --exit-code
+                  drift_status=$?
+                  set -e
+                  if [ "$drift_status" -eq 0 ]; then
+                      echo "FATAL: drift guard did not detect a missing SystemConfig table."
+                      echo "That is the exact blind spot this PR exists to close."
+                      exit 1
+                  elif [ "$drift_status" -ne 2 ]; then
+                      echo "FATAL: migrate diff exited $drift_status — it never compared the database."
+                      exit 1
+                  fi
+                  echo "Drift guard detects the missing table (exit 2)."
+
+                  # ...and the repair migration must fix it.
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+                  $PRISMA migrate diff \
+                      --from-schema-datasource packages/outpost/db/prisma/schema.prisma \
+                      --to-schema-datamodel packages/outpost/db/prisma/schema.prisma \
+                      --exit-code
+                  echo "Repair migration restores SystemConfig."
+
+                  # A table present but mis-shaped must FAIL the migration loudly rather
+                  # than no-op and be recorded as applied — the "recorded but not
+                  # effective" state that caused the incident.
+                  psql -h 127.0.0.1 -U ci -d ci -c 'DROP TABLE "SystemConfig";'
+                  # Wrong TYPE, not just a missing column name — the assertion must check
+                  # shape, since a table with the right three names but wrong types is
+                  # still a database that does not match schema.prisma.
+                  psql -h 127.0.0.1 -U ci -d ci -c 'CREATE TABLE "SystemConfig" ("key" TEXT PRIMARY KEY, "value" INTEGER NOT NULL, "updatedAt" TIMESTAMP(3) NOT NULL);'
+                  psql -h 127.0.0.1 -U ci -d ci -c \
+                      "DELETE FROM _prisma_migrations WHERE migration_name = '20260812220000_create_missing_systemconfig_table';"
+                  set +e
+                  deploy_out=$($PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma 2>&1)
+                  deploy_status=$?
+                  set -e
+                  echo "$deploy_out"
+                  if [ "$deploy_status" -eq 0 ]; then
+                      echo "FATAL: migration reported success against a mis-shaped SystemConfig."
+                      exit 1
+                  fi
+                  # Any non-zero would also cover "database unreachable", which would pass
+                  # this test without the assertion ever firing. Require our own message.
+                  # Match a stable fragment of the migration's own RAISE, not the whole
+                  # sentence: the previous run failed here because the assertion text was
+                  # reworded and this pattern was not, so a correctly-firing guard read as
+                  # "failed for the wrong reason".
+                  case "$deploy_out" in
+                      *"Repairing it needs an ALTER"*) ;;
+                      *)
+                          echo "FATAL: deploy failed, but not via the migration's own guard."
+                          exit 1
+                          ;;
+                  esac
+                  echo "Migration fails loudly on a mis-shaped SystemConfig."
+
+                  # Leave the database usable. These assertions deliberately corrupt it
+                  # (mis-shaped table plus a failed P3009 row), and they run before Build
+                  # and Test — so the first DB-touching test added to this job would
+                  # otherwise inherit a knowingly-broken schema.
+                  psql -h 127.0.0.1 -U ci -d ci -q -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+                  $PRISMA migrate deploy --schema packages/outpost/db/prisma/schema.prisma
+                  echo "CI database restored."
+
+            - name: Verify the worker startup guard
+              run: |
+                  set -e
+                  # Execute start.sh itself against a stub CLI. Nothing previously ran
+                  # this script -- CI re-implemented its prisma calls in bash -- which is
+                  # why a busybox-vs-GNU timeout exit-code difference sat in it unnoticed.
+                  # Every branch that decides whether the worker may boot is asserted here.
+                  stub=$(mktemp); chmod +x "$stub"
+                  printf '#!/bin/sh\nif [ "$1" = migrate ] && [ "$2" = diff ]; then exit "${DIFF_RC:-0}"; fi\nexit "${DEPLOY_RC:-0}"\n' > "$stub"
+                  script=$(mktemp)
+                  sed 's|^exec node apps/worker/dist/index.js|echo STARTED|' apps/worker/start.sh > "$script"
+
+                  check() { # label expect_exit expect_started env...
+                      label=$1 want_rc=$2 want_started=$3; shift 3
+                      # set +e around the call: half these cases are SUPPOSED to exit
+                      # non-zero, and this step runs under `bash -e`, so the assignment
+                      # would abort the whole step on the first expected failure.
+                      set +e
+                      out=$(env OUTPOST_PRISMA_CMD="$stub" "$@" sh "$script" 2>&1)
+                      rc=$?
+                      set -e
+                      case "$out" in *STARTED*) got=yes ;; *) got=no ;; esac
+                      if [ "$rc" != "$want_rc" ] || [ "$got" != "$want_started" ]; then
+                          echo "FATAL: $label -> exit=$rc started=$got (wanted exit=$want_rc started=$want_started)"
+                          echo "$out"
+                          exit 1
+                      fi
+                      echo "  ok: $label"
+                  }
+
+                  check "clean schema boots"                 0 yes DIFF_RC=0
+                  check "drift blocks the boot"              1 no  DIFF_RC=2
+                  check "drift + override boots"             0 yes DIFF_RC=2 OUTPOST_ALLOW_SCHEMA_DRIFT=1
+                  check "drift + override=on boots"          0 yes DIFF_RC=2 OUTPOST_ALLOW_SCHEMA_DRIFT=on
+                  check "drift + unknown override blocks"    1 no  DIFF_RC=2 OUTPOST_ALLOW_SCHEMA_DRIFT=banana
+                  check "drift + override=0 blocks"          1 no  DIFF_RC=2 OUTPOST_ALLOW_SCHEMA_DRIFT=0
+                  # A check that could not RUN must be overridable too, or a CLI-level
+                  # breakage is an unbreakable crash loop under restartPolicyType=ALWAYS.
+                  check "tool failure blocks"                1 no  DIFF_RC=1
+                  check "tool failure + override boots"      0 yes DIFF_RC=1 OUTPOST_ALLOW_SCHEMA_DRIFT=1
+                  check "migrate deploy failure blocks"      1 no  DEPLOY_RC=1
+                  # A bad timeout value must not fail the step closed.
+                  check "non-numeric timeout still boots"    0 yes DIFF_RC=0 OUTPOST_STARTUP_STEP_TIMEOUT=abc
+                  check "timeout=0 means unbounded"          0 yes DIFF_RC=0 OUTPOST_STARTUP_STEP_TIMEOUT=0
+
+                  # Diagnostics must reach stderr, and an overridden boot must not page.
+                  set +e
+                  env OUTPOST_PRISMA_CMD="$stub" DIFF_RC=2 sh "$script" 2>/dev/null | grep -q FATAL
+                  leaked=$?
+                  env OUTPOST_PRISMA_CMD="$stub" DIFF_RC=1 OUTPOST_ALLOW_SCHEMA_DRIFT=1 sh "$script" 2>&1 >/dev/null | grep -q FATAL
+                  paged=$?
+                  set -e
+                  if [ "$leaked" -eq 0 ]; then
+                      echo "FATAL: diagnostics leaked to stdout."
+                      exit 1
+                  fi
+                  if [ "$paged" -eq 0 ]; then
+                      echo "FATAL: an overridden boot emitted FATAL and would page."
+                      exit 1
+                  fi
+                  echo "Startup guard behaves correctly across all branches."
+
+            - name: Verify the pinned Prisma CLI matches the lockfile
+              run: |
+                  set -e
+                  # apps/worker/start.sh gates the worker's boot on this CLI's `migrate
+                  # diff` exit code, so a CLI that has drifted from @prisma/client can
+                  # report false drift and block every deploy with a message pointing at
+                  # the database. Keep the Dockerfile pin and the lockfile in lockstep.
+                  set -o pipefail
+                  resolved=$(node "$(cd packages/outpost && node -p "require.resolve('prisma/build/index.js')")" --version | sed -n 's/^prisma *: *\([0-9][^ ]*\).*/\1/p' | head -1)
+                  if [ -z "$resolved" ]; then
+                      echo "FATAL: could not parse a version from 'prisma --version'; its output format may have changed."
+                      exit 1
+                  fi
+                  echo "lockfile resolves prisma=$resolved"
+
+                  # BOTH images, not just the worker's. web and worker apply/verify
+                  # migrations against the same database, so a bump to either alone
+                  # recreates the CLI skew this check exists to prevent. Anchored on ^RUN
+                  # so a comment quoting the command cannot shadow the real line.
+                  for dockerfile in apps/worker/Dockerfile apps/web/Dockerfile; do
+                      pinned=$(sed -n 's/^RUN .*--no-save prisma@\([0-9][^ ]*\).*/\1/p' "$dockerfile" | head -1)
+                      if [ -z "$pinned" ]; then
+                          echo "FATAL: could not read a Prisma pin out of $dockerfile."
+                          exit 1
+                      fi
+                      if [ "$resolved" != "$pinned" ]; then
+                          echo "FATAL: $dockerfile pins prisma@$pinned but the lockfile resolves $resolved."
+                          echo "Update the Dockerfile pins and the lockfile together."
+                          exit 1
+                      fi
+                      echo "  $dockerfile pins $pinned — matches."
+                  done
 
             - name: Build
               run: pnpm build

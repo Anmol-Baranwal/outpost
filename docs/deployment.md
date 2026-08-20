@@ -159,20 +159,18 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and pu
 2. Generate Prisma client
 3. Verify the Prisma schema and that a migration directory exists
 4. Build all packages
-5. Lint
-6. Type check
-7. Run tests
+5. Type check
+6. Run tests
 
-Lint blocks on ESLint **errors**; warnings are reported without failing the run. A backlog of
-warnings exists across several packages (`no-unused-vars` and `consistent-type-imports` in the
-shared packages, plus `react-hooks/exhaustive-deps` and `no-img-element` in `apps/web`) — run
-`pnpm lint` for the current list rather than trusting a number written down here. Bounding
-warnings to zero means clearing that backlog first: worth doing, but deliberately not bundled
-into the change that turned the step on.
+**Lint does not run in CI**, despite the job being named "Lint, Typecheck & Test" and branch
+protection requiring that check. ESLint 9 defaults to flat config while the repo still uses
+`.eslintrc.cjs`, and the `ESLINT_USE_FLAT_CONFIG=false` opt-out does not survive turbo's
+environment sanitization. Enabling it is tracked in
+[#141](https://github.com/CopilotKit/outpost/issues/141); until that lands, treat a green
+check as covering build, types and tests only.
 
 `apps/web` is linted by `next lint` against its own `apps/web/.eslintrc.cjs`; every other
-workspace uses the root `eslint.config.cjs`. Migrating web is outstanding — `next lint` is
-removed in Next 16.
+workspace uses the root `.eslintrc.cjs`.
 
 ## Environments (staging → production)
 

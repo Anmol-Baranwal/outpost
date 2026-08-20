@@ -13,6 +13,11 @@ export { handleJobCleanup } from './handlers/job-cleanup.js';
 export { handleGithubReactionPoll } from './handlers/github-reaction-poll.js';
 export { handleSlackMirror, SLACK_MIRROR_PLUGIN } from './handlers/slack-mirror.js';
 export type { SlackPoster, SlackMirrorDeps } from './handlers/slack-mirror.js';
+export {
+    handlePendingResponseSweep,
+    STRANDED_RESPONSE_AFTER_MS,
+    SWEEP_BATCH_SIZE,
+} from './handlers/pending-response-sweep.js';
 export { getFeedbackCalibration } from './feedback-calibration.js';
 export type { FeedbackCountClient } from './feedback-calibration.js';
 export * from './types.js';

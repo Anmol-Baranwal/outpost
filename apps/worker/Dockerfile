@@ -45,14 +45,27 @@ RUN chmod +x apps/worker/start.sh
 
 # Prisma CLI for running migrations at startup (installed standalone, mirrors apps/web/Dockerfile —
 # the pnpm workspace .bin paths don't resolve reliably in the pruned production image).
-RUN npm install --prefix /opt/prisma --no-save prisma@6
+# Pinned to the lockfile's resolved version rather than the `prisma@6` range, because
+# start.sh now gates the worker's boot on this CLI's `migrate diff` exit code: a CLI
+# that has drifted from @prisma/client can report false drift and block every deploy
+# with a message pointing at the database. `prisma@6` floats freely across 6.x, and
+# apps/web applies migrations to this same database with its own CLI — so the two must
+# move together. A CI step asserts this literal matches the lockfile.
+RUN npm install --prefix /opt/prisma --no-save prisma@6.19.3
 
 USER outpost
 ENV NODE_ENV=production
 ENV HEALTH_PORT=3005
 EXPOSE 3005
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:3005/health || exit 1
+# start-period covers the whole pre-listen window, which is now two full prisma CLI
+# invocations (migrate deploy, then the drift check) before anything binds /health.
+# At the old 10s an orchestrator honouring this status could restart the container
+# mid-migration — manufacturing the failed-migration (P3009) state start.sh exists to
+# diagnose. The URL follows the same PORT-over-HEALTH_PORT precedence as src/index.ts
+# rather than hardcoding 3005, and uses 127.0.0.1 because `localhost` can resolve to
+# ::1 in-container and be refused (see apps/web/Dockerfile).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD wget -qO- "http://127.0.0.1:${PORT:-${HEALTH_PORT:-3003}}/health" || exit 1
 
 CMD ["./apps/worker/start.sh"]

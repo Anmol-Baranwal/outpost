@@ -151,10 +151,9 @@ describe('handleMessage', () => {
         const context = makeContext();
         await handleMessage(context);
 
-        // ConversationReference is stored via a separate update after ticket creation
-        expect(prisma.ticket.update).toHaveBeenCalledWith({
-            where: { id: 'ticket-internal-id' },
-            data: {
+        // Written in the ticket insert itself, not by a follow-up update.
+        expect(prisma.ticket.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
                 additionalInfo: {
                     conversationReference: expect.objectContaining({
                         serviceUrl: 'https://smba.trafficmanager.net/teams/',
@@ -162,8 +161,47 @@ describe('handleMessage', () => {
                         botId: 'bot-id',
                     }),
                 },
-            },
+            }),
         });
+        expect(prisma.ticket.update).not.toHaveBeenCalled();
+    });
+
+    it('makes the ConversationReference durable before the AI job is enqueued', async () => {
+        // The worker claims an AI_RESPONSE job as soon as its row exists and reads
+        // the serviceUrl off ticket.additionalInfo. Writing the reference after the
+        // enqueue raced that read, and the worker fell back to the hardcoded global
+        // serviceUrl — the wrong host for tenants in other regions, so delivery
+        // failed. Ordering, not just presence, is the fix.
+        const context = makeContext();
+        await handleMessage(context);
+
+        const createCall = vi.mocked(prisma.ticket.create).mock.calls[0][0] as {
+            data: Record<string, unknown>;
+        };
+        expect(createCall.data.additionalInfo).toBeDefined();
+
+        const referenceWriteOrder = vi.mocked(prisma.ticket.create).mock.invocationCallOrder[0];
+        const enqueueOrder = vi.mocked(createJob).mock.invocationCallOrder[0];
+        expect(referenceWriteOrder).toBeLessThan(enqueueOrder);
+    });
+
+    it('never attaches a ConversationReference to a ticket for a reply', async () => {
+        // Replies are appended to an existing ticket, and the orphaned-reply
+        // fallback files a ticket for a conversation Outpost was never part of.
+        // Neither may claim a thread for proactive messaging.
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+
+        const context = makeContext({
+            replyToId: 'missing-parent-id',
+            text: 'thanks, that worked!',
+        });
+        await handleMessage(context);
+
+        const createCall = vi.mocked(prisma.ticket.create).mock.calls[0][0] as {
+            data: Record<string, unknown>;
+        };
+        expect(createCall.data.additionalInfo).toBeUndefined();
+        expect(prisma.ticket.update).not.toHaveBeenCalled();
     });
 
     it('ignores messages in unmonitored channels', async () => {
@@ -172,6 +210,21 @@ describe('handleMessage', () => {
         });
         await handleMessage(context);
         expect(prisma.ticket.create).not.toHaveBeenCalled();
+    });
+
+    it('ignores replies in unmonitored channels before orphan fallback', async () => {
+        const context = makeContext({
+            replyToId: 'missing-parent-id',
+            channelData: { teamsChannelId: 'unmonitored-channel' },
+        });
+
+        await handleMessage(context);
+
+        expect(prisma.ticket.findFirst).not.toHaveBeenCalled();
+        expect(prisma.ticket.create).not.toHaveBeenCalled();
+        expect(prisma.message.create).not.toHaveBeenCalled();
+        expect(createJob).not.toHaveBeenCalled();
+        expect(context.sendActivity).not.toHaveBeenCalled();
     });
 
     it('appends follow-up messages to existing tickets', async () => {
@@ -193,14 +246,36 @@ describe('handleMessage', () => {
             }),
         });
 
-        // Should enqueue AI response (not a team member)
-        expect(createJob).toHaveBeenCalledWith(
-            JobType.AI_RESPONSE,
-            expect.objectContaining({
-                ticketId: 'ticket-1',
-                source: 'teams',
-            }),
-        );
+        // Should NOT enqueue an AI response — one answer per ticket, on the
+        // opening message only, whoever sends the follow-up.
+        expect(createJob).not.toHaveBeenCalled();
+    });
+
+    it('stays silent when an orphaned reply creates a ticket', async () => {
+        // Teams derives isThreadStart from `!activity.replyToId`, so a bare
+        // mid-conversation message ("thanks, that worked!") arrives as a reply.
+        // No matching ticket means the shared handler preserves the reply by
+        // creating a ticket around it — but this is a conversation Outpost was
+        // never part of, so the bot must post NOTHING: no acknowledgment card,
+        // and no conversationReference claiming the thread for proactive
+        // messaging. isNewTicket is true on that fallback, so a handler that
+        // branches on isNewTicket alone reintroduces the chatter this guards.
+        vi.mocked(prisma.ticket.findFirst).mockResolvedValue(null);
+
+        const context = makeContext({
+            replyToId: 'missing-parent-id',
+            text: 'thanks, that worked!',
+        });
+        await handleMessage(context);
+
+        // The customer's words are still preserved.
+        expect(prisma.ticket.create).toHaveBeenCalled();
+        expect(prisma.message.create).toHaveBeenCalled();
+
+        // But nothing is answered and nothing is posted.
+        expect(createJob).not.toHaveBeenCalled();
+        expect(context.sendActivity).not.toHaveBeenCalled();
+        expect(prisma.ticket.update).not.toHaveBeenCalled();
     });
 
     it('does not enqueue AI response for team member follow-ups', async () => {

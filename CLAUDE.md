@@ -2,6 +2,10 @@
 
 Outpost — AI-powered customer support operations platform. See [README](./README.md) for the product overview.
 
+## Code review before push
+
+Before pushing any non-trivial code change or opening a PR, run `copilotkit-internal:cr-loop` (the CopilotKit-internal 7-agent review-fix loop) on the diff first. This is a standing rule, not case-by-case. If the `pr-review-toolkit` plugin it depends on isn't installed, ask before falling back to a lighter review — don't silently skip it. Exception: mechanical-only diffs (lockfile regen, whitespace) don't need it, per the skill's own scope rules.
+
 ## Community Signals workflow
 
 This repo carries a runnable Claude Code skill suite under `.claude/skills/` for the weekly cross-source (Discord + GitHub) community report. The report is produced by Outpost's community manager today via the manual routine; engineering is porting it into Outpost as native TS per [#66](https://github.com/CopilotKit/outpost/issues/66). Until that lands, the skill suite IS the workflow.
@@ -15,6 +19,7 @@ This repo carries a runnable Claude Code skill suite under `.claude/skills/` for
 | "enterprise report" / "who at enterprise this week" / "enterprise status" | `enterprise` |
 | (invoked by `weekly-report`) | `product-surface-scan` · `front-door-triage` · `deep-read-issue` · `release-scan` · `enrich-reporter` · `enrich-prospect` · `report-sources` |
 | "draft Slack TL;DR" / "build the Slack message" | `slack-tldr` |
+| "carry forward owners" / "who owned this last week" / "owner continuity" (also auto-run near the end of every report) | `carry-forward-owners` |
 | "loom script" / "record the loom" / "walkthrough script" (also auto-run as the last step of every report) | `loom-walkthrough` |
 
 ### Architecture — orchestrator + subagents
@@ -31,6 +36,7 @@ weekly-report (main)
 ├─→ enrich-reporter subagent   (gh api users/<login>, enterprise classify — all reporters)
 ├─→ enrich-prospect subagent   (deep: LinkedIn + company website + size — prospect shortlist only)
 ├─→ report-sources subagent    (evidence-backed defense of every placement → "Report Sources" child page)
+├─→ carry-forward-owners       (diff vs last week's report → print owners of recurring items; Nathan re-tags)
 └─→ Synthesize → Notion page + Slack JSON via slack-tldr
 ```
 
