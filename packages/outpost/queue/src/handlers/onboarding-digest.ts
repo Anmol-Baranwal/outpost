@@ -9,7 +9,7 @@
  */
 
 import { prisma } from '@copilotkit/outpost/db';
-import { computeFunnelMetrics } from '@copilotkit/outpost/shared';
+import { computeFunnelMetrics, isShadowMode } from '@copilotkit/outpost/shared';
 import type { OnboardingMember } from '@copilotkit/outpost/shared';
 import type { OnboardingDigestPayload, JobResult, JobHandlerContext } from '../types.js';
 
@@ -116,7 +116,7 @@ export async function handleOnboardingDigest(
 
     // Deliver the digest
     const channelId = process.env.DISCORD_DIGEST_CHANNEL_ID;
-    if (process.env.SHADOW_MODE === 'true') {
+    if (isShadowMode()) {
         // Shadow mode (staging): log the digest instead of posting it, so a
         // staging worker never delivers to a real Discord channel.
         console.log(`[Onboarding Digest] Shadow mode — skipping Discord post:\n${digest}`);

@@ -73,6 +73,17 @@ const mockGetAdapter = vi.fn().mockReturnValue({
 });
 
 vi.mock('@copilotkit/outpost/shared', () => ({
+    // The handler under test reads shadow mode through the shared helper now, so
+    // the mock has to provide it. Delegating to the real env check keeps the
+    // existing SHADOW_MODE-based tests in this file meaningful — a hardcoded
+    // `false` would make them assert nothing.
+    isShadowMode: () => {
+        const raw = process.env.SHADOW_MODE;
+        if (raw === undefined) return false;
+        const v = raw.trim().toLowerCase();
+        if (['false', '0', 'no', 'off', ''].includes(v)) return false;
+        return true;
+    },
     AI_CONFIDENCE: {
         AUTO_RESPOND: 0.9,
         HIGH_THRESHOLD: 0.8,

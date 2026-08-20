@@ -12,6 +12,15 @@ vi.mock('@copilotkit/outpost/db', () => ({
 }));
 
 vi.mock('@copilotkit/outpost/shared', () => ({
+    // The handler reads shadow mode through the shared helper now, so the mock
+    // has to provide it. Delegating to the real env check keeps this file's
+    // SHADOW_MODE tests meaningful — a hardcoded false would assert nothing.
+    isShadowMode: () => {
+        const raw = process.env.SHADOW_MODE;
+        if (raw === undefined) return false;
+        const v = raw.trim().toLowerCase();
+        return !['false', '0', 'no', 'off', ''].includes(v);
+    },
     computeFunnelMetrics: vi.fn().mockReturnValue({
         stageCounts: { JOINED: 3, CONTACTED: 2, RESPONDED: 1, MEETING_BOOKED: 0 },
         conversionRates: {
