@@ -5,6 +5,7 @@ import { Building2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { AccountsTable } from '@/components/accounts/accounts-table';
 import type { AccountSentiment, AccountEngagement } from '@copilotkit/outpost/shared';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface AccountWithTicketCounts {
     id: string;
@@ -37,7 +38,7 @@ export default function AccountsPage() {
 
         // Debounce search requests
         const timer = setTimeout(() => {
-            fetch(url)
+            apiFetch(url)
                 .then(res => res.json())
                 .then(data => {
                     setAccounts(data.accounts ?? []);
@@ -58,13 +59,13 @@ export default function AccountsPage() {
             prev.map(a => a.id === accountId ? { ...a, owner } : a),
         );
 
-        fetch(`/api/accounts/${accountId}`, {
+        apiFetch(`/api/accounts/${accountId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ owner }),
         }).catch(() => {
             // Revert on failure — refetch
-            fetch(`/api/accounts?${searchQuery ? `search=${searchQuery}` : ''}`)
+            apiFetch(`/api/accounts?${searchQuery ? `search=${searchQuery}` : ''}`)
                 .then(res => res.json())
                 .then(data => setAccounts(data.accounts ?? []));
         });

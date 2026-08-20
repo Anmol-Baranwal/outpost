@@ -10,6 +10,7 @@ import type { Broadcast, BroadcastStatus } from '@/components/broadcasts/broadca
 import type { BroadcastFormData } from '@/components/broadcasts/broadcast-composer';
 import type { AccountOption } from '@/components/broadcasts/audience-selector';
 import type { TeamMemberOption } from '@/components/broadcasts/sender-picker';
+import { apiFetch } from '@/lib/api-fetch';
 
 export default function BroadcastsContent() {
     const searchParams = useSearchParams();
@@ -30,7 +31,7 @@ export default function BroadcastsContent() {
             const url = status
                 ? `/api/broadcasts?status=${status}`
                 : '/api/broadcasts';
-            const res = await fetch(url);
+            const res = await apiFetch(url);
             if (res.ok) {
                 const data = await res.json();
                 setBroadcasts(data.broadcasts);
@@ -53,8 +54,8 @@ export default function BroadcastsContent() {
     useEffect(() => {
         async function loadComposerData() {
             const [accountsRes, teamRes] = await Promise.all([
-                fetch('/api/accounts'),
-                fetch('/api/team'),
+                apiFetch('/api/accounts'),
+                apiFetch('/api/team'),
             ]);
             if (accountsRes.ok) {
                 const data = await accountsRes.json();
@@ -108,7 +109,7 @@ export default function BroadcastsContent() {
                 status,
             };
 
-            const res = await fetch('/api/broadcasts', {
+            const res = await apiFetch('/api/broadcasts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),

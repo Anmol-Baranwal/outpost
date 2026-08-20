@@ -157,6 +157,13 @@ async function readPersistedConfig(): Promise<PersistedConfigRead> {
     ) {
         bad.push('priorityMappings');
     }
+    // labelRules is optional, so absence is valid — but a PRESENT value must be
+    // validated like the other two. Passing it through raw let a malformed row
+    // reach LabelRulesPanel, which does `ruleList.map(...)` on it, and it was
+    // omitted from invalidSections so nothing reported the problem.
+    if (candidate?.labelRules !== undefined && !isValidLabelRulesShape(candidate.labelRules)) {
+        bad.push('labelRules');
+    }
 
     if (bad.length > 0) {
         console.error(
@@ -168,6 +175,7 @@ async function readPersistedConfig(): Promise<PersistedConfigRead> {
     const usable: PersistedMappingConfig = { ...candidate };
     if (bad.includes('statusMappings')) delete usable.statusMappings;
     if (bad.includes('priorityMappings')) delete usable.priorityMappings;
+    if (bad.includes('labelRules')) delete usable.labelRules;
 
     return { status: 'ok', config: usable, invalidSections: bad };
 }
@@ -270,6 +278,10 @@ function isValidMappingShape(
             const external = record[externalKey];
             const outpost = record[outpostKey];
 
+            // `label` is display-only and optional, but a non-string reaches the editor
+            // and renders as garbage, so reject it rather than pass it through.
+            if (record.label !== undefined && typeof record.label !== 'string') return false;
+
             return (
                 typeof external === 'string' &&
                 // Non-blank: the loaders test truthiness, so '' would pass here
@@ -300,6 +312,13 @@ function isValidLabelRulesShape(value: unknown): boolean {
 
     return Object.values(value as Record<string, unknown>).every((entries) => {
         if (!Array.isArray(entries)) return false;
+
+        // Same reasoning as isValidMappingShape: `loadLabelMapper` treats an empty
+        // array as "nothing persisted, use the defaults", so saving `{ linear: [] }`
+        // would show an empty rule list in the dashboard while the worker kept
+        // applying the built-in rules. A save must not be able to produce a state
+        // where the UI and the engine disagree about what is in effect.
+        if (entries.length === 0) return false;
 
         return entries.every((entry) => {
             if (typeof entry !== 'object' || entry === null) return false;
@@ -369,19 +388,58 @@ export async function PUT(request: NextRequest) {
         return NextResponse.json({ error: 'labelRules has invalid shape' }, { status: 400 });
     }
 
-    const config: PersistedMappingConfig = {
-        statusMappings: body.statusMappings as PersistedMappingConfig['statusMappings'],
-        priorityMappings: body.priorityMappings as PersistedMappingConfig['priorityMappings'],
-        ...(body.labelRules
-            ? { labelRules: body.labelRules as PersistedMappingConfig['labelRules'] }
-            : {}),
-    };
-    const value = JSON.stringify(config);
+    // The upsert replaces the whole row, so omitting labelRules would drop any previously
+    // persisted rules — the same silent wipe the `labelRules: {}` rejection above exists to
+    // prevent, reachable through a different door. A PUT without the key means "leave label
+    // rules alone"; clearing them requires an explicit, valid value.
+    //
+    // Read and write in one transaction: as two statements, a concurrent PUT could land
+    // between them and its rules would be lost by whichever write came second.
+    const config = await prisma.$transaction(async (tx) => {
+        let carriedLabelRules: PersistedMappingConfig['labelRules'] | undefined;
 
-    await prisma.systemConfig.upsert({
-        where: { key: MAPPING_CONFIG_KEY },
-        update: { value },
-        create: { key: MAPPING_CONFIG_KEY, value },
+        if (body.labelRules === undefined) {
+            const row = await tx.systemConfig.findUnique({ where: { key: MAPPING_CONFIG_KEY } });
+            if (row) {
+                try {
+                    const existing = JSON.parse(row.value) as PersistedMappingConfig;
+                    if (isValidLabelRulesShape(existing?.labelRules)) {
+                        carriedLabelRules = existing.labelRules;
+                    } else if (existing?.labelRules !== undefined) {
+                        // Present but unusable: it is not carried forward, and saying so
+                        // matters — otherwise the rules disappear with no signal anywhere.
+                        console.error(
+                            `[sync/mappings] existing labelRules in "${MAPPING_CONFIG_KEY}" are ` +
+                                `unusable and will NOT be carried forward by this save.`,
+                        );
+                    }
+                } catch {
+                    console.error(
+                        `[sync/mappings] existing "${MAPPING_CONFIG_KEY}" row is not valid JSON; ` +
+                            `label rules cannot be carried forward by this save.`,
+                    );
+                }
+            }
+        }
+
+        const next: PersistedMappingConfig = {
+            statusMappings: body.statusMappings as PersistedMappingConfig['statusMappings'],
+            priorityMappings: body.priorityMappings as PersistedMappingConfig['priorityMappings'],
+            ...(body.labelRules
+                ? { labelRules: body.labelRules as PersistedMappingConfig['labelRules'] }
+                : carriedLabelRules
+                  ? { labelRules: carriedLabelRules }
+                  : {}),
+        };
+        const value = JSON.stringify(next);
+
+        await tx.systemConfig.upsert({
+            where: { key: MAPPING_CONFIG_KEY },
+            update: { value },
+            create: { key: MAPPING_CONFIG_KEY, value },
+        });
+
+        return next;
     });
 
     return NextResponse.json(config);

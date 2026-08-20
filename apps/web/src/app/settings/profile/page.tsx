@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { UserCircle, Save } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface ProfileData {
     id: string;
@@ -27,7 +28,7 @@ export default function ProfilePage() {
 
     const fetchProfile = useCallback(async () => {
         try {
-            const res = await fetch('/api/profile');
+            const res = await apiFetch('/api/profile');
             if (!res.ok) return;
             const data = await res.json();
             setProfile(data);
@@ -55,7 +56,7 @@ export default function ProfilePage() {
         }
 
         try {
-            const res = await fetch('/api/profile', {
+            const res = await apiFetch('/api/profile', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),

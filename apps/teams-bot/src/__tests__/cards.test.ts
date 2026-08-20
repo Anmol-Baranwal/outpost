@@ -92,30 +92,24 @@ describe('buildResponseCard', () => {
         expect(actions[1].data.action).toBe('need_more_help');
     });
 
-    // The card no longer accepts a displayId at all, so the leak-carrying input
-    // has to arrive through a field that still exists. `responseText` is the
-    // pipeline's own output, which is exactly where a stray identifier could
-    // come from in practice.
+    // There is deliberately NO "responseText carries no TKT-" guard here. The card
+    // has no displayId input any more, so the only way an identifier reaches it is
+    // through `responseText` — the pipeline's own output, which this card renders
+    // verbatim by contract. A guard fed a TKT- responseText would fail correctly
+    // and a guard fed clean text cannot fail at all, so what is worth pinning is
+    // that the BUILDER never adds an identifier of its own: that is the assertion
+    // below, over the whole serialized card, across both body shapes.
     it.each([
         ['high confidence', 0.9],
         ['low confidence (extra disclaimer block)', 0.5],
-    ])('renders no identifier-shaped string anywhere visible — %s', (_label, confidence) => {
-        const card = buildResponseCard({
-            responseText: 'Here is the answer.',
-            confidence,
-        });
-
-        expect(visibleCardText(card)).not.toMatch(/TKT-/);
-    });
-
-    it('carries nothing but the action name in its submit payloads', () => {
+    ])('carries nothing but the action name in its submit payloads — %s', (_label, confidence) => {
         // `data` ships to the reporter's client too. It used to carry the ticket
         // displayId on the claim that clicks needed it to resolve; card-actions.ts
         // ignores `data` entirely and resolves by conversation id, so the field
         // was dead payload. This pins it staying gone.
         const card = buildResponseCard({
             responseText: 'Here is the answer.',
-            confidence: 0.9,
+            confidence,
         });
 
         const actions = card.actions as Array<{ data: Record<string, unknown> }>;
@@ -153,6 +147,7 @@ describe('buildTicketCreatedCard', () => {
     it('builds a ticket acknowledgment card', () => {
         const card = buildTicketCreatedCard({
             title: 'Help with integration',
+            aiJobEnqueued: true,
         });
 
         expect(card.type).toBe('AdaptiveCard');
@@ -167,22 +162,68 @@ describe('buildTicketCreatedCard', () => {
         // property today is a no-op; the day the builder reads it, this fails.
         const card = buildTicketCreatedCard({
             title: 'Help with integration',
+            aiJobEnqueued: true,
             ticketDisplayId: 'TKT-LEAK01',
         } as TicketCreatedCardOptions);
 
         expect(visibleCardText(card)).not.toContain('TKT-LEAK01');
         expect(visibleCardText(card)).not.toMatch(/TKT-/);
+        // The bare token too: `title` is Markdown-escaped now, so a rendered
+        // 'TKT-LEAK01' would arrive as 'TKT\\-LEAK01' and slip past the two
+        // assertions above.
+        expect(visibleCardText(card)).not.toContain('LEAK01');
     });
 
-    it('echoes the caller-supplied title verbatim', () => {
-        // Documented boundary: `title` is the reporter's own message text
-        // (handlers/message.ts passes truncate(message.content)), so it is
-        // rendered as-is. Callers must never put an internal displayId here —
-        // this builder does not sanitize, and this test pins that contract.
-        const card = buildTicketCreatedCard({ title: 'my ref is TKT-USERTYPED' });
+    it.each([
+        [
+            'a link',
+            '[click here](https://phish.example)',
+            '\\[click here\\]\\(https://phish.example\\)',
+        ],
+        ['bold', 'this is **urgent**', 'this is \\*\\*urgent\\*\\*'],
+        ['a heading', '# ship it', '\\# ship it'],
+        ['a code span', 'run `rm -rf /`', 'run \\`rm \\-rf /\\`'],
+        ['a bullet list', '- one\n- two', '\\- one\n\\- two'],
+        [
+            'an image',
+            '![](https://tracker.example/x.png)',
+            '\\!\\[\\]\\(https://tracker.example/x.png\\)',
+        ],
+    ])('escapes reporter-supplied Markdown in the title — %s', (_label, title, expected) => {
+        // A TextBlock renders its text as Markdown in Teams and there is no flag
+        // to turn that off, so unescaped reporter text made the reporter the
+        // author of markup inside the bot's own card — a link they typed became a
+        // real, bot-endorsed link. Escaped, it renders as the literal characters.
+        const card = buildTicketCreatedCard({ title, aiJobEnqueued: true });
 
         const body = card.body as Array<{ text: string }>;
-        expect(body[1].text).toBe('my ref is TKT-USERTYPED');
+        expect(body[1].text).toBe(expected);
+    });
+
+    it('leaves text with no Markdown characters untouched', () => {
+        // Escaping must not tax ordinary sentences with stray backslashes.
+        const card = buildTicketCreatedCard({
+            title: 'CopilotKit runtime returns 500 on Next 15',
+            aiJobEnqueued: true,
+        });
+
+        const body = card.body as Array<{ text: string }>;
+        expect(body[1].text).toBe('CopilotKit runtime returns 500 on Next 15');
+    });
+
+    it('escapes the title without hiding an identifier the caller put there', () => {
+        // The contract changed only for Markdown: this builder now owns
+        // neutralizing reporter-controlled markup. It still does not sanitize in
+        // any other sense — escaping does not remove a displayId — so callers
+        // remain responsible for keeping internal identifiers out of `title`.
+        const card = buildTicketCreatedCard({
+            title: 'my ref is TKT-USERTYPED',
+            aiJobEnqueued: true,
+        });
+
+        const body = card.body as Array<{ text: string }>;
+        expect(body[1].text).toBe('my ref is TKT\\-USERTYPED');
+        expect(body[1].text).toContain('my ref is');
     });
 });
 

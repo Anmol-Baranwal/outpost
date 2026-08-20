@@ -185,8 +185,17 @@ function PriorityMappingPanel({
                                 data-testid={`priority-row-${plugin}-${i}`}
                                 className="flex items-center gap-3"
                             >
-                                <span className="w-32 text-sm text-muted-foreground font-mono">
-                                    {entry.externalPriority}
+                                <span className="w-32 text-sm text-muted-foreground">
+                                    {entry.label ? (
+                                        <>
+                                            {entry.label}{' '}
+                                            <span className="font-mono text-xs opacity-60">
+                                                ({entry.externalPriority})
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <span className="font-mono">{entry.externalPriority}</span>
+                                    )}
                                 </span>
                                 <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                                 <select

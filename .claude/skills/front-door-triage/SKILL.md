@@ -85,7 +85,32 @@ Precedent: `ag-ui#1961` — null/undefined `messages` crashes 7 call sites inclu
 
 ## Ranking the Top issues of the week
 
-The lead section is **ranked**, cross-community. Ranking is a **score, not a vote** — community (CK vs AG-UI) is NOT an axis. An AG-UI issue outranks a CopilotKit one only when it scores higher. Score each candidate on five axes, sum, sort descending. **Tie-break order:** Blast radius → still-open-before-resolved → Surface tier. (A still-broken issue edges a same-day-fixed one at a tie — it's the open wound.)
+The lead section is **ranked**, cross-community. Ranking is a **score, not a vote** — community (CK vs AG-UI) is NOT an axis. An AG-UI issue outranks a CopilotKit one only when it scores higher. Score each candidate on five axes, sum, sort descending.
+
+**Tie-break order:** Blast radius → still-open-before-resolved → Surface tier → **front-door category** → **community-confirmed over staff-filed**.
+
+- A still-broken issue edges a same-day-fixed one at a tie — it's the open wound.
+- **Front-door category** (step 4). On 2026-07-31 a four-way tie at 12 ran past the first three steps — same blast radius, all open, and three of the four shared a surface tier. The tie was settled on front-door grounds, which matched this skill's intent but wasn't derivable from the written order. An item that falls in one of the six front-door categories above edges one that doesn't.
+- **Community-confirmed over staff-filed** (step 5, added 2026-08-14): when everything else ties, an issue with outside corroboration — 👍s, or a second person independently reproducing it — outranks one a maintainer filed themselves, because carrying community signal is what this report is for. Reach for this only after step 4 genuinely fails to separate them.
+
+> **Both later steps have been lost once already — keep this file and the Playbook in sync.** Step 4 was written here on 2026-08-01 and then stranded on an unmerged local branch for two weeks, so the Playbook changelog described a rule the executable spec didn't have, and the 2026-08-14 run re-derived it from scratch. If this file and the Notion Playbook ever disagree again, reconcile them in the same change — and check `git log --all` for unmerged work before assuming a rule was never written.
+
+### Don't charge narrowness twice (score vs. gate)
+
+Two separate mechanisms exist and they must not both punish the same fact:
+
+- **Blast radius** (an axis) already scores how many people an issue reaches.
+- **The front-door test** (a gate) decides which *list* an item appears on — the cross-community main list, or its own community page.
+
+A narrow item already loses points on blast radius. Do **not** additionally treat "narrow" as the reason it fails the front-door gate — the gate asks a different question: *does this break the documented quickstart, the current release, or a default-path integration?* Answer that on its own terms.
+
+**Worked precedent (2026-07-31):** the AG-UI ADK converter cluster scored **13** — higher than anything on the main list — but stayed AG-UI-only, while `ag-ui#2226` crossed over at 12. That was correct (ADK middleware isn't a default path; LangGraph is), but the reasoning was written as "narrow," which double-counted the blast-radius penalty. **State the gate reason as the failed front-door criterion, never as a restatement of blast radius.** When a higher-scoring item stays off the main list, say which criterion it failed and why, on the ranking child page.
+
+**Second worked precedent (2026-08-14) — the same mistake, caught by the sources pass.** `ag-ui#2393` (.NET approval gating fails open) was held off the main cross-community list with the reason given as "narrow." That is the double-count again. The defensible statement of the same decision is the failed criterion: *it does not break the documented quickstart — both shipped approval samples were read and neither declares a frontend tool, so the gate isn't tripped; exposure is limited to apps combining frontend tools with approval gating.* Note also that a security item scored surface 4 sits in genuine tension with the auto-headline rule for auth/security — when that tension exists, say so on the ranking page rather than leaning on "narrow."
+
+**A problem with no ticket can still be ranked — score the problem, not the paperwork.** Some of the worst things are invisible to the tracker: a package that hasn't been published in two months, a release that merged but never reached the registry, a documented path nobody has filed against yet. If it's real and you can evidence it, rank it, and satisfy the source-link rule by citing what *does* exist — the closed-but-unshipped issues, the registry output, the tag list. (Precedent: on 2026-08-14 the top two items were an npm publish drought with no issue of its own and a *closed* release request that never reached PyPI. Ranked by loudness, neither would have appeared at all.)
+
+**Corollary to "a merged fix is not an open Top issue": a CLOSED issue is still open if the thing the reporter asked for never actually landed.** The test is "is the underlying problem solved for the user?", not "what does the ticket say?" A release request closed by a merged version-bump PR whose artifact never appeared on npm/PyPI is unresolved — rank it, and note the closure as part of the problem.
 
 | Axis | Measures | Scale |
 |---|---|---|

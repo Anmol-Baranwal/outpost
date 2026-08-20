@@ -3,13 +3,22 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
 import { TicketStatus, MessageType } from '@copilotkit/outpost/db';
+import {
+    resolveMonthKey,
+    monthWindow,
+    monthLabel,
+    listMonths,
+} from '@/lib/month-window';
 
 /**
- * GET /api/dashboard/stats
+ * GET /api/dashboard/stats?month=YYYY-MM
  *
- * Returns SLA metrics, ticket counts, and daily trend data for the current month.
+ * Returns SLA metrics, ticket counts, and daily trend data for the
+ * requested month. An absent, malformed, or out-of-range month falls
+ * back to the current month rather than erroring — a bad query param
+ * must not blank the dashboard.
  */
-export async function GET() {
+export async function GET(request: Request) {
     const session = await getServerSession(authOptions);
     if (!session) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -17,10 +26,25 @@ export async function GET() {
 
     try {
         const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth();
-        const monthStart = new Date(currentYear, currentMonth, 1);
-        const monthEnd = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999);
+
+        // Fetched first: resolveMonthKey needs the oldest ticket to know which
+        // months are in range, and the newest to pick the default month.
+        const [oldestTicket, newestTicket] = await Promise.all([
+            prisma.ticket.findFirst({
+                orderBy: { createdAt: 'asc' },
+                select: { createdAt: true },
+            }),
+            prisma.ticket.findFirst({
+                orderBy: { createdAt: 'desc' },
+                select: { createdAt: true },
+            }),
+        ]);
+        const oldest = oldestTicket?.createdAt ?? null;
+        const newest = newestTicket?.createdAt ?? null;
+
+        const url = new URL(request.url);
+        const monthKey = resolveMonthKey(url.searchParams.get('month'), oldest, newest, now);
+        const { start: monthStart, end: monthEnd, daysInMonth } = monthWindow(monthKey);
 
         // Run aggregate queries in parallel
         const [
@@ -31,7 +55,11 @@ export async function GET() {
             resolvedTickets,
             monthlyTickets,
         ] = await Promise.all([
-            prisma.ticket.count(),
+            // Scoped to the selected month so the figure matches the chart
+            // beside it.
+            prisma.ticket.count({
+                where: { createdAt: { gte: monthStart, lte: monthEnd } },
+            }),
             prisma.ticket.count({
                 where: {
                     status: {
@@ -44,6 +72,8 @@ export async function GET() {
                     },
                 },
             }),
+            // Left all-time and untouched: PR 2 removes this field together
+            // with the SLA Breaches card that reads it.
             prisma.ticket.count({
                 where: { slaBreachedAt: { not: null } },
             }),
@@ -112,14 +142,13 @@ export async function GET() {
                 ? resolutionTimesMs.reduce((a, b) => a + b, 0) / resolutionTimesMs.length
                 : 0;
 
-        // Build daily trend for current month
-        const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        // Build daily trend for the selected month
         const dailyCounts: number[] = new Array(daysInMonth).fill(0);
 
         for (const ticket of monthlyTickets) {
-            const d = ticket.createdAt;
-            if (d.getFullYear() === currentYear && d.getMonth() === currentMonth) {
-                dailyCounts[d.getDate() - 1]++;
+            const day = ticket.createdAt.getDate();
+            if (day >= 1 && day <= daysInMonth) {
+                dailyCounts[day - 1]++;
             }
         }
 
@@ -135,8 +164,10 @@ export async function GET() {
             totalTickets,
             openTickets,
             trend,
-            month: now.toLocaleString('en-US', { month: 'long' }),
-            year: currentYear,
+            month: monthLabel(monthKey),
+            monthKey,
+            availableMonths: listMonths(oldest, now),
+            year: monthWindow(monthKey).start.getFullYear(),
         });
     } catch (error) {
         console.error('[GET /api/dashboard/stats] Error:', error);

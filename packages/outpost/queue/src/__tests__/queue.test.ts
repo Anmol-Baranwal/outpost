@@ -621,7 +621,7 @@ describe('Scheduler', () => {
     });
 
     it('has correct default scheduled jobs', () => {
-        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(6);
+        expect(DEFAULT_SCHEDULED_JOBS).toHaveLength(7);
         const types = DEFAULT_SCHEDULED_JOBS.map((d) => d.type);
         expect(types).toContain(JobType.SLA_CHECK);
         expect(types).toContain(JobType.ONBOARDING_DIGEST);
@@ -629,6 +629,7 @@ describe('Scheduler', () => {
         expect(types).toContain(JobType.HUBSPOT_SYNC);
         expect(types).toContain(JobType.JOB_CLEANUP);
         expect(types).toContain(JobType.GITHUB_REACTION_POLL);
+        expect(types).toContain(JobType.PENDING_RESPONSE_SWEEP);
     });
 
     it('creates a job immediately on start if none exists', async () => {
@@ -748,8 +749,8 @@ describe('JobType enum', () => {
         expect(JobType.ONBOARDING_DIGEST).toBe('ONBOARDING_DIGEST');
     });
 
-    it('has exactly 10 job types', () => {
+    it('has exactly 11 job types', () => {
         const values = Object.values(JobType);
-        expect(values).toHaveLength(10);
+        expect(values).toHaveLength(11);
     });
 });

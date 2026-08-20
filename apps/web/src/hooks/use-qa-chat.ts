@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from 'react';
 import type { ChatMessageData } from '@/components/qa/chat-message';
 import type { ConfidenceLevel } from '@/components/qa/confidence-badge';
 import type { SourceItem } from '@/components/qa/source-panel';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface QAChatState {
     messages: ChatMessageData[];
@@ -68,7 +69,7 @@ export function useQAChat() {
         abortControllerRef.current = abortController;
 
         try {
-            const response = await fetch('/api/qa', {
+            const response = await apiFetch('/api/qa', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
