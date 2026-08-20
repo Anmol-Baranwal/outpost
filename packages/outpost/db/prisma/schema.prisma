@@ -241,6 +241,11 @@ model Job {
     progress    Int?      // Optional percentage 0-100
     runAt       DateTime  @default(now())
     lockedAt    DateTime?
+    // The deadline the CLAIMING worker was granted, written at claim time from
+    // that worker's own timeout config. Reclaim compares against this rather than
+    // re-deriving a window from whichever worker happens to notice, so a replica
+    // on an older config cannot decide a live claim has expired.
+    lockUntil   DateTime?
     claimToken  String?   // Fences writes to the worker execution that owns this claim
     completedAt DateTime?
     error       String?
@@ -249,6 +254,10 @@ model Job {
 
     @@index([status, runAt])
     @@index([type])
+    // Serves the reclaim sweep, which runs once per poll interval per replica.
+    // [status, runAt] has the wrong second column for it and [type] is far too
+    // low-selectivity to help.
+    @@index([status, lockUntil])
 }
 
 enum JobStatus {

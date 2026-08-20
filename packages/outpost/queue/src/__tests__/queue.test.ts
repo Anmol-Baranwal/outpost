@@ -203,7 +203,7 @@ describe('Worker', () => {
         );
     });
 
-    it('reclaims stale processing jobs using each job type timeout before claiming', async () => {
+    it('reclaims on the deadline the claiming worker recorded, not its own config', async () => {
         const now = new Date('2026-08-11T12:00:00.000Z');
         vi.setSystemTime(now);
 
@@ -212,8 +212,11 @@ describe('Worker', () => {
             pollIntervalMs: 100,
             maxConcurrency: 2,
             defaultTimeoutMs: 5000,
+            // Deliberately not 1000: that is BACKOFF_BASE_MS, and the assertion
+            // below is that this worker's config does NOT reach the predicate, so
+            // it has to be a value nothing else could have put there.
             jobTimeouts: {
-                [JobType.AI_RESPONSE]: 1000,
+                [JobType.AI_RESPONSE]: 7000,
             },
         });
 
@@ -234,14 +237,56 @@ describe('Worker', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         const firstReclaim = mockPrisma.$executeRaw.mock.calls[0];
-        expect(JSON.parse(firstReclaim[1])).toEqual([
-            { type: JobType.AI_RESPONSE, reclaim_after_ms: 31_000 },
-            { type: JobType.ESCALATION, reclaim_after_ms: 35_000 },
-        ]);
         const reclaimSql = firstReclaim[0].join(' ');
         expect(reclaimSql).toContain("WHERE job.status = 'PROCESSING'");
-        expect(reclaimSql).toContain('job."lockedAt" < NOW()');
+
+        // The whole point of B2: this worker's `jobTimeouts` must not appear in the
+        // predicate. A replica configured differently from the one that claimed the
+        // row would otherwise decide a live claim had expired, and the original
+        // handler's success would be fenced out and silently discarded.
+        expect(reclaimSql).toContain('job."lockUntil"');
+        expect(reclaimSql).not.toContain('jsonb_to_recordset');
+        expect(firstReclaim.slice(1)).not.toContain(7000);
+        expect(firstReclaim.slice(1)).not.toContain(5000);
+
+        // Rows claimed before `lockUntil` existed still need a way out, on an
+        // absolute ceiling rather than a guessed deadline.
+        expect(reclaimSql).toContain('job."lockedAt"');
+        expect(firstReclaim.slice(1)).toContain(900_000);
+
         expect(handled).toEqual(['tkt-1']);
+    });
+
+    it("writes the claiming worker's own timeout onto the row it claims", async () => {
+        await worker.stop();
+        worker = new Worker({
+            pollIntervalMs: 100,
+            maxConcurrency: 2,
+            defaultTimeoutMs: 5000,
+            jobTimeouts: {
+                [JobType.AI_RESPONSE]: 120_000,
+            },
+        });
+
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const claim = mockPrisma.$queryRaw.mock.calls[0];
+        const claimSql = claim[0].join(' ');
+        expect(claimSql).toContain('"lockUntil" = NOW()');
+        // Per-type, looked up by the row's own type, with the worker default as the
+        // fallback — so a type this worker has no entry for still gets a deadline.
+        expect(claimSql).toContain('->> "Job".type');
+        const timeoutMap = claim
+            .slice(1)
+            .find((v: unknown): v is string => typeof v === 'string' && v.includes('AI_RESPONSE'));
+        expect(JSON.parse(timeoutMap as string)).toEqual({
+            [JobType.AI_RESPONSE]: 120_000,
+        });
+        expect(claim.slice(1)).toContain(5000);
     });
 
     it('does not let an old execution clobber the reclaimed claim', async () => {
@@ -334,13 +379,38 @@ describe('Worker', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         const reclaimCall = mockPrisma.$executeRaw.mock.calls[0];
-        expect(JSON.parse(reclaimCall[1])).toEqual([
-            { type: JobType.AI_RESPONSE, reclaim_after_ms: 35_000 },
-        ]);
         const reclaimSql = reclaimCall[0].join(' ');
         expect(reclaimSql).toContain('job."attempts" + 1');
         expect(reclaimSql).toContain("THEN 'DEAD_LETTER'");
         expect(reclaimSql).toContain('"claimToken" = NULL');
+        expect(reclaimSql).toContain('"lockUntil" = NULL');
+        // The grace sits on top of the recorded deadline: the normal timeout path
+        // must have time to release its own claim before another worker calls it
+        // crash-abandoned.
+        expect(reclaimCall.slice(1)).toContain(30_000);
+    });
+
+    it('spaces a reclaimed retry by the same backoff a handler failure would', async () => {
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const reclaimCall = mockPrisma.$executeRaw.mock.calls[0];
+        const reclaimSql = reclaimCall[0].join(' ');
+
+        // `runAt = NOW()` let a crash-looping worker burn every attempt on a job
+        // back to back and drive it to DEAD_LETTER at full speed. A reclaim and a
+        // handler failure both mean "this attempt did not finish", so they have to
+        // space retries the same way.
+        expect(reclaimSql).not.toContain('ELSE NOW()\n');
+        expect(reclaimSql).toContain('POWER(2, job."attempts" + 1)');
+        expect(reclaimSql).toContain('random()');
+        expect(reclaimSql).toContain('LEAST');
+        // Mirrors calculateBackoff: BACKOFF_BASE_MS with jitter, BACKOFF_MAX_MS cap.
+        expect(reclaimCall.slice(1)).toContain(1000);
+        expect(reclaimCall.slice(1)).toContain(300_000);
     });
 
     it('marks job DEAD_LETTER after maxAttempts exhausted', async () => {
@@ -607,6 +677,96 @@ describe('Worker', () => {
             (call: Array<Record<string, Record<string, unknown>>>) => call[0].data.progress === 50,
         );
         expect(progressCall).toBeDefined();
+    });
+
+    // A fenced write means two executions of the same row overlapped — the exact
+    // event the claim token exists to produce. Before these, changing both
+    // `count > 0` checks to `count >= 0` passed the whole suite: the fence fired
+    // and said nothing, on every path.
+    describe('fence rejections are reported', () => {
+        let warn: ReturnType<typeof vi.spyOn>;
+        let error: ReturnType<typeof vi.spyOn>;
+
+        beforeEach(() => {
+            warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        });
+
+        afterEach(() => {
+            warn.mockRestore();
+            error.mockRestore();
+        });
+
+        const fencedMessages = () => warn.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+
+        it('warns when a completed job can no longer write its own result', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow()]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            // Someone else owns the row: it was reclaimed while this execution was
+            // still live, so this handler's side effects have now happened twice.
+            mockPrismaJob.updateMany.mockResolvedValue({ count: 0 });
+
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(fencedMessages()).toContain('job-1');
+            expect(fencedMessages()).toContain('ran more than once');
+        });
+
+        it('keeps the underlying failure when a retry write is fenced', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([
+                makeJobRow({ attempts: 1, maxAttempts: 5 }),
+            ]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            mockPrismaJob.updateMany.mockResolvedValue({ count: 0 });
+
+            worker.on(JobType.AI_RESPONSE, async () => {
+                throw new Error('upstream timed out');
+            });
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // Pre-fence this path always logged. Losing the retry log would also
+            // lose the failure that caused the timeout in the first place.
+            expect(fencedMessages()).toContain('upstream timed out');
+            expect(fencedMessages()).toContain('fenced');
+        });
+
+        it('keeps the underlying failure when a dead-letter write is fenced', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([
+                makeJobRow({ attempts: 4, maxAttempts: 5 }),
+            ]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            mockPrismaJob.updateMany.mockResolvedValue({ count: 0 });
+
+            worker.on(JobType.AI_RESPONSE, async () => ({
+                success: false,
+                error: 'permanently broken',
+            }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(fencedMessages()).toContain('permanently broken');
+            expect(fencedMessages()).toContain('dead-letter write was fenced');
+        });
+
+        it('warns when a progress report is fenced', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow()]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            mockPrismaJob.updateMany.mockResolvedValue({ count: 0 });
+
+            worker.on(JobType.AI_RESPONSE, async (_payload, ctx) => {
+                await ctx.reportProgress(50);
+                return { success: true };
+            });
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // Earliest observable sign that this execution has lost its claim while
+            // the handler is still running.
+            expect(fencedMessages()).toContain('Progress update for job job-1 was fenced');
+        });
     });
 });
 

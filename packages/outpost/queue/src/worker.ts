@@ -1,5 +1,5 @@
 import { prisma } from '@copilotkit/outpost/db';
-import { calculateBackoff } from '@copilotkit/outpost/shared';
+import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, calculateBackoff } from '@copilotkit/outpost/shared';
 import { updateJobProgress } from './create-job.js';
 import type {
     JobType,
@@ -11,6 +11,39 @@ import type {
 } from './types.js';
 
 const STALE_RECOVERY_GRACE_MS = 30_000;
+
+/**
+ * How long a `PROCESSING` row with no `lockUntil` is left alone.
+ *
+ * Only reachable for rows a pre-`lockUntil` worker claimed, i.e. during the one
+ * deploy that rolls this out. We genuinely do not know what deadline those were
+ * granted, so the ceiling is set well above the largest configured timeout
+ * (`HUBSPOT_SYNC`, 300s) rather than guessed from the observing worker's config —
+ * the guess is exactly the bug `lockUntil` exists to remove.
+ */
+const LEGACY_RECLAIM_CEILING_MS = 900_000;
+
+/**
+ * Report a fenced write.
+ *
+ * `count === 0` on any of these updates is the event the claim token exists to
+ * produce, and it means two executions of the same row overlapped — so it must
+ * never be inferred from the absence of a log. The pre-fence code always logged
+ * on these paths; suppressing the log when the fence fires would make the
+ * interesting case the quiet one.
+ */
+function warnIfFenced(
+    count: number,
+    job: Pick<ClaimedJob, 'id' | 'type' | 'claimToken'>,
+    what: string,
+): void {
+    if (count > 0) return;
+    console.warn(
+        `[Queue Worker] ${what} write for job ${job.id} (${job.type}) was fenced: ` +
+            `claim ${job.claimToken ?? 'none'} no longer owns the row. ` +
+            `Another execution holds it, so this job ran more than once.`,
+    );
+}
 
 interface ClaimedJob {
     id: string;
@@ -58,7 +91,9 @@ export class Worker {
         this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
         this.batchSize = options?.batchSize ?? 10;
         this.maxConcurrency = options?.maxConcurrency ?? 5;
-        this.concurrencyByType = (options?.concurrencyByType ?? {}) as Partial<Record<string, number>>;
+        this.concurrencyByType = (options?.concurrencyByType ?? {}) as Partial<
+            Record<string, number>
+        >;
         this.jobTimeouts = options?.jobTimeouts ?? {};
         this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
     }
@@ -114,7 +149,9 @@ export class Worker {
 
             // Wait for active jobs to finish
             if (this.activeJobs.size > 0) {
-                console.log(`[Queue Worker] Waiting for ${this.activeJobs.size} active jobs to complete...`);
+                console.log(
+                    `[Queue Worker] Waiting for ${this.activeJobs.size} active jobs to complete...`,
+                );
                 await new Promise<void>((resolve) => {
                     this.shutdownResolve = resolve;
                     // Check immediately in case jobs finished between the check and setting the resolver
@@ -190,7 +227,16 @@ export class Worker {
                 return;
             }
 
-            await this.reclaimStaleJobs();
+            // Isolated on purpose. This sits ahead of every claim in the same try,
+            // and `lastPollTime` is already set, so a failing reclaim would stop
+            // all claiming while `buildHealthResponse` still reported healthy —
+            // a total outage with nothing to restart it. Recovering abandoned work
+            // is a nice-to-have; claiming new work is the job.
+            try {
+                await this.reclaimStaleJobs();
+            } catch (error) {
+                console.error('[Queue Worker] Reclaim sweep failed, continuing:', error);
+            }
             if (!this.running) return;
 
             const hasPerTypeLimits = Object.keys(this.concurrencyByType).length > 0;
@@ -216,23 +262,28 @@ export class Worker {
     /**
      * Return abandoned PROCESSING jobs to the pending queue before claiming work.
      *
-     * lockedAt is written with the database clock, so the stale comparison must
-     * also use the database clock. Each registered type gets its own handler
-     * timeout plus a recovery grace: the normal timeout path must have time to
-     * release its claim before another worker calls it crash-abandoned. A true
-     * abandonment consumes an attempt, clears its claim token, and moves toward
-     * DEAD_LETTER like every other failed execution.
+     * `lockUntil` is written with the database clock at claim time, so the stale
+     * comparison also uses the database clock, and it is the *claiming* worker's
+     * deadline rather than a window re-derived here. A recovery grace is still
+     * added on top: the normal timeout path must have time to release its own
+     * claim before another worker calls it crash-abandoned. A true abandonment
+     * consumes an attempt, clears its claim token, and moves toward DEAD_LETTER
+     * like every other failed execution — spaced by the same backoff.
+     *
+     * Deliberately not filtered to types this worker registers. `lockUntil` makes
+     * the row self-describing, so there is no longer anything a worker needs to
+     * know about a type in order to tell that its claim has expired — and the old
+     * type predicate meant a crashed claim of a type this replica does not handle
+     * stayed PROCESSING forever, never reclaimed and never dead-lettered.
      */
     private async reclaimStaleJobs(): Promise<void> {
-        const policies = Array.from(this.handlers.keys(), (type) => ({
-            type,
-            reclaim_after_ms:
-                (this.jobTimeouts[type as JobType] ?? this.defaultTimeoutMs) +
-                STALE_RECOVERY_GRACE_MS,
-        }));
-
-        if (policies.length === 0) return;
-
+        // `runAt` mirrors `calculateBackoff` in shared/utils.ts — base * 2^attempt
+        // plus jitter under a ceiling — because a reclaim and a handler failure
+        // both mean "this attempt did not finish, try again later" and must space
+        // retries the same way. Setting NOW() here let a crash-looping worker burn
+        // every attempt on a job back to back and drive it to DEAD_LETTER at full
+        // speed. The attempt number is the one being scheduled, `attempts + 1`,
+        // matching `handleFailure`.
         await prisma.$executeRaw`
             UPDATE "Job" AS job
             SET status = CASE
@@ -242,6 +293,7 @@ export class Worker {
                 END,
                 "attempts" = job."attempts" + 1,
                 "lockedAt" = NULL,
+                "lockUntil" = NULL,
                 "claimToken" = NULL,
                 progress = NULL,
                 error = 'Worker claim was abandoned before completion',
@@ -251,15 +303,39 @@ export class Worker {
                 END,
                 "runAt" = CASE
                     WHEN job."attempts" + 1 >= job."maxAttempts" THEN job."runAt"
-                    ELSE NOW()
+                    ELSE NOW() + (
+                        LEAST(
+                            ${BACKOFF_BASE_MS} * POWER(2, job."attempts" + 1)
+                                + random() * ${BACKOFF_BASE_MS},
+                            ${BACKOFF_MAX_MS}
+                        ) * INTERVAL '1 millisecond'
+                    )
                 END,
                 "updatedAt" = NOW()
-            FROM jsonb_to_recordset(${JSON.stringify(policies)}::jsonb)
-                AS policy(type text, reclaim_after_ms double precision)
             WHERE job.status = 'PROCESSING'
-            AND job.type = policy.type
-            AND job."lockedAt" < NOW() - (policy.reclaim_after_ms * INTERVAL '1 millisecond')
+            AND CASE
+                WHEN job."lockUntil" IS NOT NULL
+                    THEN job."lockUntil"
+                        + (${STALE_RECOVERY_GRACE_MS} * INTERVAL '1 millisecond') < NOW()
+                ELSE job."lockedAt"
+                    + (${LEGACY_RECLAIM_CEILING_MS} * INTERVAL '1 millisecond') < NOW()
+            END
         `;
+    }
+
+    /**
+     * This worker's per-type claim durations, as a jsonb object for the claim SQL.
+     *
+     * Written onto the row at claim time so the deadline belongs to the execution
+     * that owns the claim. Deriving it at reclaim time from the *observing*
+     * worker's config meant a replica on an older revision — one without an entry
+     * for a long-running type, so falling back to `defaultTimeoutMs` — would
+     * reclaim a claim that was still live, and the original handler's eventual
+     * success would then be fenced out and silently discarded while the job ran
+     * a second time.
+     */
+    private timeoutMapJson(): string {
+        return JSON.stringify(this.jobTimeouts);
     }
 
     /**
@@ -318,13 +394,16 @@ export class Worker {
     /**
      * Claim pending jobs of a specific type using SKIP LOCKED.
      */
-    private async claimJobsForType(
-        type: string,
-        limit: number,
-    ): Promise<Array<ClaimedJob>> {
+    private async claimJobsForType(type: string, limit: number): Promise<Array<ClaimedJob>> {
         return prisma.$queryRaw<Array<ClaimedJob>>`
             UPDATE "Job"
             SET status = 'PROCESSING', "lockedAt" = NOW(),
+                "lockUntil" = NOW() + (
+                    COALESCE(
+                        (${this.timeoutMapJson()}::jsonb ->> "Job".type)::double precision,
+                        ${this.defaultTimeoutMs}
+                    ) * INTERVAL '1 millisecond'
+                ),
                 "claimToken" = gen_random_uuid()::text, "updatedAt" = NOW()
             WHERE id IN (
                 SELECT id FROM "Job"
@@ -345,6 +424,12 @@ export class Worker {
         const jobs = await prisma.$queryRaw<Array<ClaimedJob>>`
             UPDATE "Job"
             SET status = 'PROCESSING', "lockedAt" = NOW(),
+                "lockUntil" = NOW() + (
+                    COALESCE(
+                        (${this.timeoutMapJson()}::jsonb ->> "Job".type)::double precision,
+                        ${this.defaultTimeoutMs}
+                    ) * INTERVAL '1 millisecond'
+                ),
                 "claimToken" = gen_random_uuid()::text, "updatedAt" = NOW()
             WHERE id IN (
                 SELECT id FROM "Job"
@@ -366,10 +451,7 @@ export class Worker {
 
     private async processJob(job: ClaimedJob): Promise<void> {
         this.activeJobs.add(job.id);
-        this.activeJobsByType.set(
-            job.type,
-            (this.activeJobsByType.get(job.type) ?? 0) + 1,
-        );
+        this.activeJobsByType.set(job.type, (this.activeJobsByType.get(job.type) ?? 0) + 1);
 
         try {
             const handler = this.handlers.get(job.type);
@@ -410,7 +492,7 @@ export class Worker {
                 );
 
                 if (result.success) {
-                    await prisma.job.updateMany({
+                    const completion = await prisma.job.updateMany({
                         where: {
                             id: job.id,
                             status: 'PROCESSING',
@@ -425,6 +507,12 @@ export class Worker {
                             claimToken: null,
                         },
                     });
+                    // The single most important thing this fence can tell us: the
+                    // work finished, and the row says someone else owns it. That
+                    // means it was reclaimed while still live and is running, or has
+                    // already run, a second time. Every external side effect this
+                    // handler produced has happened at least twice.
+                    warnIfFenced(completion.count, job, 'completion');
                 } else {
                     await this.handleFailure(
                         job.id,
@@ -463,7 +551,10 @@ export class Worker {
     private async runWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
         let timer: ReturnType<typeof setTimeout>;
         const timeout = new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(() => reject(new Error(`Job timed out after ${timeoutMs}ms`)), timeoutMs);
+            timer = setTimeout(
+                () => reject(new Error(`Job timed out after ${timeoutMs}ms`)),
+                timeoutMs,
+            );
         });
 
         try {
@@ -497,6 +588,14 @@ export class Worker {
                 console.error(
                     `[Queue Worker] Job ${jobId} moved to dead letter queue after ${attempt} attempts: ${error}`,
                 );
+            } else {
+                // Pre-fence this always logged. Staying silent here would lose both
+                // the fence rejection and the failure that caused it.
+                console.warn(
+                    `[Queue Worker] Job ${jobId} dead-letter write was fenced ` +
+                        `(claim ${claimToken ?? 'none'} no longer owns the row); ` +
+                        `the failure it was recording was: ${error}`,
+                );
             }
         } else {
             // Schedule retry with exponential backoff
@@ -519,6 +618,12 @@ export class Worker {
                 console.warn(
                     `[Queue Worker] Job ${jobId} failed (attempt ${attempt}/${maxAttempts}), ` +
                         `retrying at ${runAt.toISOString()}: ${error}`,
+                );
+            } else {
+                console.warn(
+                    `[Queue Worker] Job ${jobId} retry write was fenced ` +
+                        `(claim ${claimToken ?? 'none'} no longer owns the row); ` +
+                        `the failure it was recording was: ${error}`,
                 );
             }
         }

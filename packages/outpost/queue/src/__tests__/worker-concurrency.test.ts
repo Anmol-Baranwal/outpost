@@ -41,14 +41,16 @@ const { Worker } = await import('../worker.js');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeJobRow(overrides: Partial<{
-    id: string;
-    type: string;
-    payload: unknown;
-    attempts: number;
-    maxAttempts: number;
-    claimToken: string;
-}> = {}) {
+function makeJobRow(
+    overrides: Partial<{
+        id: string;
+        type: string;
+        payload: unknown;
+        attempts: number;
+        maxAttempts: number;
+        claimToken: string;
+    }> = {},
+) {
     return {
         id: overrides.id ?? 'job-1',
         type: overrides.type ?? JobType.AI_RESPONSE,
@@ -141,9 +143,13 @@ describe('Worker per-type concurrency', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
-        expect(JSON.parse(mockPrisma.$executeRaw.mock.calls[0][1])).toEqual([
-            { type: JobType.AI_RESPONSE, reclaim_after_ms: 32_000 },
-        ]);
+        // The sweep no longer carries a per-type policy set. `lockUntil` is on the
+        // row, written by whoever claimed it, so this worker's own timeout config
+        // is not an input to the decision.
+        const reclaimSql = mockPrisma.$executeRaw.mock.calls[0][0].join(' ');
+        expect(reclaimSql).toContain('job."lockUntil"');
+        expect(reclaimSql).not.toContain('jsonb_to_recordset');
+        expect(reclaimSql).not.toContain('job.type = policy.type');
         expect(mockPrisma.$queryRaw).toHaveBeenCalled();
     });
 
@@ -256,11 +262,13 @@ describe('Worker per-type concurrency', () => {
 
         // Per-type claims: first call for AI_RESPONSE, second for ESCALATION
         mockPrisma.$queryRaw
+            .mockResolvedValueOnce([makeJobRow({ id: 'ai-1', type: JobType.AI_RESPONSE })])
             .mockResolvedValueOnce([
-                makeJobRow({ id: 'ai-1', type: JobType.AI_RESPONSE }),
-            ])
-            .mockResolvedValueOnce([
-                makeJobRow({ id: 'esc-1', type: JobType.ESCALATION, payload: { ticketId: 'tkt-esc', reason: 'test' } }),
+                makeJobRow({
+                    id: 'esc-1',
+                    type: JobType.ESCALATION,
+                    payload: { ticketId: 'tkt-esc', reason: 'test' },
+                }),
             ])
             .mockResolvedValue([]);
 

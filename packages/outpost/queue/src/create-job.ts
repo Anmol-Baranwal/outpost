@@ -34,8 +34,18 @@ export async function updateJobProgress(
     claimToken: string,
 ): Promise<void> {
     const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-    await prisma.job.updateMany({
+    const result = await prisma.job.updateMany({
         where: { id: jobId, status: 'PROCESSING', claimToken },
         data: { progress: clamped },
     });
+    // A dropped progress update is harmless in itself, but it is the earliest
+    // observable sign that this execution has lost its claim — the handler is
+    // still running while something else owns the row. Worth a line, since the
+    // fence is otherwise indistinguishable from a successful write.
+    if (result.count === 0) {
+        console.warn(
+            `[Queue] Progress update for job ${jobId} was fenced: ` +
+                `claim ${claimToken} no longer owns the row.`,
+        );
+    }
 }
