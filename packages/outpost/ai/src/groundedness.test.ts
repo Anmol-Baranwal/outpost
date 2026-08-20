@@ -103,6 +103,59 @@ describe('extractCopilotKitIdentifiers', () => {
         ).toEqual(['copilot-chat', 'copilotSidebarPanel']);
     });
 
+    it('unwraps a JSX component that carries props', () => {
+        // A model writing a fabricated component almost always gives it props, so
+        // the prop-less-only form was the least likely spelling to appear.
+        expect(
+            extractCopilotKitIdentifiers('Wrap it in `<CopilotFabricated debug={true} />`.'),
+        ).toEqual(['CopilotFabricated']);
+        expect(extractCopilotKitIdentifiers('Try `<CopilotInvented labels={{}} />`.')).toEqual([
+            'CopilotInvented',
+        ]);
+    });
+
+    // The `.copilot` selector branch pushes into `hits` WITHOUT a shape check, so
+    // position is the only thing standing between it and a reporter's own code.
+    // Each of these returns two identifiers if the lookbehind is dropped, which is
+    // enough to suppress on its own — a correct answer withheld, silently.
+    it('does not read member access as a CSS class selector', () => {
+        expect(
+            extractCopilotKitIdentifiers(
+                'Your handler reads `state.copilotOpen` and toggles `ui.copilotWidth`, ' +
+                    'neither is a CopilotKit API.',
+            ),
+        ).toEqual([]);
+        expect(
+            extractCopilotKitIdentifiers(
+                'Set `github.copilot.enable` to false, and check `settings.copilotInline` too.',
+            ),
+        ).toEqual([]);
+        // Not backticked, so only the selector branch can see it. A sentence that
+        // runs into a capitalized word is not a class.
+        expect(extractCopilotKitIdentifiers('a sentence.Copilot starts here')).toEqual([]);
+        // Nor is a member read off a call or an index.
+        expect(extractCopilotKitIdentifiers('Read `getPanel().copilotWidth` instead.')).toEqual([]);
+        expect(extractCopilotKitIdentifiers('Read `rows[0].copilotState` instead.')).toEqual([]);
+    });
+
+    it('still reads a genuine selector, bare or fenced', () => {
+        expect(extractCopilotKitIdentifiers('Override .copilotGhostPanel to fix it.')).toEqual([
+            'copilotGhostPanel',
+        ]);
+        expect(
+            extractCopilotKitIdentifiers('```css\n.copilot-ghost-input { color: red }\n```'),
+        ).toEqual(['copilot-ghost-input']);
+    });
+
+    // Pins the `^` on shapes 2 and 3. Without the anchors these read as identifiers
+    // and every helper someone names after the product becomes a fabrication claim.
+    it('requires the product name at the start of the segment, not anywhere in it', () => {
+        expect(extractCopilotKitIdentifiers('Call `getCopilotXValue()` to read it.')).toEqual([]);
+        expect(extractCopilotKitIdentifiers('Our `myUseCopilotHook` wrapper does that.')).toEqual(
+            [],
+        );
+    });
+
     // The reason the rules are shapes and not a `/copilot/i` substring test: a
     // false positive here withholds a CORRECT answer from a real reporter, and
     // `copilot` on its own is a word we and our users both use in prose.
@@ -765,9 +818,25 @@ const CORPUS: CorpusRow[] = [
     },
     {
         // `copilot` is an English word. Prose about the product must never reach
-        // the gate, or the widening withholds correct answers.
+        // the gate, or the widening withholds correct answers. The backticks and
+        // the sentence-boundary `.Copilot` are load-bearing: without them this row
+        // reaches neither extraction path and passes whatever the rules say.
         shape: 'the English word "copilot" in prose is not an identifier (#147 edge)',
-        response: 'GitHub Copilot is a separate product; plenty of copilots exist.',
+        response:
+            'GitHub `Copilot` is a separate product; plenty of `copilots` exist. ' +
+            'Ask them instead.Copilot is not ours.',
+        suppress: false,
+        claimCharged: false,
+        unsourcedIdentifiers: [],
+    },
+    {
+        // The false-positive direction of the widened selector rule, end to end: a
+        // reporter's own state read back to them must not suppress. Two matches is
+        // the suppression bar, so this row fails the moment the lookbehind goes.
+        shape: 'member access echoed from the reporter is not a fabricated selector',
+        response:
+            'Your handler reads `state.copilotOpen` and toggles `ui.copilotWidth`. ' +
+            'Neither is ours, so the reset is coming from your own code.',
         suppress: false,
         claimCharged: false,
         unsourcedIdentifiers: [],

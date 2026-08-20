@@ -187,9 +187,26 @@ const HEDGE_PATTERNS: RegExp[] = [
 // Case-insensitive, and matched on `copilot` rather than `copilotkit`: a
 // selector-prefixed name starting with our product word is ours whatever
 // follows, so an invented `.copilot-chat` is caught alongside `.copilotKitInput`.
-// The leading `.` is what makes this safe to widen — it marks a selector, not
-// the English word.
-const CSS_CLASS_PATTERN = /\.(copilot[A-Za-z0-9_-]*)/gi;
+//
+// The lookbehind is what makes widening to `copilot` safe. A leading `.` does
+// NOT by itself mean "class selector" — in prose and in TS it marks member
+// access far more often, and this branch pushes straight into `hits` without
+// passing through `isCopilotKitIdentifier`, so anything it matches is a
+// fabrication claim with no shape check behind it. Requiring that the `.` not
+// follow an identifier character, `)` or `]` keeps a reporter's echoed
+// `state.copilotOpen`, `github.copilot.enable` and `getPanel().copilotWidth`
+// out of the gate: two of those are enough to suppress on their own, and a
+// false positive here withholds a correct answer from a real person.
+//
+// Shape can't do this job instead — `copilotSidebarPanel` (real) and
+// `copilotOpen` (someone's local state) are shape-identical, so routing this
+// capture through `isCopilotKitIdentifier` fails the legitimate case. Position
+// is the only thing that separates them.
+//
+// Known cost: a tag-qualified selector (`div.copilotPanel`) is now missed.
+// Selectors are written bare far more often than qualified, and the failure
+// direction is publishing rather than withholding.
+const CSS_CLASS_PATTERN = /(?<![\w$)\]])\.(copilot[A-Za-z0-9_-]*)/gi;
 const BACKTICKED_PATTERN = /`([^`\n]{1,80})`/g;
 
 /**
@@ -236,8 +253,16 @@ function isCopilotKitIdentifier(segment: string): boolean {
     return COPILOTKIT_IDENTIFIER_SHAPES.some((shape) => shape.test(segment));
 }
 
-/** `<Foo>`, `<Foo />`, `</Foo>` — JSX is how a component name is usually written. */
-const JSX_WRAPPER = /^<\/?\s*([A-Za-z_$][\w$.-]*)\s*\/?>$/;
+/**
+ * `<Foo>`, `<Foo />`, `</Foo>`, `<Foo bar={1} />` — JSX is how a component name
+ * is usually written. Trailing attribute text is allowed and discarded: a model
+ * writing a fabricated component almost always gives it props, so a prop-less-only
+ * rule left the fabricated-component half of #147 uncaught in its commonest
+ * spelling. `[^<>]*` stops at a nested `>`, so a token containing an arrow
+ * function falls through to `IDENTIFIER_PATH` and is rejected — acceptable, since
+ * the name still has to satisfy `isCopilotKitIdentifier` to count either way.
+ */
+const JSX_WRAPPER = /^<\/?\s*([A-Za-z_$][\w$.-]*)(?:\s[^<>]*)?\s*\/?>$/;
 /** `foo()`, `foo({ debug: true })` — a call is still a claim about an API surface. */
 const CALL_EXPRESSION = /^([^()]*?)\(\s*[^()]*\)$/;
 /** A bare identifier, optionally selector-prefixed and optionally dotted. */
