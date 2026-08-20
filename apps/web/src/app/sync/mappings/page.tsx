@@ -5,6 +5,7 @@ import { Settings2 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { MappingEditor } from '@/components/sync/mapping-editor';
 import type { MappingConfig } from '@/lib/mock-sync';
+import { apiFetch } from '@/lib/api-fetch';
 
 /** Provenance the mappings API reports alongside the config it serves. */
 interface ConfigProvenance {
@@ -22,7 +23,7 @@ export default function MappingsPage() {
     useEffect(() => {
         async function fetchMappings() {
             try {
-                const res = await fetch('/api/sync/mappings');
+                const res = await apiFetch('/api/sync/mappings');
                 const data = await res.json();
                 setConfig(data);
                 setProvenance({
@@ -41,13 +42,23 @@ export default function MappingsPage() {
         setSaving(true);
         setSaveMessage(null);
         try {
-            const res = await fetch('/api/sync/mappings', {
+            const res = await apiFetch('/api/sync/mappings', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatedConfig),
             });
             if (res.ok) {
-                setConfig(updatedConfig);
+                // Store what the server persisted, not what was sent. A PUT that omits
+                // labelRules has them carried forward server-side, so echoing the request
+                // body back into state would drop rules that are actually saved — they
+                // would vanish from the editor until the next page load.
+                const saved = (await res.json().catch(() => null)) as MappingConfig | null;
+                setConfig(saved ?? updatedConfig);
+                // A successful PUT means a saved configuration is now in effect, so the
+                // "no saved mapping configuration" / "using built-in defaults for …"
+                // notices no longer describe reality. Without this they sit on screen
+                // next to "Mappings saved successfully", contradicting it.
+                setProvenance({});
                 setSaveMessage('Mappings saved successfully.');
             } else {
                 setSaveMessage('Failed to save mappings.');

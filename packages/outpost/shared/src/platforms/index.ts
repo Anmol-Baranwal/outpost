@@ -38,7 +38,7 @@ export { buildTicketSourceId } from './source-id.js';
 
 // Inbound handler
 export { InboundHandler } from './inbound.js';
-export type { InboundHandlerConfig, CreateJobFn } from './inbound.js';
+export type { InboundHandlerConfig, CreateJobFn, HandleOptions } from './inbound.js';
 export type { PrismaLike as InboundPrismaLike } from './inbound.js';
 
 // Individual adapters — re-exported with "Platform" prefix to avoid

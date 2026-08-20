@@ -1,0 +1,11 @@
+-- Index the delivery-state columns PENDING_RESPONSE_SWEEP scans.
+--
+-- The sweep runs on a fixed schedule and selects primary AI responses that are
+-- still PENDING and older than its stranded threshold, ordered by createdAt.
+-- Unindexed, that is a full sequential scan of "Message" — the fastest-growing
+-- table in the schema — every few minutes. Leading with "responseState" makes the
+-- scan proportional to the small set of in-flight responses instead of to message
+-- history; "createdAt" second serves both the age cutoff and the ordering.
+--
+-- Purely additive: creates an index only, no column or data changes.
+CREATE INDEX "Message_responseState_createdAt_idx" ON "Message"("responseState", "createdAt");

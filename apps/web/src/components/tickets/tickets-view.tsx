@@ -15,6 +15,7 @@ import { TicketSidebar } from './ticket-sidebar';
 import type { TicketSidebarHandle } from './ticket-sidebar';
 import { CreateTicketModal } from './create-ticket-modal';
 import { useTicketShortcuts } from '@/hooks/use-ticket-shortcuts';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface TicketsViewProps {
     ticketId?: string;
@@ -45,12 +46,12 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
 
     // Fetch accounts and team members on mount
     useEffect(() => {
-        fetch('/api/accounts')
+        apiFetch('/api/accounts')
             .then((res) => res.json())
             .then((data) => setAccounts(data.accounts ?? []))
             .catch(() => setAccounts([]));
 
-        fetch('/api/team')
+        apiFetch('/api/team')
             .then((res) => {
                 if (!res.ok) return [];
                 return res.json();
@@ -74,7 +75,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
         params.set('page', '1');
         params.set('pageSize', '50');
 
-        fetch(`/api/tickets?${params.toString()}`)
+        apiFetch(`/api/tickets?${params.toString()}`)
             .then((res) => res.json())
             .then((data) => {
                 setTickets(data.tickets ?? []);
@@ -90,7 +91,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             return;
         }
         setDetailLoading(true);
-        fetch(`/api/tickets/${ticketId}`)
+        apiFetch(`/api/tickets/${ticketId}`)
             .then((res) => {
                 if (!res.ok) throw new Error('Not found');
                 return res.json();
@@ -150,7 +151,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             };
         });
         setError(null);
-        fetch(`/api/tickets/${ticketId}`, {
+        apiFetch(`/api/tickets/${ticketId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: TicketStatus.CLOSED }),
@@ -210,7 +211,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
                 },
             }));
             // Persist to API
-            fetch(`/api/tickets/${selectedTicket.id}/messages`, {
+            apiFetch(`/api/tickets/${selectedTicket.id}/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content, type: MessageType.USER }),
@@ -276,7 +277,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             if ('type' in fields) patchable.type = fields.type;
 
             if (Object.keys(patchable).length > 0) {
-                fetch(`/api/tickets/${ticketId}`, {
+                apiFetch(`/api/tickets/${ticketId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(patchable),
@@ -317,7 +318,7 @@ export function TicketsView({ ticketId }: TicketsViewProps) {
             params.set('page', '1');
             params.set('pageSize', '50');
 
-            fetch(`/api/tickets?${params.toString()}`)
+            apiFetch(`/api/tickets?${params.toString()}`)
                 .then((res) => res.json())
                 .then((data) => setTickets(data.tickets ?? []))
                 .catch(() => {});

@@ -30,6 +30,7 @@ export type {
 export type {
     InboundHandlerConfig,
     CreateJobFn,
+    HandleOptions,
     InboundPrismaLike,
 } from './platforms/index.js';
 export type {
