@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import type Anthropic from '@anthropic-ai/sdk';
 import { LLMock } from '@copilotkit/aimock';
 import {
     GROUNDING_RULES,
     SYSTEM_PROMPT_PREFIX,
     ResponseGenerator,
     buildChannelGuidance,
+    extractResponseText,
 } from './generator.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
@@ -61,6 +63,83 @@ describe('ResponseGenerator', () => {
     });
 
     describe('generate', () => {
+        it('should extract text across response blocks when the first block is non-text', () => {
+            // Typed as the real union, no `as unknown` — the point of the fixture is
+            // that it is a response the SDK could actually hand us, and the cast was
+            // suppressing the check that proves it.
+            const content: Anthropic.ContentBlock[] = [
+                {
+                    type: 'tool_use',
+                    id: 'tool-1',
+                    name: 'lookup',
+                    input: {},
+                    caller: { type: 'direct' },
+                },
+                { type: 'text', text: 'First part', citations: null },
+                { type: 'text', text: 'and second part', citations: null },
+            ];
+
+            // Blank line, not concatenation: the blocks are separate emissions.
+            expect(extractResponseText(content)).toBe('First part\n\nand second part');
+            expect(extractResponseText([])).toBe('');
+        });
+
+        // The helper above is well covered on its own, but nothing drove a
+        // multi-block response through `generate()` — reverting the call site to
+        // first-block-only left the whole suite green, so a bad merge or a refactor
+        // could put the original defect back silently. #187 touches this same file.
+        it('should read past a leading thinking block when generating', async () => {
+            mock.onMessage(/./, {
+                content: 'Use useCopilotAction for that.',
+                reasoning: 'internal thinking that is not the answer',
+                usage: { input_tokens: 400, output_tokens: 80 },
+            });
+
+            const result = await generator.generate({ question: 'test' }, sampleSources);
+
+            // aimock puts the `thinking` block first, so first-block-only yields ''
+            // and this lands in the degraded fallback instead.
+            expect(result.text).toBe('Use useCopilotAction for that.');
+            expect(result.degraded).toBe(false);
+            expect(result.reasoning).not.toContain('no usable text');
+        });
+
+        // The `.trim()` half of the guard. Whitespace-only is the mode the API can
+        // realistically produce for this call shape, and it was the untested half:
+        // relaxing the check to `if (!responseText)` left the suite green, so a
+        // `"\n\n"` completion would publish at whatever the retrieval score was.
+        it('should return the safe fallback for a whitespace-only response', async () => {
+            mock.onMessage(/./, {
+                content: '   \n  ',
+                usage: { input_tokens: 100, output_tokens: 2 },
+            });
+
+            const result = await generator.generate({ question: 'test' }, sampleSources);
+
+            expect(result.text).toContain('unable to generate');
+            expect(result.degraded).toBe(true);
+            expect(result.reasoning).toContain('no usable text');
+        });
+
+        it('should return the safe fallback when the model produces no usable text', async () => {
+            mock.onMessage(/./, {
+                content: '',
+                usage: { input_tokens: 100, output_tokens: 0 },
+            });
+
+            const result = await generator.generate({ question: 'test' }, sampleSources);
+
+            expect(result.text).toContain('unable to generate');
+            expect(result.confidenceScore).toBe(0);
+            expect(result.degraded).toBe(true);
+            // Asserted on the reason, not just the fallback: an API error, a
+            // TypeError and this guard all land on the identical fallback text,
+            // so `text` alone can't tell them apart. This pins that the guard
+            // fired. It does not distinguish `content: ''` from a real
+            // `content: []` — both join to `''` and throw the same error.
+            expect(result.reasoning).toContain('no usable text');
+        });
+
         it('should generate a response with confidence scoring', async () => {
             mock.onMessage(/./, {
                 content: 'Here is how to use CopilotKit actions...',
@@ -88,14 +167,11 @@ describe('ResponseGenerator', () => {
 
             const highQualitySources: SearchResult[] = [
                 { title: 'A', content: 'Content A', score: 0.95 },
-                { title: 'B', content: 'Content B', score: 0.90 },
+                { title: 'B', content: 'Content B', score: 0.9 },
                 { title: 'C', content: 'Content C', score: 0.88 },
             ];
 
-            const result = await generator.generate(
-                { question: 'test' },
-                highQualitySources,
-            );
+            const result = await generator.generate({ question: 'test' }, highQualitySources);
 
             expect(result.confidenceLevel).toBe(ConfidenceLevel.HIGH);
         });
@@ -106,10 +182,7 @@ describe('ResponseGenerator', () => {
                 usage: { input_tokens: 100, output_tokens: 50 },
             });
 
-            const result = await generator.generate(
-                { question: 'test' },
-                [],
-            );
+            const result = await generator.generate({ question: 'test' }, []);
 
             expect(result.confidenceLevel).toBe(ConfidenceLevel.LOW);
         });
@@ -117,10 +190,7 @@ describe('ResponseGenerator', () => {
         it('should return graceful fallback on API error', async () => {
             mock.nextRequestError(429, { message: 'API rate limited' });
 
-            const result = await generator.generate(
-                { question: 'test' },
-                sampleSources,
-            );
+            const result = await generator.generate({ question: 'test' }, sampleSources);
 
             expect(result.text).toContain('unable to generate');
             expect(result.confidenceScore).toBe(0);
@@ -133,14 +203,10 @@ describe('ResponseGenerator', () => {
                 usage: { input_tokens: 200, output_tokens: 50 },
             });
 
-            await generator.generate(
-                { question: 'What about streaming?' },
-                sampleSources,
-                [
-                    { role: 'user', content: 'How do I use actions?' },
-                    { role: 'assistant', content: 'You use useCopilotAction...' },
-                ],
-            );
+            await generator.generate({ question: 'What about streaming?' }, sampleSources, [
+                { role: 'user', content: 'How do I use actions?' },
+                { role: 'assistant', content: 'You use useCopilotAction...' },
+            ]);
 
             // Verify the request contained conversation history
             const lastReq = mock.getLastRequest();
@@ -150,14 +216,22 @@ describe('ResponseGenerator', () => {
             const messages = body!.messages;
             // Should contain the history messages
             const allMessages = messages as Array<{ role: string; content: string | null }>;
-            const userMessages = allMessages.filter(m => m.role === 'user');
-            const assistantMessages = allMessages.filter(m => m.role === 'assistant');
-            expect(userMessages.some(m =>
-                typeof m.content === 'string' && m.content.includes('How do I use actions?')
-            )).toBe(true);
-            expect(assistantMessages.some(m =>
-                typeof m.content === 'string' && m.content.includes('You use useCopilotAction...')
-            )).toBe(true);
+            const userMessages = allMessages.filter((m) => m.role === 'user');
+            const assistantMessages = allMessages.filter((m) => m.role === 'assistant');
+            expect(
+                userMessages.some(
+                    (m) =>
+                        typeof m.content === 'string' &&
+                        m.content.includes('How do I use actions?'),
+                ),
+            ).toBe(true);
+            expect(
+                assistantMessages.some(
+                    (m) =>
+                        typeof m.content === 'string' &&
+                        m.content.includes('You use useCopilotAction...'),
+                ),
+            ).toBe(true);
         });
     });
 
@@ -263,10 +337,7 @@ describe('ResponseGenerator', () => {
             mock.nextRequestError(500, { message: 'Stream interrupted' });
 
             const chunks: string[] = [];
-            for await (const chunk of generator.generateStream(
-                { question: 'test' },
-                [],
-            )) {
+            for await (const chunk of generator.generateStream({ question: 'test' }, [])) {
                 chunks.push(chunk);
             }
 

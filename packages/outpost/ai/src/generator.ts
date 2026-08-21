@@ -51,14 +51,10 @@ ${GROUNDING_RULES}`;
 const CHANNEL_GUIDANCE: Record<PlatformTarget, string> = {
     discord:
         'This question was asked in the CopilotKit Discord. The user is ALREADY in Discord — never suggest they "join the Discord", never share a Discord invite link, and never tell them to ask in Discord. You may point them to the docs or GitHub if genuinely useful.',
-    github:
-        'This question was asked in a GitHub issue or discussion. The user is ALREADY on GitHub — never suggest they "open an issue", "file a bug report", or "open a GitHub discussion"; they already have. You may point them to the docs or Discord if genuinely useful.',
-    slack:
-        'This question was asked in Slack. The user is ALREADY in Slack — never suggest they reach out or ask again in Slack. You may point them to the docs, Discord, or GitHub if genuinely useful.',
-    teams:
-        'This question was asked in Microsoft Teams. The user is ALREADY in Teams — never suggest they reach out or ask again in Teams. You may point them to the docs, Discord, or GitHub if genuinely useful.',
-    web:
-        'This question was asked through the web support widget. Point the user to the docs, Discord, or GitHub if genuinely useful.',
+    github: 'This question was asked in a GitHub issue or discussion. The user is ALREADY on GitHub — never suggest they "open an issue", "file a bug report", or "open a GitHub discussion"; they already have. You may point them to the docs or Discord if genuinely useful.',
+    slack: 'This question was asked in Slack. The user is ALREADY in Slack — never suggest they reach out or ask again in Slack. You may point them to the docs, Discord, or GitHub if genuinely useful.',
+    teams: 'This question was asked in Microsoft Teams. The user is ALREADY in Teams — never suggest they reach out or ask again in Teams. You may point them to the docs, Discord, or GitHub if genuinely useful.',
+    web: 'This question was asked through the web support widget. Point the user to the docs, Discord, or GitHub if genuinely useful.',
 };
 
 /**
@@ -78,6 +74,23 @@ export function buildChannelGuidance(source?: PlatformTarget): string {
         guidance,
         'General rule: never redirect the user to the same channel they are already using to ask this question.',
     ].join('\n');
+}
+
+/**
+ * Extract all text blocks from an Anthropic response, in response order.
+ *
+ * Joined with a blank line rather than concatenated. Two text blocks are only
+ * ever adjacent because something non-text sat between them (a `tool_use`, a
+ * `thinking` block), which means they were separate emissions and not two halves
+ * of one sentence — concatenating them produces `...first step.Next you...`.
+ * Filtering explicitly rather than mapping non-text blocks to `''` is what makes
+ * the separator apply where it should and nowhere else.
+ */
+export function extractResponseText(content: Anthropic.ContentBlock[]): string {
+    return content
+        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n\n');
 }
 
 /**
@@ -119,8 +132,10 @@ export class ResponseGenerator {
                 messages,
             });
 
-            const responseText =
-                message.content[0].type === 'text' ? message.content[0].text : '';
+            const responseText = extractResponseText(message.content);
+            if (!responseText.trim()) {
+                throw new Error('Model response contained no usable text');
+            }
 
             const tokenUsage: TokenUsage = {
                 inputTokens: message.usage.input_tokens,
@@ -132,10 +147,7 @@ export class ResponseGenerator {
             // Assessed here (the response and its sources are both in hand) and
             // applied by the pipeline — exactly once.
             const groundedness = assessGroundedness(responseText, sources);
-            const confidenceLevel = this.classifyGroundedConfidence(
-                confidenceScore,
-                groundedness,
-            );
+            const confidenceLevel = this.classifyGroundedConfidence(confidenceScore, groundedness);
 
             return {
                 text: responseText,
@@ -188,10 +200,7 @@ export class ResponseGenerator {
             });
 
             for await (const event of stream) {
-                if (
-                    event.type === 'content_block_delta' &&
-                    event.delta.type === 'text_delta'
-                ) {
+                if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
                     yield event.delta.text;
                 }
             }
@@ -213,7 +222,8 @@ export class ResponseGenerator {
             buildChannelGuidance(source),
             '',
             '--- Documentation Context ---',
-            sourceContext || '(No relevant documentation found — answer from general CopilotKit knowledge if possible, otherwise say you need to escalate)',
+            sourceContext ||
+                '(No relevant documentation found — answer from general CopilotKit knowledge if possible, otherwise say you need to escalate)',
         ].join('\n');
     }
 
