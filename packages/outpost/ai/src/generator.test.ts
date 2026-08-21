@@ -132,9 +132,11 @@ describe('ResponseGenerator', () => {
             expect(result.text).toContain('unable to generate');
             expect(result.confidenceScore).toBe(0);
             expect(result.degraded).toBe(true);
-            // Asserted on the reason, not just the fallback: aimock builds
-            // `content: ''` as `[{type:'text', text:''}]`, but a real `content: []`
-            // would reach the same fallback via TypeError. This pins which one.
+            // Asserted on the reason, not just the fallback: an API error, a
+            // TypeError and this guard all land on the identical fallback text,
+            // so `text` alone can't tell them apart. This pins that the guard
+            // fired. It does not distinguish `content: ''` from a real
+            // `content: []` — both join to `''` and throw the same error.
             expect(result.reasoning).toContain('no usable text');
         });
 
