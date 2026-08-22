@@ -10,6 +10,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { SentimentResult, TokenUsage } from './types.js';
 import { SentimentLabel } from './types.js';
 import { config } from './config.js';
+import { samplingParams } from './model-capabilities.js';
+import { extractResponseText } from './generator.js';
 
 const SENTIMENT_SYSTEM_PROMPT = `You are a sentiment analyzer for a developer support platform. Analyze the provided messages and respond with ONLY a JSON object (no markdown, no explanation):
 
@@ -66,12 +68,12 @@ export async function analyzeSentiment(
         const response = await client.messages.create({
             model,
             max_tokens: config.maxSentimentTokens,
-            temperature: config.sentimentTemperature,
+            ...samplingParams(model, config.sentimentTemperature),
             system: SENTIMENT_SYSTEM_PROMPT,
             messages: [{ role: 'user', content: truncated }],
         });
 
-        const text = response.content[0].type === 'text' ? response.content[0].text : '';
+        const text = extractResponseText(response.content);
         const tokenUsage: TokenUsage = {
             inputTokens: response.usage.input_tokens,
             outputTokens: response.usage.output_tokens,

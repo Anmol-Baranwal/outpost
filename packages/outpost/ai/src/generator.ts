@@ -5,6 +5,7 @@ import { ConfidenceLevel, SUPPRESSED_CONFIDENCE_CAP, classifyConfidence } from '
 import type { GroundednessAssessment } from './groundedness.js';
 import { assessGroundedness } from './groundedness.js';
 import { config } from './config.js';
+import { samplingParams } from './model-capabilities.js';
 
 /**
  * Epistemic guardrails. The generator is a SINGLE stateless model call over
@@ -127,7 +128,7 @@ export class ResponseGenerator {
             const message = await this.client.messages.create({
                 model: this.model,
                 max_tokens: config.maxResponseTokens,
-                temperature: config.responseTemperature,
+                ...samplingParams(this.model, config.responseTemperature),
                 system: systemPrompt,
                 messages,
             });
@@ -194,7 +195,7 @@ export class ResponseGenerator {
             const stream = this.client.messages.stream({
                 model: this.model,
                 max_tokens: config.maxResponseTokens,
-                temperature: config.responseTemperature,
+                ...samplingParams(this.model, config.responseTemperature),
                 system: systemPrompt,
                 messages,
             });

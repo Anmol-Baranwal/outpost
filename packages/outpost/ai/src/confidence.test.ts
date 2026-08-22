@@ -51,6 +51,32 @@ describe('ConfidenceScorer', () => {
     });
 
     describe('score', () => {
+        // Same first-block-only defect as the classifier: with thinking on, the
+        // score JSON is the SECOND block, so the scorer fell back to its heuristic
+        // and the model's judgement was thrown away silently.
+        it('should read the score past a leading thinking block', async () => {
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    score: 0.9,
+                    level: 'HIGH',
+                    reasoning: 'Results directly address the question',
+                }),
+                reasoning: 'internal thinking that is not the score',
+                usage: { input_tokens: 200, output_tokens: 30 },
+            });
+
+            const result = await scorer.score(
+                'How do I use actions?',
+                'Here is how to use actions...',
+                highQualityResults,
+            );
+
+            // The exact score pins that the JSON parsed rather than the heuristic
+            // happening to land on the same level.
+            expect(result.score).toBe(0.9);
+            expect(result.level).toBe(ConfidenceLevel.HIGH);
+        });
+
         it('should return HIGH confidence for well-matched results', async () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({

@@ -38,6 +38,32 @@ describe('TicketClassifier', () => {
     });
 
     describe('classify', () => {
+        // Reading only content[0] made every thinking-first model silently useless
+        // here: the text block is second, `text` came out '', parseClassification
+        // found nothing, and the call degraded to the heuristic with no error. That
+        // is the shape of any request to a model with thinking on by default, which
+        // is what removing the temperature gate makes reachable.
+        it('should read past a leading thinking block', async () => {
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    priority: 'HIGH',
+                    type: 'BUG',
+                    tags: ['copilotkit-runtime'],
+                    reasoning: 'Error report with stack trace',
+                }),
+                reasoning: 'internal thinking that is not the classification',
+                usage: { input_tokens: 100, output_tokens: 40 },
+            });
+
+            const result = await classifier.classify(
+                'TypeError: Cannot read properties of undefined in CopilotRuntime.',
+            );
+
+            // BUG, not the heuristic's default: proves the JSON was actually parsed.
+            expect(result.type).toBe(TicketType.BUG);
+            expect(result.tags).toContain('copilotkit-runtime');
+        });
+
         it('should classify an error report as HIGH priority ISSUE', async () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({

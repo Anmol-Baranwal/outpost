@@ -55,6 +55,20 @@ describe('analyzeSentiment', () => {
         expect(result.tokenUsage.inputTokens).toBe(150);
     });
 
+    // Same first-block-only defect as the classifier and the scorer.
+    it('should read the score past a leading thinking block', async () => {
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 65, label: 'NEGATIVE' }),
+            reasoning: 'internal thinking that is not the score',
+            usage: { input_tokens: 200, output_tokens: 20 },
+        });
+
+        const result = await analyzeSentiment(['This is still broken.'], { apiKey: 'test-key' });
+
+        expect(result.score).toBe(65);
+        expect(result.label).toBe(SentimentLabel.NEGATIVE);
+    });
+
     it('should classify negative messages correctly', async () => {
         mock.onMessage(/./, {
             content: JSON.stringify({ score: 65, label: 'NEGATIVE' }),
