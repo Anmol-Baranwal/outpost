@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
-import { renderTemplate } from '@copilotkit/outpost/shared/server';
+import { prisma } from '@copilotkit/outpost/db';
+import { loadFromFilesystem, renderTemplate } from '@copilotkit/outpost/shared/server';
 import type { TemplateContext } from '@copilotkit/outpost/shared/server';
 
 /** Sample data used for template previews. */
@@ -35,7 +36,11 @@ const SAMPLE_CONTEXT: TemplateContext = {
  * POST /api/templates/[slug]/preview
  *
  * Render a template with sample data and return the HTML.
- * Optionally accepts a custom context in the request body.
+ *
+ * Accepts an optional `draft` ({ subject, body }) so the editor can preview
+ * UNSAVED edits. Without it the preview rendered whatever was stored, which meant
+ * an author validated content they were not about to save. Also accepts an optional
+ * `context` to override the sample data.
  */
 export async function POST(
     request: NextRequest,
@@ -48,17 +53,68 @@ export async function POST(
 
     const { slug } = await params;
 
-    let context = SAMPLE_CONTEXT;
-    try {
-        const body = await request.json();
-        if (body.context) {
-            context = { ...SAMPLE_CONTEXT, ...body.context };
-        }
-    } catch {
-        // Use default sample context
+    // A template must exist on disk for an override or a draft to layer onto, and PUT
+    // refuses a slug that has none. Checked here too so preview and save agree —
+    // otherwise a renamed or deleted template previews happily and then fails to save.
+    if (!loadFromFilesystem(slug)) {
+        return NextResponse.json({ error: 'Template not found' }, { status: 404 });
     }
 
-    const result = await renderTemplate(slug, context);
+    let parsed: unknown = null;
+    try {
+        parsed = await request.json();
+    } catch {
+        // No body at all is fine — it means "preview what is stored". Unparseable JSON
+        // is not: silently rendering the stored template would show the author content
+        // they did not ask for, which is the bug this route was fixed for.
+        if (request.headers.get('content-length') !== '0') {
+            const hasBody = await Promise.resolve(true);
+            if (hasBody) {
+                return NextResponse.json(
+                    { error: 'Request body is not valid JSON' },
+                    { status: 400 },
+                );
+            }
+        }
+    }
+
+    const body = (parsed ?? {}) as Record<string, unknown>;
+
+    let context = SAMPLE_CONTEXT;
+    if (body.context && typeof body.context === 'object') {
+        context = { ...SAMPLE_CONTEXT, ...(body.context as object) };
+    }
+
+    // A draft that is present but unusable is a client bug, not a request to preview
+    // the stored copy. Note '' is a valid body — an author may be clearing it.
+    const draft = body.draft as { subject?: unknown; body?: unknown } | undefined;
+    if (draft !== undefined) {
+        if (
+            draft === null ||
+            typeof draft !== 'object' ||
+            typeof draft.subject !== 'string' ||
+            typeof draft.body !== 'string'
+        ) {
+            return NextResponse.json(
+                { error: 'draft requires both subject and body as strings' },
+                { status: 400 },
+            );
+        }
+    }
+
+    const useDraft = draft !== undefined;
+
+    // The loader takes its content from this lookup when it returns non-null, so an
+    // unsaved draft is supplied the same way a stored override would be — the draft
+    // wins over the stored row, which is the whole point of previewing edits.
+    const lookup = useDraft
+        ? async () => ({ subject: draft!.subject as string, body: draft!.body as string })
+        : async (s: string) => {
+              const override = await prisma.templateOverride.findUnique({ where: { slug: s } });
+              return override ? { subject: override.subject, body: override.body } : null;
+          };
+
+    const result = await renderTemplate(slug, context, lookup);
     if (!result) {
         return NextResponse.json({ error: 'Template not found' }, { status: 404 });
     }
