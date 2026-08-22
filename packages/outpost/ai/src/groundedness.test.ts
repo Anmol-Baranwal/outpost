@@ -103,6 +103,27 @@ describe('extractCopilotKitIdentifiers', () => {
         ).toEqual(['copilot-chat', 'copilotSidebarPanel']);
     });
 
+    // #234. The class-selector case above passed only because `split('.')` happened
+    // to strip the prefix; `#` had no such path, so an ID selector reached the
+    // grounding lookup with its prefix attached. Grounding is a substring check,
+    // so `#copilotkitpanel` could never match a source writing `copilotKitPanel` —
+    // the one spelling the docs actually use.
+    it('strips a leading ID-selector prefix from a backticked name', () => {
+        expect(extractCopilotKitIdentifiers('Target `#copilotKitPanel` to move it.')).toEqual([
+            'copilotKitPanel',
+        ]);
+    });
+
+    it('treats the ID and class spellings of one name as the same identifier', () => {
+        // Both forms case-fold to one key, so a single name cannot fill two of the
+        // two threshold slots on its own.
+        expect(
+            extractCopilotKitIdentifiers(
+                'Give the node `#copilotKitPanel` and style `.copilotKitPanel`.',
+            ),
+        ).toEqual(['copilotKitPanel']);
+    });
+
     it('unwraps a JSX component that carries props', () => {
         // A model writing a fabricated component almost always gives it props, so
         // the prop-less-only form was the least likely spelling to appear.
@@ -248,6 +269,18 @@ describe('extractCopilotKitIdentifiers', () => {
 });
 
 describe('assessGroundedness', () => {
+    // #234, the consequence that matters: two ID selectors the sources DO contain
+    // suppressed a correct answer outright, with nothing logged.
+    it('does not suppress ID-selector names the sources actually contain', () => {
+        const result = assessGroundedness(
+            'Target `#copilotKitPanel` and `#copilotKitSidebar` to reposition it.',
+            [source('Set copilotKitPanel and copilotKitSidebar on the wrapper nodes.')],
+        );
+        expect(result.unsourcedIdentifiers).toEqual([]);
+        expect(result.suppress).toBe(false);
+        expect(result.penalty).toBe(0);
+    });
+
     it('gives a grounded answer no penalty and does not suppress it', () => {
         const response =
             'You can replace the chat input with the `input` prop on the `CopilotChat` component. ' +
