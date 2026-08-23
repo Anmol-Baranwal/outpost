@@ -47,4 +47,8 @@ export type {
     TopIssueInput,
     ScoredTopIssue,
 } from './front-door.js';
+export { checkReply, RULES, HANDOFF_WORD_CAP } from './eval/rules.js';
+export type { RuleId, RuleResult } from './eval/rules.js';
+export { scoreCases, formatReport, HISTORICAL_FAILURES, TARGET_SHAPE } from './eval/harness.js';
+export type { EvalCase, CaseScore, EvalReport } from './eval/harness.js';
 export * from './types.js';
