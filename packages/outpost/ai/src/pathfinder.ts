@@ -2,7 +2,35 @@ import type { SearchResult, PathfinderQuery } from './types.js';
 import { config } from './config.js';
 
 /**
- * Pathfinder MCP client for CopilotKit documentation retrieval.
+ * Turn a code hit's REPOSITORY + PATH into a link a reader can open.
+ *
+ * The doc is explicit that this matters: *"if the answer only exists in the
+ * source, link the file in the repo. A repo link is a real answer; a non-answer
+ * is not."* Without a URL a code-sourced answer has nothing to cite, and the
+ * reply rules then require it to collapse into a two-sentence handoff — so the
+ * retrieval would succeed and the answer would still be withheld.
+ *
+ * Assumes the default branch is `main`, which holds for CopilotKit/CopilotKit
+ * and ag-ui-protocol/ag-ui. A blob URL on a wrong branch 404s rather than
+ * pointing somewhere misleading, and the tool response carries no ref, so this
+ * is the best available and fails visibly.
+ */
+function blobUrl(repository: string | undefined, path: string | undefined): string | undefined {
+    if (!repository || !path) return undefined;
+    const repo = repository.replace(/\.git$/, '').replace(/\/$/, '');
+    if (!/^https?:\/\/github\.com\//i.test(repo)) return undefined;
+    return `${repo}/blob/main/${path.replace(/^\/+/, '')}`;
+}
+
+/**
+ * The Pathfinder search tools, verified against `tools/list` on
+ * https://mcp.copilotkit.ai/mcp. All four take the same arguments
+ * (`query`, `limit`, `min_score`, `version`).
+ */
+type SearchTool = 'search-docs' | 'search-code' | 'search-ag-ui-docs' | 'search-ag-ui-code';
+
+/**
+ * Pathfinder MCP client for CopilotKit + AG-UI retrieval, over docs AND source.
  *
  * Uses the MCP **Streamable HTTP** transport: a single `POST {mcpUrl}/mcp`
  * endpoint. The session id is returned in the `Mcp-Session-Id` response header
@@ -262,11 +290,31 @@ export class PathfinderClient {
         const blocks = text
             .split(/^SNIPPET\s+\d+\s*$/im)
             .map((b) => b.trim())
-            .filter((b) => /TITLE:/i.test(b));
+            // A docs block carries TITLE, a code block carries PATH and no TITLE.
+            // Requiring TITLE alone silently dropped every code hit, so
+            // `searchCode` returned [] while looking like it had worked.
+            .filter((b) => /TITLE:/i.test(b) || /PATH:/i.test(b));
 
         return blocks.map((block, i) => {
-            const title = block.match(/TITLE:\s*(.+)/i)?.[1]?.trim() ?? 'Documentation';
-            const source = block.match(/SOURCE:\s*(.+)/i)?.[1]?.trim();
+            // Every header match is anchored to the start of a line. Unanchored,
+            // these read the FIRST `title:`/`source:` anywhere in the block — and
+            // a code block's body is source code, where `title: "Chat"` and
+            // `source: 'user'` are everyday object literals. A retrieved
+            // run-handler.ts came back with title `"Chat", source: 'user' };` and
+            // sourceUrl `'user' };`, which went into the prompt as
+            // `[Source 1: "Chat", source: 'user' };] URL: 'user' };` and buried
+            // the file path the reply was supposed to cite.
+            const path = block.match(/^\s*PATH:\s*(.+)$/im)?.[1]?.trim();
+            const repository = block.match(/^\s*REPOSITORY:\s*(.+)$/im)?.[1]?.trim();
+
+            // A code block is identified by PATH, and for one the path IS the
+            // title — checked before TITLE so an in-content `title:` that slipped
+            // past the anchor still cannot outrank the real header.
+            const title =
+                path ?? block.match(/^\s*TITLE:\s*(.+)$/im)?.[1]?.trim() ?? 'Documentation';
+            const source = path
+                ? blobUrl(repository, path)
+                : block.match(/^\s*SOURCE:\s*(.+)$/im)?.[1]?.trim();
             const contentMatch = block.match(/CONTENT:\s*([\s\S]*)$/i);
             const content = (contentMatch ? contentMatch[1] : block)
                 // Strip the trailing "---" separator that precedes the next snippet.
@@ -281,6 +329,54 @@ export class PathfinderClient {
                 category: undefined,
             };
         });
+    }
+
+    /**
+     * The four search tools share one schema, so they share one implementation.
+     *
+     * Kept private with named wrappers rather than exposed as a tool-name
+     * parameter: a caller passing an unknown name would fail at the wire with a
+     * JSON-RPC error that this class swallows into [], which is the silent
+     * no-retrieval failure mode this whole change exists to remove.
+     */
+    private async search(tool: SearchTool, query: PathfinderQuery): Promise<SearchResult[]> {
+        try {
+            const result = await this.callTool(tool, {
+                query: query.query,
+                limit: query.limit ?? config.pathfinder.defaultLimit,
+                min_score: query.minScore ?? config.pathfinder.defaultMinScore,
+            });
+            return this.parseSearchResults(result);
+        } catch (error) {
+            console.error(
+                `[Pathfinder] ${tool} failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return [];
+        }
+    }
+
+    /**
+     * Search CopilotKit's SOURCE, not its docs.
+     *
+     * The gap this closes: for any question whose answer lives in the code —
+     * most of the hard ones — the agent had only the docs and was otherwise
+     * guessing from general React knowledge. A reporter asked whether Deep
+     * Agents supports subagents; the docs do not mention it, so the agent said
+     * it had no timeline and sent them to GitHub to ask. Subagents work today
+     * and one code search returns the proof.
+     */
+    async searchCode(query: PathfinderQuery): Promise<SearchResult[]> {
+        return this.search('search-code', query);
+    }
+
+    /** Search AG-UI's source. Same reasoning as `searchCode`, other repo. */
+    async searchAgUiCode(query: PathfinderQuery): Promise<SearchResult[]> {
+        return this.search('search-ag-ui-code', query);
+    }
+
+    /** Search AG-UI's docs. */
+    async searchAgUiDocs(query: PathfinderQuery): Promise<SearchResult[]> {
+        return this.search('search-ag-ui-docs', query);
     }
 
     /**

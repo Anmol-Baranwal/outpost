@@ -272,13 +272,40 @@ describe('ResponseGenerator', () => {
 
     // Regression for CopilotKit/CopilotKit#6167: the bot posted "Bug Confirmed"
     // with invented CSS class names for a report it never reproduced. The
-    // generator is a single stateless call over docs search — it has no repo
-    // access and runs no tests — so the prompt has to forbid those claims.
+    // The generator is a single stateless call over retrieval results. It now
+    // receives SOURCE CODE as well as docs, so the boundary the prompt has to
+    // draw moved: retrieved code is fair to cite, un-retrieved files are not, and
+    // a repro or a test run is still something it cannot do.
     describe('GROUNDING_RULES', () => {
-        it('states the model has not read source, reproduced, or tested', () => {
-            expect(GROUNDING_RULES).toContain('have NOT read');
+        it('states the model has not reproduced or tested, and has read only what was retrieved', () => {
             expect(GROUNDING_RULES).toContain('reproduced');
             expect(GROUNDING_RULES).toContain('run any test');
+            expect(GROUNDING_RULES).toContain('not read any file that is not in the Documentation Context');
+        });
+
+        // The regression guard that matters. This exact instruction was in the
+        // prompt while retrieval was docs-only, and it is what told the model to
+        // disclaim the best evidence it had once code search landed — the reason a
+        // reporter was told a shipped feature had no timeline. If it comes back,
+        // code search is silently neutered again.
+        it('no longer claims the model cannot read the source at all', () => {
+            expect(GROUNDING_RULES).not.toContain("have NOT read CopilotKit's source code");
+        });
+
+        it('allows citing retrieved code, since that is now in the context', () => {
+            expect(GROUNDING_RULES).toContain('SOURCE CODE');
+            expect(GROUNDING_RULES).toContain('cite the file');
+        });
+
+        // "Docs silence != feature missing" — the rule that stops the case-A
+        // failure, where the docs not mentioning subagents became "not supported".
+        it('forbids reading documentation silence as absence', () => {
+            expect(GROUNDING_RULES).toContain('Documentation silence is not evidence');
+            expect(GROUNDING_RULES).toContain('not supported');
+        });
+
+        it('resolves a code/docs conflict in favour of the code', () => {
+            expect(GROUNDING_RULES).toContain('the code is what ships');
         });
 
         it('forbids confirming a bug or asserting a root cause', () => {

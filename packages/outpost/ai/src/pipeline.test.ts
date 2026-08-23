@@ -11,6 +11,7 @@ vi.mock('./config.js', () => ({
         maxResponseTokens: 2048,
         responseTemperature: 0.3,
         confidence: { highThreshold: 0.8, mediumThreshold: 0.5 },
+        pathfinder: { defaultLimit: 8, defaultMinScore: 0.3 },
     },
     validateConfig: vi.fn(),
 }));
@@ -24,6 +25,7 @@ import type { ConfidenceAssessment } from './confidence.js';
 
 // Create mock instances
 const mockSearchDocs = vi.fn();
+const mockSearchCode = vi.fn();
 const mockDisconnect = vi.fn();
 const mockGenerate = vi.fn();
 const mockGenerateStream = vi.fn();
@@ -37,6 +39,9 @@ function createPipeline() {
     return new AIPipeline({
         pathfinder: {
             searchDocs: mockSearchDocs,
+            searchCode: mockSearchCode,
+            searchAgUiDocs: vi.fn(),
+            searchAgUiCode: vi.fn(),
             exploreDocs: vi.fn(),
             queryKnowledgeBase: vi.fn(),
             disconnect: mockDisconnect,
@@ -96,11 +101,148 @@ describe('AIPipeline', () => {
 
         // Set up defaults
         mockSearchDocs.mockResolvedValue(sampleSearchResults);
+        mockSearchCode.mockResolvedValue([]);
         mockGenerate.mockResolvedValue(sampleGeneratedResponse);
         mockScore.mockResolvedValue(sampleConfidence);
         mockFormat.mockReturnValue({
             text: 'Formatted response',
             truncated: false,
+        });
+    });
+
+    // Phase 2: retrieval reads the SOURCE as well as the docs. Until this, only
+    // searchDocs ran, so any question whose answer lived in the code had nothing
+    // behind it and the answer came from general framework priors.
+    describe('retrieval over docs and code', () => {
+        const docHit = (title: string): SearchResult => ({
+            title,
+            content: `docs content for ${title}`,
+            score: 0.9,
+            sourceUrl: `https://docs.copilotkit.ai/${title}`,
+        });
+        const codeHit = (path: string): SearchResult => ({
+            title: path,
+            content: `code content for ${path}`,
+            score: 0.9,
+            sourceUrl: `https://github.com/CopilotKit/CopilotKit/blob/main/${path}`,
+        });
+
+        it('queries both docs and code for the same question', async () => {
+            mockSearchDocs.mockResolvedValue([docHit('a')]);
+            mockSearchCode.mockResolvedValue([codeHit('p/a.ts')]);
+
+            await createPipeline().generateSupportResponse('does it support subagents?', {
+                source: undefined,
+            } as never);
+
+            expect(mockSearchDocs).toHaveBeenCalledWith({ query: 'does it support subagents?' });
+            expect(mockSearchCode).toHaveBeenCalledWith({ query: 'does it support subagents?' });
+        });
+
+        it('hands the generator both sources, interleaved so neither is buried', async () => {
+            mockSearchDocs.mockResolvedValue([docHit('a'), docHit('b')]);
+            mockSearchCode.mockResolvedValue([codeHit('p/a.ts'), codeHit('p/b.ts')]);
+
+            await createPipeline().generateSupportResponse('q', { source: undefined } as never);
+
+            const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
+            // Code leads, per the stated source-first precedence, and the two
+            // alternate rather than concatenating — the merged list is capped
+            // before it reaches the prompt, so concatenating would let weak docs
+            // hits push the file that actually answers the question off the end.
+            expect(sources.map((s) => s.title)).toEqual(['p/a.ts', 'a', 'p/b.ts', 'b']);
+        });
+
+        it('keeps the longer list when the two are uneven', async () => {
+            mockSearchDocs.mockResolvedValue([docHit('a')]);
+            mockSearchCode.mockResolvedValue([codeHit('p/a.ts'), codeHit('p/b.ts')]);
+
+            await createPipeline().generateSupportResponse('q', { source: undefined } as never);
+
+            const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
+            expect(sources.map((s) => s.title)).toEqual(['p/a.ts', 'a', 'p/b.ts']);
+        });
+
+        it('still answers from docs when the code search comes back empty', async () => {
+            mockSearchDocs.mockResolvedValue([docHit('a')]);
+            mockSearchCode.mockResolvedValue([]);
+
+            await createPipeline().generateSupportResponse('q', { source: undefined } as never);
+
+            const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
+            expect(sources.map((s) => s.title)).toEqual(['a']);
+        });
+
+        // The first version of this used Promise.all, which rejects on the first
+        // failure — so a code-index outage threw away perfectly good docs results
+        // and the answer was built from nothing. Whichever source survives is
+        // worth more than symmetry.
+        it('keeps the docs results when the code search rejects', async () => {
+            mockSearchDocs.mockResolvedValue([docHit('a')]);
+            mockSearchCode.mockRejectedValue(new Error('code index unavailable'));
+
+            await createPipeline().generateSupportResponse('q', { source: undefined } as never);
+
+            const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
+            expect(sources.map((s) => s.title)).toEqual(['a']);
+        });
+
+        it('keeps the code results when the docs search rejects', async () => {
+            mockSearchDocs.mockRejectedValue(new Error('docs index unavailable'));
+            mockSearchCode.mockResolvedValue([codeHit('p/a.ts')]);
+
+            await createPipeline().generateSupportResponse('q', { source: undefined } as never);
+
+            const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
+            expect(sources.map((s) => s.title)).toEqual(['p/a.ts']);
+        });
+
+        it('answers with no sources only when both reject', async () => {
+            mockSearchDocs.mockRejectedValue(new Error('down'));
+            mockSearchCode.mockRejectedValue(new Error('down'));
+
+            await expect(
+                createPipeline().generateSupportResponse('q', { source: undefined } as never),
+            ).resolves.toBeDefined();
+
+            expect(mockGenerate.mock.calls[0][1]).toEqual([]);
+        });
+
+        // Two tools at defaultLimit each meant the prompt could carry twice the
+        // sources it did before, and code snippets are line-numbered file
+        // excerpts far larger than doc snippets — so input tokens per ticket
+        // roughly doubled, with a real path to a context-length error that lands
+        // in the generator's catch and publishes the apology fallback.
+        // The pipeline's contract is that it never crashes. allSettled reports a
+        // non-promise or an undefined return as *fulfilled*, so a client that
+        // answers with anything but an array used to reach the merge and throw on
+        // .length — taking down the one path that must always produce an answer.
+        it('survives a client that returns something other than an array', async () => {
+            mockSearchDocs.mockResolvedValue(undefined as never);
+            mockSearchCode.mockResolvedValue([codeHit('p/a.ts')]);
+
+            await expect(
+                createPipeline().generateSupportResponse('q', { source: undefined } as never),
+            ).resolves.toBeDefined();
+
+            const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
+            expect(sources.map((s) => s.title)).toEqual(['p/a.ts']);
+        });
+
+        it('caps the merged list so the prompt cannot silently double', async () => {
+            mockSearchDocs.mockResolvedValue(
+                Array.from({ length: 8 }, (_, i) => docHit(`d${i}`)),
+            );
+            mockSearchCode.mockResolvedValue(
+                Array.from({ length: 8 }, (_, i) => codeHit(`p/c${i}.ts`)),
+            );
+
+            await createPipeline().generateSupportResponse('q', { source: undefined } as never);
+
+            const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
+            expect(sources).toHaveLength(8);
+            // Still both sources represented, not eight of one.
+            expect(sources.filter((s) => s.title.startsWith('p/'))).toHaveLength(4);
         });
     });
 

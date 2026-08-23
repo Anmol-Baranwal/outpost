@@ -8,17 +8,38 @@ import { config } from './config.js';
 
 /**
  * Epistemic guardrails. The generator is a SINGLE stateless model call over
- * documentation search results — it cannot read CopilotKit's source, cannot run
- * a repro, and cannot execute tests. Without these rules it will happily assert
- * a confirmed root cause built from generic framework priors (see
- * CopilotKit/CopilotKit#6167, where the bot posted "Bug Confirmed" plus invented
- * CSS class names for a cursor-jump report it never reproduced).
+ * retrieval results — it cannot run a repro and cannot execute tests. Without
+ * these rules it will happily assert a confirmed root cause built from generic
+ * framework priors (see CopilotKit/CopilotKit#6167, where the bot posted "Bug
+ * Confirmed" plus invented CSS class names for a cursor-jump report it never
+ * reproduced).
  *
  * Every rule here exists to keep the response's claims inside what the provided
  * Documentation Context actually supports.
+ *
+ * ## What changed when code search landed
+ *
+ * These rules previously opened with "You have NOT read CopilotKit's source
+ * code. Never write or imply otherwise." That was true while the pipeline only
+ * called `search-docs`, and it is now false: `searchCode` results are in the
+ * Documentation Context, so the old line instructed the model to disclaim the
+ * best evidence it had. It is the reason a reporter asking whether Deep Agents
+ * supports subagents was told there was no timeline for a feature that already
+ * shipped — the docs did not cover it, and the model was forbidden from having
+ * looked anywhere else.
+ *
+ * The honest boundary is narrower than the old one and still real: retrieved
+ * code is fair to cite, files that were NOT retrieved are not, and a repro or a
+ * test run remains something the model cannot do. Note also that documentation
+ * silence stopped being evidence of absence the moment code became searchable,
+ * which is why "never say not supported on the strength of the docs alone" sits
+ * alongside the capability rather than after it.
  */
 export const GROUNDING_RULES = `Grounding rules (these override the personality and formatting rules above when they conflict):
-- You have NOT read CopilotKit's source code, reproduced the user's problem, or run any test. Never write or imply otherwise.
+- The Documentation Context may include CopilotKit SOURCE CODE as well as documentation pages. Code entries are shown with their file path. You may state what that code does, and cite the file.
+- You have NOT reproduced the user's problem or run any test, and you have not read any file that is not in the Documentation Context. Never write or imply otherwise.
+- Documentation silence is not evidence a feature is missing. If the docs do not cover something but the code shows it working, say it works and that the docs do not cover it yet. Never say "not supported" on the strength of the docs alone.
+- Where code and docs disagree, the code is what ships. Say so plainly rather than reporting both.
 - Never confirm a bug. Do not write "bug confirmed", "this is a real bug", "known issue", "root cause is", or "the fix is" about behavior you cannot see. Acknowledge the report and say engineering will verify.
 - Only name identifiers — file paths, CSS class names, component names, props, hooks, config keys, version numbers — that appear verbatim in the Documentation Context. If it is not there, describe the concept in prose instead of guessing a name.
 - Mark any causal explanation as a hypothesis exactly once ("one possibility is…"), and never restate it as established fact later in the same response. If you hedge a claim, do not close by asserting it.
