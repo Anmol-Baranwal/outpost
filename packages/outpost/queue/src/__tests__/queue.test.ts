@@ -679,6 +679,156 @@ describe('Worker', () => {
         expect(progressCall).toBeDefined();
     });
 
+    // The sweep is the only thing standing between a crashed claim and a row that
+    // is PROCESSING forever, and it is also the first `await` in every poll. Both
+    // properties are load-bearing and neither was pinned.
+    describe('the reclaim sweep', () => {
+        let warn: ReturnType<typeof vi.spyOn>;
+        let error: ReturnType<typeof vi.spyOn>;
+
+        beforeEach(() => {
+            warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        });
+
+        afterEach(() => {
+            warn.mockRestore();
+            error.mockRestore();
+        });
+
+        it('cannot stop the worker claiming when it fails', async () => {
+            // The sweep runs ahead of every claim in the same `try`, and
+            // `lastPollTime` is already set by then. Without its own catch, one
+            // failing sweep ends all claiming while `healthCheck()` still reports
+            // healthy: a total outage with nothing to restart it. Recovering
+            // abandoned work is a nice-to-have; claiming new work is the job.
+            mockPrisma.$executeRaw.mockRejectedValueOnce(new Error('reclaim exploded'));
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // The claim ran anyway. This is the assertion that dies if the
+            // try/catch around the sweep is deleted.
+            expect(mockPrisma.$queryRaw).toHaveBeenCalled();
+
+            // And it is not a silent recovery.
+            const logged = error.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+            expect(logged).toContain('Reclaim sweep failed');
+        });
+
+        it('keeps lockUntil bare on one side so the index can serve the predicate', async () => {
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const reclaimSql = mockPrisma.$executeRaw.mock.calls[0][0].join(' ');
+            const where = reclaimSql.slice(reclaimSql.indexOf("WHERE job.status = 'PROCESSING'"));
+
+            // `Job_status_lockUntil_idx` exists for this predicate. A `CASE` over
+            // the column is not sargable, so the planner would take the `status`
+            // prefix and then filter every PROCESSING row — the index would be
+            // there and unusable, which is worse than not adding it.
+            expect(where).not.toContain('CASE');
+            expect(where).toContain('job."lockUntil"');
+
+            // Same reason, one level down: the interval arithmetic has to sit on
+            // the right-hand side. `lockUntil + interval < NOW()` is a disjunction
+            // and still non-sargable.
+            expect(where).toContain('< NOW() -');
+            expect(where).not.toMatch(/job\."lockUntil"\s*\+/);
+            expect(where).not.toMatch(/job\."lockedAt"\s*\+/);
+        });
+
+        it('consumes an attempt, so a crash-looping job still reaches DEAD_LETTER', async () => {
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const reclaimSql = mockPrisma.$executeRaw.mock.calls[0][0].join(' ');
+
+            // Asserting the `SET` fragment specifically. A bare
+            // `toContain('job."attempts" + 1')` is satisfied by the occurrences in
+            // the `status`, `completedAt` and `runAt` arms, so mutating the
+            // assignment to `"attempts" = job."attempts"` walks straight past it —
+            // and a job that never accrues an attempt is reclaimed forever.
+            expect(reclaimSql).toContain('"attempts" = job."attempts" + 1');
+        });
+
+        it("is blind to job type, so no replica can strand another replica's work", async () => {
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const reclaimSql = mockPrisma.$executeRaw.mock.calls[0][0].join(' ');
+
+            // `lockUntil` makes the row self-describing, so nothing about the type
+            // is needed to tell that a claim has expired. Asserting the absence of
+            // any type reference rather than one spelling of the old predicate:
+            // `AND job.type = ANY(...)` would have satisfied the previous guard,
+            // and it reintroduces the bug where a crashed claim of a type this
+            // replica does not register sits PROCESSING forever.
+            expect(reclaimSql).not.toContain('job.type');
+            expect(reclaimSql).not.toContain('"Job".type');
+        });
+    });
+
+    // Every release path has to clear the deadline it set. Inert while the
+    // predicate gates on `status = 'PROCESSING'`, but the first future path that
+    // sets PROCESSING without writing a fresh `lockUntil` inherits a deadline
+    // already in the past and gets reclaimed mid-flight.
+    describe('releasing a claim clears its deadline', () => {
+        const releaseData = (status: string) =>
+            mockPrismaJob.updateMany.mock.calls
+                .map((call: Array<{ data: Record<string, unknown> }>) => call[0].data)
+                .find((data: Record<string, unknown>) => data.status === status);
+
+        it('clears lockUntil when a job completes', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow()]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(releaseData('COMPLETED')).toMatchObject({ lockUntil: null });
+        });
+
+        it('clears lockUntil when a job is scheduled for retry', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow({ attempts: 1 })]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+
+            worker.on(JobType.AI_RESPONSE, async () => ({
+                success: false,
+                error: 'transient',
+            }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(releaseData('PENDING')).toMatchObject({ lockUntil: null });
+        });
+
+        it('clears lockUntil when a job is dead-lettered', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([
+                makeJobRow({ attempts: 4, maxAttempts: 5 }),
+            ]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+
+            worker.on(JobType.AI_RESPONSE, async () => ({
+                success: false,
+                error: 'permanently broken',
+            }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(releaseData('DEAD_LETTER')).toMatchObject({ lockUntil: null });
+        });
+    });
+
     // A fenced write means two executions of the same row overlapped — the exact
     // event the claim token exists to produce. Before these, changing both
     // `count > 0` checks to `count >= 0` passed the whole suite: the fence fired
@@ -751,6 +901,35 @@ describe('Worker', () => {
             expect(fencedMessages()).toContain('dead-letter write was fenced');
         });
 
+        it('warns when the no-handler tombstone is fenced', async () => {
+            // The fifth fenced write in the file, and the last one that was still
+            // silent. It also clears the claim, so a fenced tombstone means some
+            // other execution owns a row this one just tried to mark FAILED.
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow({ type: JobType.SLA_CHECK })]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+            mockPrismaJob.updateMany.mockResolvedValue({ count: 0 });
+
+            // No handler registered for SLA_CHECK on this worker.
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(fencedMessages()).toContain('no-handler failure');
+            expect(fencedMessages()).toContain('ran more than once');
+        });
+
+        it('clears lockUntil on the no-handler tombstone', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow({ type: JobType.SLA_CHECK })]);
+            mockPrisma.$queryRaw.mockResolvedValue([]);
+
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const tombstone = mockPrismaJob.updateMany.mock.calls
+                .map((call: Array<{ data: Record<string, unknown> }>) => call[0].data)
+                .find((data: Record<string, unknown>) => data.status === 'FAILED');
+            expect(tombstone).toMatchObject({ lockUntil: null });
+        });
+
         it('warns when a progress report is fenced', async () => {
             mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow()]);
             mockPrisma.$queryRaw.mockResolvedValue([]);
@@ -767,6 +946,56 @@ describe('Worker', () => {
             // the handler is still running.
             expect(fencedMessages()).toContain('Progress update for job job-1 was fenced');
         });
+    });
+});
+
+// `LEGACY_RECLAIM_CEILING_MS` is fixed on purpose — deriving it from the observing
+// worker's config is the bug `lockUntil` was added to remove. But fixed means it
+// does not follow `jobTimeouts` upward, and the two live in different packages, so
+// nothing else would notice them drifting apart.
+describe('Worker legacy-reclaim ceiling guard', () => {
+    let warn: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        warn.mockRestore();
+    });
+
+    const warnings = () => warn.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+
+    it('stays quiet for the timeouts the worker actually ships with', () => {
+        // apps/worker/src/index.ts: the two longest are HUBSPOT_SYNC and
+        // ACCOUNT_SCORING, tied at 300s. 300_000 + 30_000 grace < 900_000.
+        new Worker({
+            defaultTimeoutMs: 30_000,
+            jobTimeouts: {
+                [JobType.AI_RESPONSE]: 120_000,
+                [JobType.HUBSPOT_SYNC]: 300_000,
+                [JobType.ACCOUNT_SCORING]: 300_000,
+            },
+        });
+
+        expect(warnings()).not.toContain('LEGACY_RECLAIM_CEILING_MS');
+    });
+
+    it('says so when a configured timeout outgrows the ceiling', () => {
+        // During the one rollout where rows still carry a NULL `lockUntil`, a
+        // timeout this long means the sweep calls a live claim abandoned and the
+        // original execution's completion is fenced out and discarded.
+        new Worker({ jobTimeouts: { [JobType.HUBSPOT_SYNC]: 1_200_000 } });
+
+        expect(warnings()).toContain('LEGACY_RECLAIM_CEILING_MS');
+        expect(warnings()).toContain('1230000');
+    });
+
+    it('counts defaultTimeoutMs too, not just the per-type map', () => {
+        new Worker({ defaultTimeoutMs: 1_200_000 });
+
+        expect(warnings()).toContain('LEGACY_RECLAIM_CEILING_MS');
     });
 });
 

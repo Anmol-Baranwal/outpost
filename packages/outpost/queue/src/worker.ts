@@ -17,9 +17,15 @@ const STALE_RECOVERY_GRACE_MS = 30_000;
  *
  * Only reachable for rows a pre-`lockUntil` worker claimed, i.e. during the one
  * deploy that rolls this out. We genuinely do not know what deadline those were
- * granted, so the ceiling is set well above the largest configured timeout
- * (`HUBSPOT_SYNC`, 300s) rather than guessed from the observing worker's config —
- * the guess is exactly the bug `lockUntil` exists to remove.
+ * granted, so the ceiling is a fixed value set well above the largest configured
+ * timeout (`HUBSPOT_SYNC` and `ACCOUNT_SCORING`, 300s each) rather than derived
+ * from the observing worker's config — that derivation is exactly the bug
+ * `lockUntil` exists to remove, so it must not come back through this door.
+ *
+ * Being fixed means it does not follow `jobTimeouts` upward. A timeout raised
+ * past this ceiling would make the legacy branch reclaim live claims for the
+ * length of one rollout, so the constructor checks the two against each other
+ * and says so rather than letting it pass silently.
  */
 const LEGACY_RECLAIM_CEILING_MS = 900_000;
 
@@ -96,6 +102,34 @@ export class Worker {
         >;
         this.jobTimeouts = options?.jobTimeouts ?? {};
         this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
+        this.warnIfLegacyCeilingTooLow();
+    }
+
+    /**
+     * Say so when a configured timeout outgrows `LEGACY_RECLAIM_CEILING_MS`.
+     *
+     * The legacy branch only runs against rows claimed before `lockUntil`
+     * existed, so this is a one-rollout concern — but during that rollout a
+     * timeout above the ceiling means the sweep calls a still-running claim
+     * abandoned, and the original execution's completion is then fenced out and
+     * discarded. Checked here rather than left to a comment because the ceiling
+     * and the timeouts live in different packages, so nothing else would notice
+     * them drifting apart. Once every `PROCESSING` row carries a `lockUntil`,
+     * the branch is unreachable and this is only advisory.
+     */
+    private warnIfLegacyCeilingTooLow(): void {
+        const configured = Object.values(this.jobTimeouts).filter(
+            (ms): ms is number => typeof ms === 'number',
+        );
+        const longest = Math.max(this.defaultTimeoutMs, ...configured);
+        const needed = longest + STALE_RECOVERY_GRACE_MS;
+        if (needed <= LEGACY_RECLAIM_CEILING_MS) return;
+        console.warn(
+            `[Queue Worker] Longest job timeout (${longest}ms) plus the recovery grace ` +
+                `(${STALE_RECOVERY_GRACE_MS}ms) exceeds LEGACY_RECLAIM_CEILING_MS ` +
+                `(${LEGACY_RECLAIM_CEILING_MS}ms). Rows claimed before "lockUntil" existed ` +
+                `can be reclaimed while still running. Raise the ceiling above ${needed}ms.`,
+        );
     }
 
     /**
@@ -275,6 +309,13 @@ export class Worker {
      * know about a type in order to tell that its claim has expired — and the old
      * type predicate meant a crashed claim of a type this replica does not handle
      * stayed PROCESSING forever, never reclaimed and never dead-lettered.
+     *
+     * The deadline test is a disjunction rather than a `CASE` over `lockUntil`,
+     * and each arm keeps the column bare on the left with the interval arithmetic
+     * on the right. Both are required for `Job_status_lockUntil_idx` to be usable:
+     * a `CASE` over the column is not a sargable predicate, so the planner would
+     * take the `status` prefix and then filter every `PROCESSING` row, and moving
+     * the interval onto the column has the same effect one level down.
      */
     private async reclaimStaleJobs(): Promise<void> {
         // `runAt` mirrors `calculateBackoff` in shared/utils.ts — base * 2^attempt
@@ -313,13 +354,18 @@ export class Worker {
                 END,
                 "updatedAt" = NOW()
             WHERE job.status = 'PROCESSING'
-            AND CASE
-                WHEN job."lockUntil" IS NOT NULL
-                    THEN job."lockUntil"
-                        + (${STALE_RECOVERY_GRACE_MS} * INTERVAL '1 millisecond') < NOW()
-                ELSE job."lockedAt"
-                    + (${LEGACY_RECLAIM_CEILING_MS} * INTERVAL '1 millisecond') < NOW()
-            END
+            AND (
+                (
+                    job."lockUntil" IS NOT NULL
+                    AND job."lockUntil"
+                        < NOW() - (${STALE_RECOVERY_GRACE_MS} * INTERVAL '1 millisecond')
+                )
+                OR (
+                    job."lockUntil" IS NULL
+                    AND job."lockedAt"
+                        < NOW() - (${LEGACY_RECLAIM_CEILING_MS} * INTERVAL '1 millisecond')
+                )
+            )
         `;
     }
 
@@ -458,7 +504,7 @@ export class Worker {
 
             if (!handler) {
                 console.warn(`[Queue Worker] No handler for job type: ${job.type}`);
-                await prisma.job.updateMany({
+                const tombstone = await prisma.job.updateMany({
                     where: {
                         id: job.id,
                         status: 'PROCESSING',
@@ -469,9 +515,11 @@ export class Worker {
                         error: `No handler registered for job type: ${job.type}`,
                         completedAt: new Date(),
                         lockedAt: null,
+                        lockUntil: null,
                         claimToken: null,
                     },
                 });
+                warnIfFenced(tombstone.count, job, 'no-handler failure');
                 return;
             }
 
@@ -504,6 +552,7 @@ export class Worker {
                             progress: 100,
                             completedAt: new Date(),
                             lockedAt: null,
+                            lockUntil: null,
                             claimToken: null,
                         },
                     });
@@ -581,6 +630,7 @@ export class Worker {
                     error,
                     completedAt: new Date(),
                     lockedAt: null,
+                    lockUntil: null,
                     claimToken: null,
                 },
             });
@@ -610,6 +660,7 @@ export class Worker {
                     error,
                     runAt,
                     lockedAt: null,
+                    lockUntil: null,
                     claimToken: null,
                     progress: null,
                 },

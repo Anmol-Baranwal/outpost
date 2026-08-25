@@ -257,6 +257,16 @@ model Job {
     // Serves the reclaim sweep, which runs once per poll interval per replica.
     // [status, runAt] has the wrong second column for it and [type] is far too
     // low-selectivity to help.
+    //
+    // Only usable while the sweep's predicate keeps lockUntil bare on one side —
+    // see reclaimStaleJobs() in queue/src/worker.ts. Wrapping the column in a
+    // CASE, or moving the interval arithmetic onto it, leaves the planner with
+    // the status prefix and a filter over every PROCESSING row.
+    //
+    // Ideally partial (WHERE status = 'PROCESSING'), which schema.prisma cannot
+    // express. Taking the wider index rather than hand-writing one, because a
+    // hand-written index puts the database permanently in drift against the CI
+    // gate that caught the missing claimToken field on this same branch.
     @@index([status, lockUntil])
 }
 

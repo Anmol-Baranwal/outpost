@@ -10,7 +10,8 @@ ADD COLUMN "claimToken" TEXT,
 ADD COLUMN "lockUntil" TIMESTAMP(3);
 
 -- Reclaim runs `status = 'PROCESSING' AND "lockUntil" < ?` every poll interval on
--- every replica. Not CONCURRENTLY: Prisma applies each migration inside a
+-- every replica, plus a NULL-lockUntil arm for rows claimed before this deployed.
+-- Both arms keep the column bare so this index is usable. Not CONCURRENTLY: Prisma applies each migration inside a
 -- transaction, which forbids it. The build is short anyway — Job is small enough
 -- today that the brief ACCESS EXCLUSIVE lock is cheaper than the operational
 -- cost of a hand-run out-of-band index.
