@@ -259,9 +259,18 @@ model Job {
     // low-selectivity to help.
     //
     // Only usable while the sweep's predicate keeps lockUntil bare on one side —
-    // see reclaimStaleJobs() in queue/src/worker.ts. Wrapping the column in a
-    // CASE, or moving the interval arithmetic onto it, leaves the planner with
-    // the status prefix and a filter over every PROCESSING row.
+    // see reclaimStaleJobs() in packages/outpost/queue/src/worker.ts. Wrapping
+    // the column in a CASE, or moving the interval arithmetic onto it, leaves the
+    // planner with the status prefix and a filter over every PROCESSING row.
+    //
+    // Worth stating what it does NOT buy, because the gain is smaller than it
+    // looks: PROCESSING is a tiny set (bounded by replicas × maxConcurrency, and
+    // JOB_CLEANUP keeps the table small besides), and [status, runAt]'s prefix
+    // already narrows to it. Meanwhile status and lockUntil both change on every
+    // claim and every release, so this index adds maintenance to the two hottest
+    // write paths on the table. It is here because the sweep's cost should not be
+    // a function of table size as the queue grows, not because it pays for itself
+    // at today's volumes.
     //
     // Ideally partial (WHERE status = 'PROCESSING'), which schema.prisma cannot
     // express. Taking the wider index rather than hand-writing one, because a

@@ -34,10 +34,26 @@ export async function updateJobProgress(
     claimToken: string,
 ): Promise<void> {
     const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-    const result = await prisma.job.updateMany({
-        where: { id: jobId, status: 'PROCESSING', claimToken },
-        data: { progress: clamped },
-    });
+
+    // Handlers `await` this, so a rejection here propagates into the handler and
+    // the worker records it as a job failure — retrying work that was running
+    // perfectly well and repeating every side effect it had already produced.
+    // Progress is telemetry; it must never be able to fail the job it describes.
+    let result: { count: number };
+    try {
+        result = await prisma.job.updateMany({
+            where: { id: jobId, status: 'PROCESSING', claimToken },
+            data: { progress: clamped },
+        });
+    } catch (error) {
+        console.warn(
+            `[Queue] Progress update for job ${jobId} failed and was ignored, ` +
+                `so it cannot fail the running job:`,
+            error,
+        );
+        return;
+    }
+
     // A dropped progress update is harmless in itself, but it is the earliest
     // observable sign that this execution has lost its claim — the handler is
     // still running while something else owns the row. Worth a line, since the

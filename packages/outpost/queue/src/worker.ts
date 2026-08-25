@@ -10,6 +10,14 @@ import type {
     JobHandlerContext,
 } from './types.js';
 
+/**
+ * Margin added on top of a claim's own deadline before the sweep calls it dead.
+ *
+ * The normal timeout path has to be given a chance to release its own claim
+ * first; without this, a handler that times out at exactly `lockUntil` races the
+ * sweep that is about to reclaim it. Also the amount `warnIfLegacyCeilingTooLow`
+ * adds to the longest configured timeout when checking the legacy ceiling.
+ */
 const STALE_RECOVERY_GRACE_MS = 30_000;
 
 /**
@@ -18,9 +26,12 @@ const STALE_RECOVERY_GRACE_MS = 30_000;
  * Only reachable for rows a pre-`lockUntil` worker claimed, i.e. during the one
  * deploy that rolls this out. We genuinely do not know what deadline those were
  * granted, so the ceiling is a fixed value set well above the largest configured
- * timeout (`HUBSPOT_SYNC` and `ACCOUNT_SCORING`, 300s each) rather than derived
- * from the observing worker's config — that derivation is exactly the bug
- * `lockUntil` exists to remove, so it must not come back through this door.
+ * timeout rather than derived from the observing worker's config — that
+ * derivation is exactly the bug `lockUntil` exists to remove, so it must not come
+ * back through this door. (At the time of writing the longest are `HUBSPOT_SYNC`
+ * and `ACCOUNT_SCORING`, tied at 300s; `warnIfLegacyCeilingTooLow` below is what
+ * keeps that honest, so treat the guard rather than this sentence as the source
+ * of truth.)
  *
  * Being fixed means it does not follow `jobTimeouts` upward. A timeout raised
  * past this ceiling would make the legacy branch reclaim live claims for the
@@ -33,10 +44,16 @@ const LEGACY_RECLAIM_CEILING_MS = 900_000;
  * Report a fenced write.
  *
  * `count === 0` on any of these updates is the event the claim token exists to
- * produce, and it means two executions of the same row overlapped — so it must
- * never be inferred from the absence of a log. The pre-fence code always logged
- * on these paths; suppressing the log when the fence fires would make the
- * interesting case the quiet one.
+ * produce, and it must never be inferred from the absence of a log. The pre-fence
+ * code always logged on these paths; suppressing the log when the fence fires
+ * would make the interesting case the quiet one.
+ *
+ * What it proves is narrower than it first looks: the row no longer matches
+ * `(id, PROCESSING, claimToken)`. That means the claim was lost — the reclaim
+ * sweep took the row — but not necessarily that a second execution has happened.
+ * The sweep sets `claimToken = NULL` and may have landed on DEAD_LETTER, in which
+ * case nothing will run again. The message says what is known and what is at
+ * risk, rather than asserting a concurrent run that may not exist.
  */
 function warnIfFenced(
     count: number,
@@ -46,8 +63,10 @@ function warnIfFenced(
     if (count > 0) return;
     console.warn(
         `[Queue Worker] ${what} write for job ${job.id} (${job.type}) was fenced: ` +
-            `claim ${job.claimToken ?? 'none'} no longer owns the row. ` +
-            `Another execution holds it, so this job ran more than once.`,
+            `claim ${job.claimToken} no longer owns the row, so this claim was ` +
+            `reclaimed while still live. The row has since been retried or ` +
+            `dead-lettered, and any external side effect of this execution may ` +
+            `already have been repeated.`,
     );
 }
 
@@ -253,6 +272,30 @@ export class Worker {
 
         try {
             this.lastPollTime = new Date();
+
+            // Ahead of the capacity check, not behind it. Reclaiming is a global
+            // sweep over abandoned rows and has nothing to do with this replica's
+            // spare capacity, so gating it on free slots would stop recovery
+            // exactly when the backlog that produced the abandoned rows is
+            // largest. Latent while `availableSlots` can never reach 0 (the poll
+            // awaits its whole batch, so `activeJobs` is empty here), and live the
+            // moment that changes.
+            //
+            // Isolated on purpose. It sits ahead of every claim in the same try,
+            // and `lastPollTime` is already set, so a failing reclaim would stop
+            // all claiming while the process stayed up. Note the health server in
+            // `apps/worker/src/index.ts` answers 200 unconditionally and never
+            // consults `healthCheck()`, so nothing would have restarted it either —
+            // that half is the /health rework's problem, not this catch's.
+            // Recovering abandoned work is a nice-to-have; claiming new work is the
+            // job.
+            try {
+                await this.reclaimStaleJobs();
+            } catch (error) {
+                console.error('[Queue Worker] Reclaim sweep failed, continuing:', error);
+            }
+            if (!this.running) return;
+
             const availableSlots = this.maxConcurrency - this.activeJobs.size;
 
             if (availableSlots <= 0) {
@@ -260,18 +303,6 @@ export class Worker {
                 this.schedulePoll(this.pollIntervalMs);
                 return;
             }
-
-            // Isolated on purpose. This sits ahead of every claim in the same try,
-            // and `lastPollTime` is already set, so a failing reclaim would stop
-            // all claiming while `buildHealthResponse` still reported healthy —
-            // a total outage with nothing to restart it. Recovering abandoned work
-            // is a nice-to-have; claiming new work is the job.
-            try {
-                await this.reclaimStaleJobs();
-            } catch (error) {
-                console.error('[Queue Worker] Reclaim sweep failed, continuing:', error);
-            }
-            if (!this.running) return;
 
             const hasPerTypeLimits = Object.keys(this.concurrencyByType).length > 0;
             let processedCount: number;
@@ -311,11 +342,15 @@ export class Worker {
      * stayed PROCESSING forever, never reclaimed and never dead-lettered.
      *
      * The deadline test is a disjunction rather than a `CASE` over `lockUntil`,
-     * and each arm keeps the column bare on the left with the interval arithmetic
-     * on the right. Both are required for `Job_status_lockUntil_idx` to be usable:
-     * a `CASE` over the column is not a sargable predicate, so the planner would
-     * take the `status` prefix and then filter every `PROCESSING` row, and moving
-     * the interval onto the column has the same effect one level down.
+     * because a `CASE` over the column is not sargable: the planner would take the
+     * `status` prefix of `Job_status_lockUntil_idx` and then filter every
+     * `PROCESSING` row. In the first arm `lockUntil` is kept bare with the interval
+     * arithmetic on the right, which is what lets the index's second column do any
+     * work at all.
+     *
+     * The legacy arm cannot use the index the same way — it discriminates on
+     * `lockedAt`, which is not in it — so it rides the `status` + `lockUntil IS
+     * NULL` prefix and filters. That is fine: the arm is dead after one rollout.
      */
     private async reclaimStaleJobs(): Promise<void> {
         // `runAt` mirrors `calculateBackoff` in shared/utils.ts — base * 2^attempt
@@ -325,7 +360,7 @@ export class Worker {
         // every attempt on a job back to back and drive it to DEAD_LETTER at full
         // speed. The attempt number is the one being scheduled, `attempts + 1`,
         // matching `handleFailure`.
-        await prisma.$executeRaw`
+        const reclaimed = await prisma.$executeRaw`
             UPDATE "Job" AS job
             SET status = CASE
                     WHEN job."attempts" + 1 >= job."maxAttempts"
@@ -337,7 +372,8 @@ export class Worker {
                 "lockUntil" = NULL,
                 "claimToken" = NULL,
                 progress = NULL,
-                error = 'Worker claim was abandoned before completion',
+                error = 'Worker claim was abandoned before completion'
+                    || COALESCE(' (previous error: ' || left(job.error, 200) || ')', ''),
                 "completedAt" = CASE
                     WHEN job."attempts" + 1 >= job."maxAttempts" THEN NOW()
                     ELSE NULL
@@ -346,7 +382,7 @@ export class Worker {
                     WHEN job."attempts" + 1 >= job."maxAttempts" THEN job."runAt"
                     ELSE NOW() + (
                         LEAST(
-                            ${BACKOFF_BASE_MS} * POWER(2, job."attempts" + 1)
+                            ${BACKOFF_BASE_MS} * POWER(2, LEAST(job."attempts" + 1, 30))
                                 + random() * ${BACKOFF_BASE_MS},
                             ${BACKOFF_MAX_MS}
                         ) * INTERVAL '1 millisecond'
@@ -365,8 +401,26 @@ export class Worker {
                     AND job."lockedAt"
                         < NOW() - (${LEGACY_RECLAIM_CEILING_MS} * INTERVAL '1 millisecond')
                 )
+                OR (
+                    job."lockUntil" IS NULL
+                    AND job."lockedAt" IS NULL
+                    AND job."updatedAt"
+                        < NOW() - (${LEGACY_RECLAIM_CEILING_MS} * INTERVAL '1 millisecond')
+                )
             )
         `;
+
+        // Every row this moved is a claim some worker took and never released —
+        // a crash, an OOM kill, an evicted container. It is the earliest signal
+        // that replicas are dying, and it was being computed once per poll and
+        // thrown away. Only spoken when non-zero: the healthy case is silence.
+        if (reclaimed > 0) {
+            console.warn(
+                `[Queue Worker] Reclaim sweep returned ${reclaimed} abandoned ` +
+                    `PROCESSING job(s) to the queue. Each is a claim a worker took ` +
+                    `and never released — check for crashed or OOM-killed replicas.`,
+            );
+        }
     }
 
     /**
@@ -427,8 +481,7 @@ export class Worker {
             const jobs = await this.claimJobsForType(type, limit);
 
             if (jobs.length > 0) {
-                const promises = jobs.map((job) => this.processJob(job));
-                await Promise.allSettled(promises);
+                await this.processClaimedJobs(jobs);
                 totalProcessed += jobs.length;
                 remainingGlobalSlots -= jobs.length;
             }
@@ -488,14 +541,54 @@ export class Worker {
             RETURNING id, type, payload, attempts, "maxAttempts", "claimToken"
         `;
 
-        // Process jobs concurrently (each tracked in activeJobs)
-        const promises = jobs.map((job) => this.processJob(job));
-        await Promise.allSettled(promises);
+        await this.processClaimedJobs(jobs);
 
         return jobs.length;
     }
 
+    /**
+     * Run a claimed batch concurrently, and say something when one of them dies.
+     *
+     * `processJob` has a `finally` but no `catch`, so anything thrown outside its
+     * inner try — a Prisma error on the no-handler tombstone, on the dead-letter
+     * write, on the retry write — propagates out. `Promise.allSettled` then
+     * absorbs it and returns a result object nobody was reading, so a database
+     * blip could take out the whole failure-recording path and produce no output
+     * at all: not the Prisma error, and not the handler failure it was recording.
+     * The row survives (it stays PROCESSING for the sweep); the explanation did not.
+     */
+    private async processClaimedJobs(jobs: ClaimedJob[]): Promise<void> {
+        const settled = await Promise.allSettled(jobs.map((job) => this.processJob(job)));
+        settled.forEach((outcome, i) => {
+            if (outcome.status !== 'rejected') return;
+            const job = jobs[i];
+            console.error(
+                `[Queue Worker] processJob threw for job ${job.id} (${job.type}). ` +
+                    `The row is left PROCESSING for the reclaim sweep:`,
+                outcome.reason,
+            );
+        });
+    }
+
     private async processJob(job: ClaimedJob): Promise<void> {
+        // `ClaimedJob.claimToken` is typed `string`, but it arrives from
+        // `$queryRaw`, which validates nothing — the type is an assertion about a
+        // column the schema declares nullable. That matters more than it reads:
+        // Prisma's `updateMany` silently DROPS a `where` key whose value is
+        // `undefined`, so a token that ever went missing would turn every fenced
+        // write below into an unfenced update-by-id, and the exactly-once
+        // mechanism would disappear with no error and no log. Refuse the row
+        // instead. It stays PROCESSING with its `lockUntil` intact, so the sweep
+        // recovers it on the normal deadline rather than it being lost.
+        if (!job.claimToken) {
+            console.error(
+                `[Queue Worker] Refusing job ${job.id} (${job.type}): the claim ` +
+                    `returned no token, so its writes could not be fenced. Leaving ` +
+                    `the row for the reclaim sweep. This is a bug in the claim query.`,
+            );
+            return;
+        }
+
         this.activeJobs.add(job.id);
         this.activeJobsByType.set(job.type, (this.activeJobsByType.get(job.type) ?? 0) + 1);
 
@@ -512,6 +605,10 @@ export class Worker {
                     },
                     data: {
                         status: 'FAILED',
+                        // Every other terminal path records the attempt it used.
+                        // Without this the row reads `attempts: 0` for a job that
+                        // was claimed and dispatched.
+                        attempts: job.attempts + 1,
                         error: `No handler registered for job type: ${job.type}`,
                         completedAt: new Date(),
                         lockedAt: null,
@@ -533,52 +630,79 @@ export class Worker {
                     updateJobProgress(job.id, percent, job.claimToken),
             };
 
+            // The handler's own try. Only what the handler does belongs in here:
+            // a throw from the bookkeeping below is a different kind of event and
+            // must not be laundered into "the job failed".
+            let result: JobResult;
             try {
-                const result = await this.runWithTimeout(
+                result = await this.runWithTimeout(
                     handler(job.payload as Record<string, never>, context),
                     timeoutMs,
                 );
-
-                if (result.success) {
-                    const completion = await prisma.job.updateMany({
-                        where: {
-                            id: job.id,
-                            status: 'PROCESSING',
-                            claimToken: job.claimToken,
-                        },
-                        data: {
-                            status: 'COMPLETED',
-                            attempts: attempt,
-                            progress: 100,
-                            completedAt: new Date(),
-                            lockedAt: null,
-                            lockUntil: null,
-                            claimToken: null,
-                        },
-                    });
-                    // The single most important thing this fence can tell us: the
-                    // work finished, and the row says someone else owns it. That
-                    // means it was reclaimed while still live and is running, or has
-                    // already run, a second time. Every external side effect this
-                    // handler produced has happened at least twice.
-                    warnIfFenced(completion.count, job, 'completion');
-                } else {
-                    await this.handleFailure(
-                        job.id,
-                        job.claimToken,
-                        attempt,
-                        job.maxAttempts,
-                        result.error ?? 'Unknown error',
-                    );
-                }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 await this.handleFailure(
                     job.id,
+                    job.type,
                     job.claimToken,
                     attempt,
                     job.maxAttempts,
                     errorMessage,
+                );
+                return;
+            }
+
+            if (!result.success) {
+                await this.handleFailure(
+                    job.id,
+                    job.type,
+                    job.claimToken,
+                    attempt,
+                    job.maxAttempts,
+                    result.error ?? 'Unknown error',
+                );
+                return;
+            }
+
+            // The work succeeded and its side effects have already happened. A
+            // throw from here is the database failing to record that, which is
+            // emphatically not a job failure: routing it through `handleFailure`
+            // set the row back to PENDING carrying a Prisma error as the job's
+            // error, and the retry re-ran every one of those side effects. So the
+            // row is left PROCESSING for the sweep instead — still a re-run, but
+            // one that is logged as what it is rather than recorded as a fault in
+            // the handler.
+            try {
+                const completion = await prisma.job.updateMany({
+                    where: {
+                        id: job.id,
+                        status: 'PROCESSING',
+                        claimToken: job.claimToken,
+                    },
+                    data: {
+                        status: 'COMPLETED',
+                        attempts: attempt,
+                        progress: 100,
+                        completedAt: new Date(),
+                        lockedAt: null,
+                        lockUntil: null,
+                        claimToken: null,
+                    },
+                });
+                // The single most important thing this fence can tell us: the work
+                // finished, and the row no longer accepts this claim. It was
+                // reclaimed while still live, so this success is being discarded
+                // and the row has been re-queued or dead-lettered. Whether the side
+                // effects actually ran twice depends on which of those happened,
+                // which is why the message says "may".
+                warnIfFenced(completion.count, job, 'completion');
+            } catch (error) {
+                console.error(
+                    `[Queue Worker] Job ${job.id} (${job.type}) succeeded but its ` +
+                        `COMPLETED write failed. The row stays PROCESSING and the ` +
+                        `reclaim sweep will re-queue it, which WILL run the handler ` +
+                        `again and repeat its side effects:`,
+                    error,
                 );
             }
         } finally {
@@ -615,6 +739,7 @@ export class Worker {
 
     private async handleFailure(
         jobId: string,
+        jobType: string,
         claimToken: string,
         attempt: number,
         maxAttempts: number,
@@ -636,14 +761,14 @@ export class Worker {
             });
             if (result.count > 0) {
                 console.error(
-                    `[Queue Worker] Job ${jobId} moved to dead letter queue after ${attempt} attempts: ${error}`,
+                    `[Queue Worker] Job ${jobId} (${jobType}) moved to dead letter queue after ${attempt} attempts: ${error}`,
                 );
             } else {
                 // Pre-fence this always logged. Staying silent here would lose both
                 // the fence rejection and the failure that caused it.
                 console.warn(
-                    `[Queue Worker] Job ${jobId} dead-letter write was fenced ` +
-                        `(claim ${claimToken ?? 'none'} no longer owns the row); ` +
+                    `[Queue Worker] Job ${jobId} (${jobType}) dead-letter write was fenced ` +
+                        `(claim ${claimToken} no longer owns the row); ` +
                         `the failure it was recording was: ${error}`,
                 );
             }
@@ -667,13 +792,13 @@ export class Worker {
             });
             if (result.count > 0) {
                 console.warn(
-                    `[Queue Worker] Job ${jobId} failed (attempt ${attempt}/${maxAttempts}), ` +
+                    `[Queue Worker] Job ${jobId} (${jobType}) failed (attempt ${attempt}/${maxAttempts}), ` +
                         `retrying at ${runAt.toISOString()}: ${error}`,
                 );
             } else {
                 console.warn(
-                    `[Queue Worker] Job ${jobId} retry write was fenced ` +
-                        `(claim ${claimToken ?? 'none'} no longer owns the row); ` +
+                    `[Queue Worker] Job ${jobId} (${jobType}) retry write was fenced ` +
+                        `(claim ${claimToken} no longer owns the row); ` +
                         `the failure it was recording was: ${error}`,
                 );
             }

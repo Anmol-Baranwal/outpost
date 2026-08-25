@@ -40,6 +40,21 @@ vi.mock('@copilotkit/outpost/shared', () => ({
     calculateBackoff: (attempt: number) => 1000 * Math.pow(2, attempt),
 }));
 
+// The `shared` mock above re-declares MAX_JOB_ATTEMPTS, BACKOFF_BASE_MS and
+// BACKOFF_MAX_MS as literals. Every assertion written against those literals was
+// checking the mock against itself: editing the real constants left the whole
+// file green. Importing the real ones straight from source — past both the mock
+// and the package alias — gives the suite something honest to compare against.
+// `importActual` deliberately, not a relative path into shared/src: the queue
+// tsconfig sets rootDir to queue/src, so reaching across the package boundary by
+// path is a typecheck error. This goes through the same specifier the mock
+// intercepts, and gets the real module behind it.
+const realConstants = (await vi.importActual('@copilotkit/outpost/shared')) as {
+    MAX_JOB_ATTEMPTS: number;
+    BACKOFF_BASE_MS: number;
+    BACKOFF_MAX_MS: number;
+};
+
 // Import after mocks are set up
 const { createJob, updateJobProgress } = await import('../create-job.js');
 const { Worker } = await import('../worker.js');
@@ -87,7 +102,7 @@ describe('createJob', () => {
 
         const callArg = mockPrismaJob.create.mock.calls[0][0];
         expect(callArg.data.type).toBe('AI_RESPONSE');
-        expect(callArg.data.maxAttempts).toBe(5); // MAX_JOB_ATTEMPTS
+        expect(callArg.data.maxAttempts).toBe(realConstants.MAX_JOB_ATTEMPTS);
         expect(callArg.data.payload).toEqual({ ticketId: 'tkt-1', source: 'discord' });
         expect(callArg.data.runAt).toBeInstanceOf(Date);
     });
@@ -154,6 +169,28 @@ describe('updateJobProgress', () => {
     });
 });
 
+describe('updateJobProgress resilience', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('cannot fail the job it is only describing', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        mockPrismaJob.updateMany.mockRejectedValue(new Error('pool exhausted'));
+
+        // Handlers `await` this. A rejection propagated into the handler, the
+        // worker recorded it as a job failure, and work that was running perfectly
+        // well got retried — repeating every side effect it had already produced.
+        // Progress is telemetry; it must never be able to fail the job.
+        await expect(updateJobProgress('job-1', 50, 'claim-1')).resolves.toBeUndefined();
+
+        expect(warn.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
+            'failed and was ignored',
+        );
+        warn.mockRestore();
+    });
+});
+
 describe('Worker', () => {
     let worker: InstanceType<typeof Worker>;
 
@@ -162,6 +199,13 @@ describe('Worker', () => {
         vi.useFakeTimers();
         mockPrisma.$executeRaw.mockResolvedValue(0);
         mockPrismaJob.updateMany.mockResolvedValue({ count: 1 });
+        // `clearAllMocks` clears call records but keeps implementations and any
+        // unconsumed `Once` queue, and nothing here re-armed `$queryRaw` — so a
+        // test that set no claim result silently inherited the previous test's,
+        // and `poll()` swallowed the resulting TypeError in its own catch. Reset
+        // and give it an explicit default; per-test `Once` values still win.
+        mockPrisma.$queryRaw.mockReset();
+        mockPrisma.$queryRaw.mockResolvedValue([]);
         worker = new Worker({
             pollIntervalMs: 100,
             maxConcurrency: 2,
@@ -404,10 +448,24 @@ describe('Worker', () => {
         // back to back and drive it to DEAD_LETTER at full speed. A reclaim and a
         // handler failure both mean "this attempt did not finish", so they have to
         // space retries the same way.
-        expect(reclaimSql).not.toContain('ELSE NOW()\n');
-        expect(reclaimSql).toContain('POWER(2, job."attempts" + 1)');
+        // Asserting the shape of the `runAt` arm rather than the absence of one
+        // spelling of the regression: `not.toContain('ELSE NOW()\n')` only fired
+        // when a newline happened to follow, so `ELSE NOW() END` on one line —
+        // the same bug — walked straight past it.
+        expect(reclaimSql).toMatch(/"runAt" = CASE[\s\S]*ELSE NOW\(\)\s*\+/);
         expect(reclaimSql).toContain('random()');
         expect(reclaimSql).toContain('LEAST');
+
+        // The exponent is clamped. `maxAttempts` is per-row and settable through
+        // `createJob`, and float8 overflows around 2^1024 — which would abort the
+        // whole sweep for every row, not just the offending one. JS saturates
+        // gracefully here (`Math.min(Infinity, MAX)` is MAX), so without the clamp
+        // the SQL and `calculateBackoff` diverge at the extreme.
+        expect(reclaimSql).toContain('POWER(2, LEAST(job."attempts" + 1, 30))');
+
+        // Against the REAL constants, not the mock's copies of them.
+        expect(reclaimCall.slice(1)).toContain(realConstants.BACKOFF_BASE_MS);
+        expect(reclaimCall.slice(1)).toContain(realConstants.BACKOFF_MAX_MS);
         // Mirrors calculateBackoff: BACKOFF_BASE_MS with jitter, BACKOFF_MAX_MS cap.
         expect(reclaimCall.slice(1)).toContain(1000);
         expect(reclaimCall.slice(1)).toContain(300_000);
@@ -679,6 +737,162 @@ describe('Worker', () => {
         expect(progressCall).toBeDefined();
     });
 
+    // Production sets `concurrencyByType` (apps/worker/src/index.ts), so every job
+    // it claims goes through `claimJobsForType` — and that query had no coverage
+    // of the deadline it writes. Deleting the `lockUntil` SET from it alone left
+    // all 1113 tests green while every production claim got `lockUntil = NULL` and
+    // fell into the 15-minute legacy branch forever, which is precisely the
+    // failure this whole change exists to remove.
+    describe('the claim path production actually runs', () => {
+        const setClauseOf = (call: unknown[]) => {
+            const sql = (call[0] as TemplateStringsArray).join(' ');
+            return sql.slice(
+                sql.indexOf("SET status = 'PROCESSING'"),
+                sql.indexOf('WHERE id IN ('),
+            );
+        };
+
+        it('writes a deadline onto every row it claims', async () => {
+            await worker.stop();
+            worker = new Worker({
+                pollIntervalMs: 100,
+                maxConcurrency: 2,
+                defaultTimeoutMs: 5000,
+                // The presence of this is what routes claiming through
+                // `claimJobsForType` instead of `claimAndProcessJobs`.
+                concurrencyByType: { [JobType.AI_RESPONSE]: 1 },
+                jobTimeouts: { [JobType.AI_RESPONSE]: 120_000 },
+            });
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const claim = mockPrisma.$queryRaw.mock.calls[0];
+            const claimSql = claim[0].join(' ');
+            expect(claimSql).toContain('"lockUntil" = NOW()');
+            // Per-type, looked up by the row's own type, with the worker default
+            // as the fallback — the same contract the other claim path has.
+            expect(claimSql).toContain('->> "Job".type');
+            const timeoutMap = claim
+                .slice(1)
+                .find(
+                    (v: unknown): v is string => typeof v === 'string' && v.includes('AI_RESPONSE'),
+                );
+            expect(JSON.parse(timeoutMap as string)).toEqual({
+                [JobType.AI_RESPONSE]: 120_000,
+            });
+            expect(claim.slice(1)).toContain(5000);
+        });
+
+        it('claims identically whichever path is taken', async () => {
+            await worker.stop();
+            const perType = new Worker({
+                pollIntervalMs: 100,
+                defaultTimeoutMs: 5000,
+                concurrencyByType: { [JobType.AI_RESPONSE]: 1 },
+            });
+            perType.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            perType.start();
+            await vi.advanceTimersByTimeAsync(0);
+            const perTypeSet = setClauseOf(mockPrisma.$queryRaw.mock.calls[0]);
+            await perType.stop();
+
+            mockPrisma.$queryRaw.mockClear();
+
+            worker = new Worker({ pollIntervalMs: 100, defaultTimeoutMs: 5000 });
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+            const batchSet = setClauseOf(mockPrisma.$queryRaw.mock.calls[0]);
+
+            // The two claim queries carry byte-identical SET clauses, duplicated by
+            // hand. Nothing else notices when one is edited and the other is not,
+            // and a divergence there is silent in production and invisible in CI.
+            expect(perTypeSet).toBe(batchSet);
+            expect(perTypeSet).toContain('"lockUntil" = NOW()');
+            expect(perTypeSet).toContain('"claimToken" = gen_random_uuid()::text');
+        });
+    });
+
+    // A claim whose writes cannot be fenced is worse than no claim: Prisma drops a
+    // `where` key whose value is undefined, so every fenced write in `processJob`
+    // would quietly become an unfenced update-by-id.
+    describe('a claim with no token', () => {
+        it('is refused rather than run unfenced', async () => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            mockPrisma.$queryRaw.mockResolvedValueOnce([
+                { ...makeJobRow(), claimToken: undefined as unknown as string },
+            ]);
+
+            let ran = false;
+            worker.on(JobType.AI_RESPONSE, async () => {
+                ran = true;
+                return { success: true };
+            });
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(ran).toBe(false);
+            // Left PROCESSING with its deadline intact, so the sweep recovers it.
+            expect(mockPrismaJob.updateMany).not.toHaveBeenCalled();
+            expect(error.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
+                'could not be fenced',
+            );
+            error.mockRestore();
+        });
+    });
+
+    // The bookkeeping that records a result is not the work itself, and the two
+    // must not fail the same way.
+    describe('when the database fails after the handler succeeded', () => {
+        it('does not re-queue work that already ran', async () => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow()]);
+            mockPrismaJob.updateMany.mockRejectedValueOnce(new Error('connection reset by peer'));
+
+            worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // The old shape wrapped the completion write in the handler's own try,
+            // so a Prisma blip was laundered into "the job failed": the row went
+            // back to PENDING carrying the DB error as the job's error, and the
+            // retry re-ran every external side effect the handler had already
+            // produced. That is the duplicate execution the claim token exists to
+            // detect, manufactured by the worker from a bookkeeping error.
+            const retried = mockPrismaJob.updateMany.mock.calls
+                .map((call: Array<{ data: Record<string, unknown> }>) => call[0].data)
+                .find((data: Record<string, unknown>) => data.status === 'PENDING');
+            expect(retried).toBeUndefined();
+
+            const messages = error.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+            expect(messages).toContain('succeeded but its');
+            error.mockRestore();
+        });
+
+        it('reports a processJob that threw outright', async () => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            mockPrisma.$queryRaw.mockResolvedValueOnce([makeJobRow({ attempts: 1 })]);
+            // Both the failure write and its fallback fail — the DB is down, which
+            // is exactly when this happens.
+            mockPrismaJob.updateMany.mockRejectedValue(new Error('pool exhausted'));
+
+            worker.on(JobType.AI_RESPONSE, async () => {
+                throw new Error('handler said no');
+            });
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // `Promise.allSettled` absorbed the rejection and nobody read the
+            // result, so this produced no output at all: not the Prisma error, and
+            // not the handler failure it was trying to record.
+            const messages = error.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+            expect(messages).toContain('processJob threw');
+            error.mockRestore();
+        });
+    });
+
     // The sweep is the only thing standing between a crashed claim and a row that
     // is PROCESSING forever, and it is also the first `await` in every poll. Both
     // properties are load-bearing and neither was pinned.
@@ -739,7 +953,85 @@ describe('Worker', () => {
             // and still non-sargable.
             expect(where).toContain('< NOW() -');
             expect(where).not.toMatch(/job\."lockUntil"\s*\+/);
-            expect(where).not.toMatch(/job\."lockedAt"\s*\+/);
+
+            // Deliberately not asserting the same of `lockedAt`. That arm cannot
+            // use the index's second column either way — `lockedAt` is not in the
+            // index — so it rides the status + `lockUntil IS NULL` prefix and then
+            // filters. An assertion there would look like it defended the index
+            // and defend nothing.
+        });
+
+        it('leaves no PROCESSING row without a way out', async () => {
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const reclaimSql = mockPrisma.$executeRaw.mock.calls[0][0].join(' ');
+            const where = reclaimSql.slice(reclaimSql.indexOf("WHERE job.status = 'PROCESSING'"));
+
+            // Both timestamp arms NULL-guard one column and compare the other, and
+            // `NULL < x` is NULL — so a PROCESSING row carrying neither timestamp
+            // matched no arm and sat there forever, invisible to the one mechanism
+            // that exists to rescue it. Unreachable from the two claim paths, which
+            // is exactly the assumption a last-resort sweep should not be making.
+            // `updatedAt` is written by every path, so it closes the blind spot.
+            expect(where).toContain('job."updatedAt"');
+        });
+
+        it('keeps the failure that actually killed a dead-lettered job', async () => {
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const reclaimSql = mockPrisma.$executeRaw.mock.calls[0][0].join(' ');
+
+            // The sweep used to overwrite `error` unconditionally, including on the
+            // arm that lands on DEAD_LETTER — so the one surface where the *why*
+            // matters most was left holding a generic string. Bounded with `left`
+            // so repeated reclaims of a crash-looping job cannot grow it without
+            // limit.
+            expect(reclaimSql).toContain('previous error');
+            expect(reclaimSql).toContain('left(job.error, 200)');
+        });
+
+        it('says how many rows it returned to the queue', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockPrisma.$executeRaw.mockResolvedValue(7);
+
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // Every row this moves is a claim a worker took and never released.
+            // The count was computed once per poll on every replica and discarded,
+            // which threw away the earliest signal that replicas are dying.
+            const messages = warn.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+            expect(messages).toContain('7 abandoned');
+            warn.mockRestore();
+        });
+
+        it('stays silent when it reclaimed nothing', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            mockPrisma.$executeRaw.mockResolvedValue(0);
+
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const messages = warn.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+            expect(messages).not.toContain('abandoned');
+            warn.mockRestore();
+        });
+
+        it('still runs when this replica has no free slots', async () => {
+            const saturated = new Worker({ pollIntervalMs: 100, maxConcurrency: 0 });
+            saturated.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+
+            saturated.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // Reclaiming is a global sweep over rows other replicas abandoned. It
+            // has nothing to do with this replica's spare capacity, and gating it
+            // behind the capacity check stopped recovery exactly when the backlog
+            // that produced the abandoned rows was largest.
+            expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+            await saturated.stop();
         });
 
         it('consumes an attempt, so a crash-looping job still reaches DEAD_LETTER', async () => {
@@ -861,7 +1153,7 @@ describe('Worker', () => {
             await vi.advanceTimersByTimeAsync(0);
 
             expect(fencedMessages()).toContain('job-1');
-            expect(fencedMessages()).toContain('ran more than once');
+            expect(fencedMessages()).toContain('reclaimed while still live');
         });
 
         it('keeps the underlying failure when a retry write is fenced', async () => {
@@ -914,7 +1206,24 @@ describe('Worker', () => {
             await vi.advanceTimersByTimeAsync(0);
 
             expect(fencedMessages()).toContain('no-handler failure');
-            expect(fencedMessages()).toContain('ran more than once');
+            expect(fencedMessages()).toContain('reclaimed while still live');
+        });
+
+        it('records the attempt the no-handler tombstone consumed', async () => {
+            mockPrisma.$queryRaw.mockResolvedValueOnce([
+                makeJobRow({ type: JobType.SLA_CHECK, attempts: 2 }),
+            ]);
+
+            worker.start();
+            await vi.advanceTimersByTimeAsync(0);
+
+            // Every other terminal path writes the attempt it used. This one did
+            // not, so a job that was claimed and dispatched read `attempts: 2`
+            // afterwards — indistinguishable from one that was never picked up.
+            const tombstone = mockPrismaJob.updateMany.mock.calls
+                .map((call: Array<{ data: Record<string, unknown> }>) => call[0].data)
+                .find((data: Record<string, unknown>) => data.status === 'FAILED');
+            expect(tombstone).toMatchObject({ attempts: 3 });
         });
 
         it('clears lockUntil on the no-handler tombstone', async () => {
