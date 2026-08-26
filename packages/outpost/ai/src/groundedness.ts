@@ -367,7 +367,25 @@ function identifierSegments(rawToken: string): string[] {
 
     // A dotted form names a member; report the segments that carry our name so the
     // grounding lookup compares something a source could plausibly contain.
-    return token.split('.').filter((segment) => segment && isCopilotKitIdentifier(segment));
+    //
+    // Splitting on `#` as well as `.` is what strips a selector prefix before the
+    // lookup. `IDENTIFIER_PATH` admits either prefix, but only `.` used to be
+    // split, so an ID selector reached grounding as `#copilotKitPanel` — and
+    // grounding is a substring check, so it could never match a source writing the
+    // bare `copilotKitPanel`, which is how the docs write it. Two such names then
+    // met SUPPRESS_AT_UNSOURCED_IDENTIFIERS and withheld a correct answer.
+    //
+    // This closes the false-SUPPRESSION half only. The two prefixes still reach
+    // this function by different routes: `CSS_CLASS_PATTERN` finds a class
+    // selector anywhere in the response, deliberately including inside a ```css
+    // fence, while an ID selector arrives only via `BACKTICKED_PATTERN`, which
+    // cannot span a newline and so never matches inside a fence. So a fabricated
+    // `#copilotKitFake` in a css fence is still invisible where `.copilotKitFake`
+    // is caught. Fixing that means widening `CSS_CLASS_PATTERN` to `[.#]`, which
+    // ADDS suppression — the direction that withholds correct answers — and `#`
+    // carries traps `.` does not (`this.#copilotFoo` passes the lookbehind, since
+    // the character before `#` is `.`). That belongs in its own change.
+    return token.split(/[.#]/).filter((segment) => segment && isCopilotKitIdentifier(segment));
 }
 
 /**
