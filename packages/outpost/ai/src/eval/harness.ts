@@ -19,7 +19,7 @@
  *     offline against real threads. This is the one that answers whether quality
  *     moved, and it cannot be deterministic, so it must not gate a merge.
  *
- * `SHADOW_MODE` gates only the platform post-back (`ai-response.ts:178`) —
+ * `SHADOW_MODE` gates only the platform post-back (`ai-response.ts:824`) —
  * retrieval and generation run fully either way — so the live mode needs no new
  * safety machinery, just a caller that feeds real threads through
  * `AIPipeline.generateSupportResponse` and hands the text here.
@@ -59,6 +59,18 @@ export interface EvalReport {
 }
 
 export function scoreCases(cases: EvalCase[]): EvalReport {
+    // Refuses an empty set rather than reporting one as clean. With no cases,
+    // every rule scored `{passed: 0, total: 0}` and `formatReport` printed six
+    // `ok` lines because `passed === total` — so a live run whose fixture loading
+    // silently produced nothing rendered as a perfect score. Silence
+    // indistinguishable from success, in the tool built to detect exactly that.
+    if (cases.length === 0) {
+        throw new Error(
+            'scoreCases received no cases. An empty set cannot be scored — it would ' +
+                'report every rule as passing. Check that the fixtures actually loaded.',
+        );
+    }
+
     const scored: CaseScore[] = cases.map((c) => {
         const results = checkReply(c.reply, c.sources);
         return {
@@ -182,7 +194,12 @@ export const HISTORICAL_FAILURES: EvalCase[] = [
             'the peer dependency range looks too wide. ' +
             "Here is what I can't do from here: I cannot read the source or run the install " +
             'to confirm either point. In the future, please include the full lockfile diff so ' +
-            'this is easier to triage. The team will take it from here. '.repeat(2),
+            'this is easier to triage. The team will take it from here. ' +
+            // Padded deliberately so the reply clears the handoff cap, which is
+            // half of what case D is a fixture FOR. Previously `.repeat(2)` bound
+            // to the last literal only, so the reply ended with a stray duplicate
+            // sentence rather than the length the comment claimed.
+            'Let me know if any of that needs clarifying and someone will pick it up. '.repeat(3),
         sources: CHAT_DOCS,
         provenance: 'https://github.com/CopilotKit/CopilotKit/issues/6423',
     },

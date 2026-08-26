@@ -69,6 +69,15 @@ describe('the target shape passes', () => {
     });
 });
 
+// A live run whose fixture loading silently produced nothing used to render as a
+// perfect score: every rule {passed: 0, total: 0}, so `passed === total` printed
+// six `ok` lines.
+describe('an empty case list', () => {
+    it('is refused rather than scored as clean', () => {
+        expect(() => scoreCases([])).toThrow(/no cases/i);
+    });
+});
+
 describe('formatReport', () => {
     it('leads with the clean count and names each failing rule', () => {
         const text = formatReport(scoreCases(HISTORICAL_FAILURES));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkReply, RULES, HANDOFF_WORD_CAP } from './rules.js';
+import { checkReply, RULES, HANDOFF_WORD_CAP, MIN_REPLY_WORDS } from './rules.js';
 import type { SearchResult } from '../types.js';
 
 const source = (content: string, title = 'CopilotChat'): SearchResult => ({
@@ -61,51 +61,96 @@ describe('grounded-identifiers', () => {
 // can't, it becomes a two-sentence handoff instead." So the rule is a
 // disjunction, not a flat requirement — a short handoff is allowed to have no
 // link, and that is the whole point of it existing.
-describe('source-link-or-handoff', () => {
+describe('cites-or-is-a-short-handoff', () => {
     it('fails a long answer that cites nothing', () => {
         const wordy = 'You can configure this in several ways. '.repeat(12);
-        expect(broken(wordy)).toContain('source-link-or-handoff');
+        expect(broken(wordy)).toContain('cites-or-is-a-short-handoff');
     });
 
     it('passes a long answer that links the docs', () => {
         const wordy =
             'You can configure this in several ways. '.repeat(12) +
             ' https://docs.copilotkit.ai/guides/configuration';
-        expect(broken(wordy)).not.toContain('source-link-or-handoff');
+        expect(broken(wordy)).not.toContain('cites-or-is-a-short-handoff');
     });
 
     it('passes a long answer that links a repo file, since code is a real answer', () => {
         const wordy =
             'This is handled by the adapter. '.repeat(12) +
             ' https://github.com/CopilotKit/CopilotKit/blob/main/packages/runtime/src/agent.ts';
-        expect(broken(wordy)).not.toContain('source-link-or-handoff');
+        expect(broken(wordy)).not.toContain('cites-or-is-a-short-handoff');
     });
 
     it('passes a short handoff with no link at all', () => {
         expect(
             broken('Confirmed the manifest and lockfile skew. Routing this to the team.'),
-        ).not.toContain('source-link-or-handoff');
+        ).not.toContain('cites-or-is-a-short-handoff');
     });
 });
 
 // "Nothing found -> two sentences, done." A no-answer that runs to 400 words is
 // the single thing the doc says changes the feel of the product most.
-describe('handoff-is-short', () => {
+describe('the handoff cap', () => {
     it('fails a handoff that pads past the cap', () => {
         const padded =
             'A human will follow up here shortly. ' +
             'In the meantime here is some general background. '.repeat(20);
         const results = checkReply(padded, DOCS);
-        const handoff = results.find((r) => r.rule === 'handoff-is-short');
-        expect(handoff?.passed).toBe(false);
-        expect(handoff?.detail).toContain(String(HANDOFF_WORD_CAP));
+        const rule = results.find((r) => r.rule === 'cites-or-is-a-short-handoff');
+        expect(rule?.passed).toBe(false);
+        expect(rule?.detail).toContain(String(HANDOFF_WORD_CAP));
     });
 
     it('does not apply the cap to an answer that carries a source', () => {
         const long =
             'Use the `CopilotChat` component. '.repeat(30) +
             ' https://docs.copilotkit.ai/reference/components/chat/CopilotChat';
-        expect(broken(long)).not.toContain('handoff-is-short');
+        expect(broken(long)).not.toContain('cites-or-is-a-short-handoff');
+    });
+});
+
+// Every other rule is a prohibition, so without this one the score is maximised
+// by saying nothing — and an agent regressing toward empty replies would read as
+// the score improving.
+describe('says-something', () => {
+    it.each(['', '   ', 'No.', 'Escalating.', 'Routing this to the team.'])(
+        'fails %o, which is not a reply',
+        (reply) => {
+            expect(broken(reply, [])).toContain('says-something');
+        },
+    );
+
+    it('passes the shortest reply the doc actually endorses', () => {
+        // The reference handoff, quoted in the doc as the right answer for case D.
+        expect(
+            broken('Confirmed the manifest and lockfile skew. Routing this to the team — someone will follow up here.'),
+        ).toEqual([]);
+    });
+
+    it('reports the word count so a failure is actionable', () => {
+        const result = checkReply('No.', DOCS).find((r) => r.rule === 'says-something');
+        expect(result?.detail).toContain('1 words');
+        expect(MIN_REPLY_WORDS).toBeGreaterThan(1);
+    });
+});
+
+// "Never mention @copilotkitnext" is right as a default and wrong as an
+// absolute: the reporter importing from it needs to be told what to import
+// instead, and under a flat ban that reply is the one that cannot be given.
+describe('the migration answer', () => {
+    it('allows naming the dead package when the live one is named too', () => {
+        expect(
+            broken(
+                "You're importing from `@copilotkitnext/react`, which merged into " +
+                    '`@copilotkit/react-core` v2 — switch the import and the hook names carry over.',
+            ),
+        ).not.toContain('no-dead-package');
+    });
+
+    it('still fails a stray reference with no replacement named', () => {
+        expect(broken('Install `@copilotkitnext/react` first and then retry the build.')).toContain(
+            'no-dead-package',
+        );
     });
 });
 

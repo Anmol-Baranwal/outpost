@@ -45,6 +45,26 @@ import type { SearchResult } from '../types.js';
 export const HANDOFF_WORD_CAP = 60;
 
 /**
+ * Fewest words that can count as a reply at all.
+ *
+ * Every other rule here is a prohibition, so without this one the score is
+ * MAXIMISED by saying nothing: `checkReply('')` passed all of them, and so did
+ * `'No.'` and `'Escalating.'`. In the live mode that matters most — an agent
+ * regressing toward empty or near-empty replies would show up as the score
+ * IMPROVING, in the tool built to catch exactly that.
+ *
+ * Set against the doc's own floor rather than picked: the shortest acceptable
+ * reply is a Route, and a Route is *"two sentences. What we confirmed, if
+ * anything, and that a human is picking it up."* The reference handoff in the
+ * doc — "Confirmed the manifest/lockfile skew. Routing this to the team —
+ * someone will follow up here." — is 15 words, so 8 leaves real headroom while
+ * still rejecting a bare acknowledgement.
+ *
+ * A SILENT reply is not a short reply, it is no reply, and is never scored here.
+ */
+export const MIN_REPLY_WORDS = 8;
+
+/**
  * Phrases the reply may never contain, each traceable to a case in the doc.
  *
  * Anchored tightly on purpose. A rule that fires on ordinary prose is worse than
@@ -90,14 +110,31 @@ const HEDGED_NAME_PATTERNS: RegExp[] = [
  */
 const DEAD_PACKAGE = /@copilotkitnext\b/i;
 
+/**
+ * The one reply that legitimately names the retired package.
+ *
+ * "Never mention `@copilotkitnext`" is right as a default and wrong as an
+ * absolute: someone importing from it needs to be told what to import instead,
+ * and *"you're importing from `@copilotkitnext/react`, which merged into
+ * `@copilotkit/react-core` v2 — switch the import"* is the correct answer. Under
+ * a flat ban that reply fails, and in the linter it collapses into a handoff —
+ * so the one reporter who most needs the migration answer is the only one who
+ * cannot get it.
+ *
+ * The carve-out is narrow: naming the dead package is allowed only when the
+ * reply also names a live `@copilotkit/` package, which is what makes it a
+ * migration instruction rather than a stray reference.
+ */
+const LIVE_PACKAGE = /@copilotkit\/[a-z-]+/i;
+
 /** A link that constitutes a citation: a docs page or a file in the repo. */
 const CITATION_LINK =
     /https?:\/\/(?:[a-z0-9-]+\.)*(?:copilotkit\.ai|github\.com\/CopilotKit|github\.com\/ag-ui-protocol)\/\S+/i;
 
 export const RULES = [
+    'says-something',
     'grounded-identifiers',
-    'source-link-or-handoff',
-    'handoff-is-short',
+    'cites-or-is-a-short-handoff',
     'no-banned-phrases',
     'no-hedged-names',
     'no-dead-package',
@@ -139,6 +176,14 @@ export function checkReply(reply: string, sources: SearchResult[]): RuleResult[]
 
     return [
         {
+            rule: 'says-something',
+            passed: words >= MIN_REPLY_WORDS,
+            detail:
+                words >= MIN_REPLY_WORDS
+                    ? ''
+                    : `${words} words — too short to be a reply; the shortest acceptable one is a two-sentence handoff`,
+        },
+        {
             rule: 'grounded-identifiers',
             passed: groundedness.unsourcedIdentifiers.length === 0,
             detail: groundedness.unsourcedIdentifiers.length
@@ -146,22 +191,16 @@ export function checkReply(reply: string, sources: SearchResult[]): RuleResult[]
                 : '',
         },
         {
-            rule: 'source-link-or-handoff',
+            // One rule, not two. `source-link-or-handoff` and `handoff-is-short`
+            // evaluated the identical expression, so they could never disagree —
+            // which presented five independent signals as six and double-counted
+            // every failure in both the per-rule table and the report.
+            rule: 'cites-or-is-a-short-handoff',
             passed: cites || isShortEnoughForHandoff,
             detail:
                 cites || isShortEnoughForHandoff
                     ? ''
-                    : `${words} words with no docs or repo link; a reply this long has to cite what it came from`,
-        },
-        {
-            rule: 'handoff-is-short',
-            // Only binds when there is nothing to cite. An answer that carries a
-            // source has earned its length.
-            passed: cites || isShortEnoughForHandoff,
-            detail:
-                cites || isShortEnoughForHandoff
-                    ? ''
-                    : `uncited reply is ${words} words, over the ${HANDOFF_WORD_CAP}-word handoff cap`,
+                    : `${words} words with no docs or repo link, over the ${HANDOFF_WORD_CAP}-word handoff cap; a reply this long has to cite what it came from`,
         },
         {
             rule: 'no-banned-phrases',
@@ -175,10 +214,11 @@ export function checkReply(reply: string, sources: SearchResult[]): RuleResult[]
         },
         {
             rule: 'no-dead-package',
-            passed: !DEAD_PACKAGE.test(reply),
-            detail: DEAD_PACKAGE.test(reply)
-                ? 'mentions @copilotkitnext, which merged into @copilotkit v2'
-                : '',
+            passed: !DEAD_PACKAGE.test(reply) || LIVE_PACKAGE.test(reply),
+            detail:
+                DEAD_PACKAGE.test(reply) && !LIVE_PACKAGE.test(reply)
+                    ? 'mentions @copilotkitnext without naming the @copilotkit/ package that replaced it'
+                    : '',
         },
     ];
 }
