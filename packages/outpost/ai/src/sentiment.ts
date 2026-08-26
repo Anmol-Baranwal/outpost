@@ -74,6 +74,16 @@ export async function analyzeSentiment(
         });
 
         const text = extractResponseText(response.content);
+
+        // An empty extraction is a FAILURE, not a neutral reading. This one has
+        // teeth: account-scoring.ts skips its DB write only when `degraded` is
+        // set, so a fabricated NEUTRAL reported as healthy flipped a fail-closed
+        // gate to fail-open and persisted a sentiment nobody measured. Reachable
+        // as soon as a thinking-default model is configured.
+        if (!text.trim()) {
+            throw new Error('Model response contained no usable text');
+        }
+
         const tokenUsage: TokenUsage = {
             inputTokens: response.usage.input_tokens,
             outputTokens: response.usage.output_tokens,

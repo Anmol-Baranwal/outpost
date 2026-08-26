@@ -65,6 +65,17 @@ export class TicketClassifier {
             });
 
             const text = extractResponseText(message.content);
+
+            // An empty extraction is a FAILURE, not a result. Falling through to
+            // the parser turned it into a fabricated value reported as healthy:
+            // the parse catch returned a constant while `degraded` stayed false,
+            // so the caller could not tell a measured answer from a missing one.
+            // Reachable as soon as a thinking-default model is configured, since
+            // this call's max_tokens sits below a thinking turn — which is exactly
+            // the swap the temperature gate exists to enable.
+            if (!text.trim()) {
+                throw new Error('Model response contained no usable text');
+            }
             const tokenUsage: TokenUsage = {
                 inputTokens: message.usage.input_tokens,
                 outputTokens: message.usage.output_tokens,
