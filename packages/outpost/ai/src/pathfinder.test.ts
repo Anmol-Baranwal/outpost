@@ -207,6 +207,17 @@ describe('PathfinderClient', () => {
             );
         });
 
+        it('marks a code hit as code so the prompt can label it', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: CODE_SNIPPETS }] }) }),
+            );
+
+            const results = await client.searchCode({ query: 'x' });
+
+            expect(results[0].kind).toBe('code');
+        });
+
         it('calls the search-code tool, not search-docs', async () => {
             mockConnect();
             mockFetch.mockResolvedValueOnce(
@@ -233,6 +244,59 @@ describe('PathfinderClient', () => {
             );
 
             await expect(client.searchCode({ query: 'x' })).resolves.toEqual([]);
+        });
+    });
+
+    // The mirror image of the code-block fix, and the reason headers are now read
+    // only from above CONTENT:. A docs body quotes source code, so a line-initial
+    // `path:` — `copilotRuntimeNextJSAppRouter({ path: "/api/copilotkit" })` is in
+    // the self-hosting guide — used to read as a PATH header, make the block look
+    // like code, and take the docs URL away with it. A docs page that loses its URL
+    // cannot be cited, and the reply rules then collapse the answer into a handoff.
+    describe('docs blocks whose content quotes code', () => {
+        const DOCS_QUOTING_CODE = [
+            'SNIPPET 1',
+            'TITLE: Self-hosting the CopilotKit Runtime',
+            'SOURCE: https://docs.copilotkit.ai/guides/self-hosting',
+            'CONTENT:',
+            '```ts',
+            'const handler = copilotRuntimeNextJSAppRouter({',
+            '  path: "/api/copilotkit",',
+            '});',
+            '```',
+        ].join('\n');
+
+        it('keeps the real title when the body contains a line-initial path:', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: DOCS_QUOTING_CODE }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'self hosting' });
+
+            expect(results[0].title).toBe('Self-hosting the CopilotKit Runtime');
+        });
+
+        it('keeps the docs URL rather than trying to build a blob URL', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: DOCS_QUOTING_CODE }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'self hosting' });
+
+            expect(results[0].sourceUrl).toBe('https://docs.copilotkit.ai/guides/self-hosting');
+        });
+
+        it('classifies it as docs, not code', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: DOCS_QUOTING_CODE }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'self hosting' });
+
+            expect(results[0].kind).toBe('docs');
         });
     });
 

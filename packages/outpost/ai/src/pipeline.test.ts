@@ -135,8 +135,14 @@ describe('AIPipeline', () => {
                 source: undefined,
             } as never);
 
-            expect(mockSearchDocs).toHaveBeenCalledWith({ query: 'does it support subagents?' });
-            expect(mockSearchCode).toHaveBeenCalledWith({ query: 'does it support subagents?' });
+            expect(mockSearchDocs).toHaveBeenCalledWith({
+                query: 'does it support subagents?',
+                limit: 4,
+            });
+            expect(mockSearchCode).toHaveBeenCalledWith({
+                query: 'does it support subagents?',
+                limit: 4,
+            });
         });
 
         it('hands the generator both sources, interleaved so neither is buried', async () => {
@@ -227,6 +233,20 @@ describe('AIPipeline', () => {
 
             const sources = mockGenerate.mock.calls[0][1] as SearchResult[];
             expect(sources.map((s) => s.title)).toEqual(['p/a.ts']);
+        });
+
+        // Over-fetching paid for 16 snippets to keep 8, and cost docs recall on the
+        // majority path: a purely docs-answerable question would have got 4 docs
+        // hits instead of 8, the rest going to code that merely cleared min_score.
+        it('splits the budget across the two tools rather than over-fetching', async () => {
+            mockSearchDocs.mockResolvedValue([]);
+            mockSearchCode.mockResolvedValue([]);
+
+            await createPipeline().generateSupportResponse('q', { source: undefined } as never);
+
+            // defaultLimit is 8 in the mocked config, so 4 each.
+            expect(mockSearchDocs).toHaveBeenCalledWith({ query: 'q', limit: 4 });
+            expect(mockSearchCode).toHaveBeenCalledWith({ query: 'q', limit: 4 });
         });
 
         it('caps the merged list so the prompt cannot silently double', async () => {

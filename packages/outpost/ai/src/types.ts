@@ -47,6 +47,19 @@ export interface SearchResult {
     sourceUrl?: string;
     /** Category of the matched content */
     category?: string;
+    /**
+     * Whether this came from documentation or from source code.
+     *
+     * The prompt needs the distinction. GROUNDING_RULES tells the model that code
+     * entries are shown with their file path, and that where code and docs
+     * disagree the code is what ships — both unusable if a docs page titled
+     * `api-reference/components/CopilotKit` and a code hit titled
+     * `packages/react-core/src/index.ts` render identically.
+     *
+     * Optional because the JSON result format and the plain-text fallback carry no
+     * such marker; absent means "not known", which the prompt renders as neither.
+     */
+    kind?: 'docs' | 'code';
 }
 
 export interface GeneratedResponse {

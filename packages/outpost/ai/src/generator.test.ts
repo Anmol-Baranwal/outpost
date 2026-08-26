@@ -276,6 +276,52 @@ describe('ResponseGenerator', () => {
     // receives SOURCE CODE as well as docs, so the boundary the prompt has to
     // draw moved: retrieved code is fair to cite, un-retrieved files are not, and
     // a repro or a test run is still something it cannot do.
+    // GROUNDING_RULES tells the model that code entries are shown with their file
+    // path and that the code wins a disagreement with the docs. Both instructions
+    // are unusable if a docs page and a code hit render identically, so the
+    // rendering is part of the contract, not cosmetic.
+    describe('buildSystemPrompt source labelling', () => {
+        const generator = new ResponseGenerator({ apiKey: 'test-key' });
+        const build = (sources: SearchResult[]) =>
+            (
+                generator as unknown as {
+                    buildSystemPrompt: (s: SearchResult[], src?: undefined) => string;
+                }
+            ).buildSystemPrompt(sources, undefined);
+
+        it('labels a code source distinctly from a docs source', () => {
+            const prompt = build([
+                {
+                    title: 'packages/react-core/src/index.ts',
+                    content: 'export const x = 1;',
+                    score: 0.9,
+                    kind: 'code',
+                },
+                {
+                    title: 'api-reference/components/CopilotKit',
+                    content: 'The CopilotKit provider.',
+                    score: 0.8,
+                    kind: 'docs',
+                },
+            ]);
+
+            expect(prompt).toContain('[SOURCE CODE Source 1: packages/react-core/src/index.ts');
+            expect(prompt).toContain('[DOCS Source 2: api-reference/components/CopilotKit');
+        });
+
+        // The JSON result format and the plain-text fallback carry no marker, so an
+        // unlabelled source must not be asserted as either kind.
+        it('leaves a source of unknown kind unlabelled', () => {
+            const prompt = build([
+                { title: 'Untitled', content: 'something', score: 0.5 },
+            ]);
+
+            expect(prompt).toContain('[Source 1: Untitled');
+            expect(prompt).not.toContain('DOCS Source 1');
+            expect(prompt).not.toContain('SOURCE CODE Source 1');
+        });
+    });
+
     describe('GROUNDING_RULES', () => {
         it('states the model has not reproduced or tested, and has read only what was retrieved', () => {
             expect(GROUNDING_RULES).toContain('reproduced');

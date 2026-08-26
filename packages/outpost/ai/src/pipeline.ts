@@ -135,12 +135,12 @@ export class AIPipeline {
         // independent queries against the same server, and a docs-only latency
         // budget is the one we already live with.
         //
-        // The merged list is capped at `defaultLimit`. Without it the prompt
-        // carried up to 2x the sources it did before, and code snippets are
-        // line-numbered file excerpts far larger than doc snippets — so input
-        // tokens per ticket roughly doubled, with a real path to a
-        // context-length error that lands in the generator's catch and publishes
-        // the apology fallback.
+        // Each tool gets half the budget and the merged list is still capped, so
+        // the prompt carries what it always did. Without either, it would have
+        // carried up to 2x the sources — and code snippets are line-numbered file
+        // excerpts far larger than doc snippets, so input tokens per ticket
+        // roughly doubled, with a real path to a context-length error that lands
+        // in the generator's catch and publishes the apology fallback.
         //
         // AG-UI is deliberately NOT queried here. `searchAgUiDocs` and
         // `searchAgUiCode` exist on the client, but firing them on every
@@ -151,9 +151,15 @@ export class AIPipeline {
         // retrieval throwing threw away the other one's results and the answer was
         // built from nothing. Whichever source survives is worth more than
         // symmetry.
+        // Split the budget across the two tools instead of asking each for a full
+        // `defaultLimit` and discarding half. Over-fetching paid for 16 snippets to
+        // keep 8, and it also cost docs recall on the majority path: a purely
+        // docs-answerable question used to get 8 docs snippets and would have got
+        // 4, with the other 4 going to code hits that merely cleared min_score.
+        const perTool = Math.ceil(config.pathfinder.defaultLimit / 2);
         const [docsOutcome, codeOutcome] = await Promise.allSettled([
-            this.pathfinder.searchDocs({ query: question }),
-            this.pathfinder.searchCode({ query: question }),
+            this.pathfinder.searchDocs({ query: question, limit: perTool }),
+            this.pathfinder.searchCode({ query: question, limit: perTool }),
         ]);
         for (const [label, outcome] of [
             ['searchDocs', docsOutcome],

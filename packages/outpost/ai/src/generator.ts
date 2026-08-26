@@ -234,7 +234,13 @@ export class ResponseGenerator {
         const sourceContext = sources
             .map((s, i) => {
                 const urlLine = s.sourceUrl ? `\nURL: ${s.sourceUrl}` : '';
-                return `[Source ${i + 1}: ${s.title} (relevance: ${s.score.toFixed(2)})]${urlLine}\n${s.content}`;
+                // Labelled by kind, because GROUNDING_RULES now tells the model
+                // that code entries are shown with their file path and that the
+                // code wins a disagreement with the docs. Rendering both as an
+                // identical `[Source N: title]` left that instruction resolvable
+                // only by guessing at the title's shape.
+                const kindLabel = s.kind === 'code' ? 'SOURCE CODE ' : s.kind === 'docs' ? 'DOCS ' : '';
+                return `[${kindLabel}Source ${i + 1}: ${s.title} (relevance: ${s.score.toFixed(2)})]${urlLine}\n${s.content}`;
             })
             .join('\n\n');
 

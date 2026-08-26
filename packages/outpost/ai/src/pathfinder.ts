@@ -16,9 +16,22 @@ import { config } from './config.js';
  * is the best available and fails visibly.
  */
 function blobUrl(repository: string | undefined, path: string | undefined): string | undefined {
-    if (!repository || !path) return undefined;
-    const repo = repository.replace(/\.git$/, '').replace(/\/$/, '');
-    if (!/^https?:\/\/github\.com\//i.test(repo)) return undefined;
+    if (!path) return undefined;
+    // Logged rather than silently dropped. If the server ever emits a bare slug
+    // (`CopilotKit/CopilotKit`), an SSH remote, or omits REPOSITORY for one index,
+    // EVERY code hit arrives with nothing to cite — and the reply rules then
+    // collapse a correct code-grounded answer into a two-sentence handoff. That is
+    // the same silent-degradation shape this whole change exists to remove, so it
+    // has to leave a trace.
+    const repo = repository?.replace(/\.git$/, '').replace(/\/$/, '');
+    if (!repo || !/^https?:\/\/github\.com\//i.test(repo)) {
+        console.warn(
+            `[Pathfinder] code hit for "${path}" has no usable REPOSITORY ` +
+                `(got ${repository === undefined ? 'nothing' : JSON.stringify(repository)}), ` +
+                `so it reaches the prompt with no citable URL.`,
+        );
+        return undefined;
+    }
     return `${repo}/blob/main/${path.replace(/^\/+/, '')}`;
 }
 
@@ -296,25 +309,36 @@ export class PathfinderClient {
             .filter((b) => /TITLE:/i.test(b) || /PATH:/i.test(b));
 
         return blocks.map((block, i) => {
-            // Every header match is anchored to the start of a line. Unanchored,
-            // these read the FIRST `title:`/`source:` anywhere in the block — and
-            // a code block's body is source code, where `title: "Chat"` and
-            // `source: 'user'` are everyday object literals. A retrieved
-            // run-handler.ts came back with title `"Chat", source: 'user' };` and
-            // sourceUrl `'user' };`, which went into the prompt as
-            // `[Source 1: "Chat", source: 'user' };] URL: 'user' };` and buried
-            // the file path the reply was supposed to cite.
-            const path = block.match(/^\s*PATH:\s*(.+)$/im)?.[1]?.trim();
-            const repository = block.match(/^\s*REPOSITORY:\s*(.+)$/im)?.[1]?.trim();
+            // Headers are read ONLY from the part above `CONTENT:`, never from the
+            // body. Anchoring the patterns to a line start is not enough on its
+            // own, in either direction:
+            //
+            //   - a code body is source code, where `title: "Chat"` and
+            //     `source: 'user'` are everyday object literals;
+            //   - a docs body quotes source code, so a line-initial `path:` —
+            //     `copilotRuntimeNextJSAppRouter({ path: "/api/copilotkit" })` is
+            //     in the self-hosting guide — reads as a PATH header and makes the
+            //     block look like code, which took the docs URL away with it.
+            //
+            // Splitting first removes the whole class rather than the two spellings
+            // that happened to be noticed.
+            const contentAt = block.search(/^\s*CONTENT:/im);
+            const headerRegion = contentAt === -1 ? block : block.slice(0, contentAt);
 
-            // A code block is identified by PATH, and for one the path IS the
-            // title — checked before TITLE so an in-content `title:` that slipped
-            // past the anchor still cannot outrank the real header.
-            const title =
-                path ?? block.match(/^\s*TITLE:\s*(.+)$/im)?.[1]?.trim() ?? 'Documentation';
-            const source = path
-                ? blobUrl(repository, path)
-                : block.match(/^\s*SOURCE:\s*(.+)$/im)?.[1]?.trim();
+            const header = (name: string): string | undefined =>
+                headerRegion.match(new RegExp(`^\\s*${name}:\\s*(.+)$`, 'im'))?.[1]?.trim();
+
+            const titleHeader = header('TITLE');
+            const path = header('PATH');
+            const repository = header('REPOSITORY');
+
+            // A code block is the one with a PATH and no TITLE. Derived from the
+            // headers rather than from PATH alone, so a docs block can never be
+            // mistaken for code and lose its citable URL.
+            const isCode = !titleHeader && !!path;
+
+            const title = titleHeader ?? path ?? 'Documentation';
+            const source = isCode ? blobUrl(repository, path) : header('SOURCE');
             const contentMatch = block.match(/CONTENT:\s*([\s\S]*)$/i);
             const content = (contentMatch ? contentMatch[1] : block)
                 // Strip the trailing "---" separator that precedes the next snippet.
@@ -327,6 +351,11 @@ export class PathfinderClient {
                 score: Math.max(0.5, 1 - i * 0.05),
                 sourceUrl: source || undefined,
                 category: undefined,
+                // Carried so the prompt can label the two apart. GROUNDING_RULES
+                // now says "code entries are shown with their file path" and tells
+                // the model the code wins a conflict with the docs — neither is
+                // actionable if both render as an identical `[Source N: title]`.
+                kind: isCode ? ('code' as const) : ('docs' as const),
             };
         });
     }
@@ -335,9 +364,14 @@ export class PathfinderClient {
      * The four search tools share one schema, so they share one implementation.
      *
      * Kept private with named wrappers rather than exposed as a tool-name
-     * parameter: a caller passing an unknown name would fail at the wire with a
-     * JSON-RPC error that this class swallows into [], which is the silent
-     * no-retrieval failure mode this whole change exists to remove.
+     * parameter, so a caller cannot invent a name that fails at the wire.
+     *
+     * That is a narrow guarantee, and worth not overstating: `SearchTool` is a
+     * compile-time union and cannot know what the server actually exposes. A
+     * server-side rename of `search-code` still produces a JSON-RPC error, one
+     * `console.error`, and `[]` — indistinguishable from "no code matched" for as
+     * long as nobody reads the logs. Making that checkable needs a `tools/list`
+     * probe at startup; tracked in #244.
      */
     private async search(tool: SearchTool, query: PathfinderQuery): Promise<SearchResult[]> {
         try {
