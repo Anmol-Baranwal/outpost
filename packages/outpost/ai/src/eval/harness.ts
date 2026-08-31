@@ -236,5 +236,5 @@ export const TARGET_SHAPE: EvalCase = {
         },
     ],
     provenance:
-        'Maintainer reply quoted in the Agent\'s Output Doc, from the case-a thread (2026-08-08)',
+        "Maintainer reply quoted in the Agent's Output Doc, from the case-a thread (2026-08-08)",
 };

@@ -123,7 +123,9 @@ describe('says-something', () => {
     it('passes the shortest reply the doc actually endorses', () => {
         // The reference handoff, quoted in the doc as the right answer for case D.
         expect(
-            broken('Confirmed the manifest and lockfile skew. Routing this to the team — someone will follow up here.'),
+            broken(
+                'Confirmed the manifest and lockfile skew. Routing this to the team — someone will follow up here.',
+            ),
         ).toEqual([]);
     });
 
@@ -160,7 +162,7 @@ describe('the migration answer', () => {
 describe('no-banned-phrases', () => {
     it.each([
         'Great question! Use the `CopilotChat` component.',
-        "Thanks for this detailed report. Use the `CopilotChat` component.",
+        'Thanks for this detailed report. Use the `CopilotChat` component.',
         "Here is what I can't do from here: read the source.",
         "I can't see other people's replies in this thread.",
         'In the future, please include a minimal reproduction in your issue.',

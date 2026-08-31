@@ -75,16 +75,26 @@ export const MIN_REPLY_WORDS = 8;
 const BANNED_PHRASES: Array<{ pattern: RegExp; why: string }> = [
     // Case D's opener, and the doc's "no praise openers" rule.
     { pattern: /\bgreat question\b/i, why: 'praise opener' },
-    { pattern: /\bthanks for (?:this|the|your) (?:detailed |thorough |thoughtful )?report\b/i, why: 'praise opener' },
+    {
+        pattern: /\bthanks for (?:this|the|your) (?:detailed |thorough |thoughtful )?report\b/i,
+        why: 'praise opener',
+    },
     { pattern: /\bexcellent (?:question|report|catch)\b/i, why: 'praise opener' },
     // Case D's "What I can't do from here" section, and the rule against the
     // agent performing its own humility.
     { pattern: /\bwhat i (?:can'?t|cannot) do\b/i, why: 'self-commentary about its own limits' },
-    { pattern: /\bi (?:haven'?t|have not) read the source\b/i, why: 'self-commentary about its own limits' },
-    { pattern: /\bi (?:don'?t|do not) have access to\b/i, why: 'self-commentary about its own limits' },
+    {
+        pattern: /\bi (?:haven'?t|have not) read the source\b/i,
+        why: 'self-commentary about its own limits',
+    },
+    {
+        pattern: /\bi (?:don'?t|do not) have access to\b/i,
+        why: 'self-commentary about its own limits',
+    },
     // Case C: it claimed it could not read the thread. It can.
     {
-        pattern: /\bi (?:can'?t|cannot) see (?:other|the other|anyone)[^.]{0,40}\b(?:replies|messages|responses)\b/i,
+        pattern:
+            /\bi (?:can'?t|cannot) see (?:other|the other|anyone)[^.]{0,40}\b(?:replies|messages|responses)\b/i,
         why: 'false claim that it cannot see the thread',
     },
     // Case D again: coaching the reporter on how to file better issues.

@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-    scoreCases,
-    formatReport,
-    HISTORICAL_FAILURES,
-    TARGET_SHAPE,
-} from './harness.js';
+import { scoreCases, formatReport, HISTORICAL_FAILURES, TARGET_SHAPE } from './harness.js';
 import { RULES } from './rules.js';
 
 describe('scoreCases', () => {
