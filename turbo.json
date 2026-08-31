@@ -36,13 +36,17 @@
             "cache": false,
             "persistent": true
         },
-        // NOTE: the root ESLint config is deliberately NOT wired as an input here yet. It
-        // belongs on this task rather than in globalDependencies, but `turbo run lint`
-        // currently fails outright (ESLint 9 cannot read .eslintrc.cjs without an env var
-        // turbo strips), so the wiring cannot be tested — a failing task is never cached.
-        // Land it with the lint enablement in #141, where the cache behavior is observable.
+        // The root ESLint config is an input to every package's lint task: editing a
+        // rule has to invalidate the cached result, or a stricter config reports the
+        // previous run's clean output. It belongs here rather than in
+        // globalDependencies so a config change invalidates lint alone and not build,
+        // test and typecheck along with it.
+        //
+        // `.prettierignore` is not listed: formatting is checked in CI against the
+        // changed files rather than through turbo, so no cached task depends on it.
         "lint": {
-            "dependsOn": ["^build"]
+            "dependsOn": ["^build"],
+            "inputs": ["$TURBO_DEFAULT$", "../../eslint.config.mjs", "eslint.config.mjs"]
         },
         "test": {
             "dependsOn": ["^build"]
