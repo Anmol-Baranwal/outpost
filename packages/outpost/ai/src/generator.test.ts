@@ -88,6 +88,27 @@ describe('ResponseGenerator', () => {
         // multi-block response through `generate()` — reverting the call site to
         // first-block-only left the whole suite green, so a bad merge or a refactor
         // could put the original defect back silently. #187 touches this same file.
+        it('sends no temperature at all when the model rejects one', async () => {
+            mock.onMessage(/./, {
+                content: 'Here is the answer.',
+                usage: { input_tokens: 10, output_tokens: 10 },
+            });
+
+            await new ResponseGenerator({ apiKey: 'test-key', model: 'claude-opus-5' }).generate(
+                { question: 'test' },
+                sampleSources,
+            );
+
+            const body = mock.getLastRequest()?.body as Record<string, unknown>;
+            expect(body.model).toBe('claude-opus-5');
+            // Asserted on the VALUE, not key presence: aimock's journal is a
+            // normalized view of the request and always carries a `temperature`
+            // key, holding `undefined` when we sent none. Absence on the wire is
+            // what model-capabilities.test.ts pins; this pins that the call site
+            // routes through the gate at all.
+            expect(body.temperature).toBeUndefined();
+        });
+
         it('should read past a leading thinking block when generating', async () => {
             mock.onMessage(/./, {
                 content: 'Use useCopilotAction for that.',

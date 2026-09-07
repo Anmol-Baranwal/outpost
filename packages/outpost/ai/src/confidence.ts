@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { SearchResult, TokenUsage } from './types.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
 import { config } from './config.js';
+import { samplingParams } from './model-capabilities.js';
+import { extractResponseText } from './generator.js';
 
 export interface ConfidenceAssessment {
     level: ConfidenceLevel;
@@ -64,12 +66,23 @@ export class ConfidenceScorer {
             const message = await this.client.messages.create({
                 model: this.model,
                 max_tokens: config.maxConfidenceTokens,
-                temperature: config.confidenceTemperature,
+                ...samplingParams(this.model, config.confidenceTemperature),
                 system: CONFIDENCE_SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: userMessage }],
             });
 
-            const text = message.content[0].type === 'text' ? message.content[0].text : '';
+            const text = extractResponseText(message.content);
+
+            // An empty extraction is a FAILURE, not a result. Falling through to
+            // the parser turned it into a fabricated value reported as healthy:
+            // the parse catch returned a constant while `degraded` stayed false,
+            // so the caller could not tell a measured answer from a missing one.
+            // Reachable as soon as a thinking-default model is configured, since
+            // this call's max_tokens sits below a thinking turn — which is exactly
+            // the swap the temperature gate exists to enable.
+            if (!text.trim()) {
+                throw new Error('Model response contained no usable text');
+            }
             const tokenUsage: TokenUsage = {
                 inputTokens: message.usage.input_tokens,
                 outputTokens: message.usage.output_tokens,

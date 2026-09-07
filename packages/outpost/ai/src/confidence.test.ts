@@ -51,6 +51,66 @@ describe('ConfidenceScorer', () => {
     });
 
     describe('score', () => {
+        // Same first-block-only defect as the classifier: with thinking on, the
+        // score JSON is the SECOND block, so the scorer fell back to its heuristic
+        // and the model's judgement was thrown away silently.
+        it('sends no temperature at all when the model rejects one', async () => {
+            mock.onMessage(/./, {
+                content: JSON.stringify({ score: 0.9, level: 'HIGH', reasoning: 'ok' }),
+                usage: { input_tokens: 10, output_tokens: 10 },
+            });
+
+            await new ConfidenceScorer({ apiKey: 'test-key', model: 'claude-opus-5' }).score(
+                'q',
+                'a',
+                highQualityResults,
+            );
+
+            const body = mock.getLastRequest()?.body as Record<string, unknown>;
+            expect(body.model).toBe('claude-opus-5');
+            // Asserted on the VALUE, not key presence: aimock's journal is a
+            // normalized view of the request and always carries a `temperature`
+            // key, holding `undefined` when we sent none. Absence on the wire is
+            // what model-capabilities.test.ts pins; this pins that the call site
+            // routes through the gate at all.
+            expect(body.temperature).toBeUndefined();
+        });
+
+        it('reports degraded when the response has no text', async () => {
+            mock.onMessage(/./, {
+                content: '',
+                reasoning: 'thought about it and emitted no text',
+                usage: { input_tokens: 10, output_tokens: 10 },
+            });
+
+            const result = await scorer.score('q', 'a', highQualityResults);
+
+            expect(result.degraded).toBe(true);
+        });
+
+        it('should read the score past a leading thinking block', async () => {
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    score: 0.9,
+                    level: 'HIGH',
+                    reasoning: 'Results directly address the question',
+                }),
+                reasoning: 'internal thinking that is not the score',
+                usage: { input_tokens: 200, output_tokens: 30 },
+            });
+
+            const result = await scorer.score(
+                'How do I use actions?',
+                'Here is how to use actions...',
+                highQualityResults,
+            );
+
+            // The exact score pins that the JSON parsed rather than the heuristic
+            // happening to land on the same level.
+            expect(result.score).toBe(0.9);
+            expect(result.level).toBe(ConfidenceLevel.HIGH);
+        });
+
         it('should return HIGH confidence for well-matched results', async () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({

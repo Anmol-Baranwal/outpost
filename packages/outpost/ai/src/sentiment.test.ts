@@ -55,6 +55,52 @@ describe('analyzeSentiment', () => {
         expect(result.tokenUsage.inputTokens).toBe(150);
     });
 
+    // Same first-block-only defect as the classifier and the scorer.
+    it('sends no temperature at all when the model rejects one', async () => {
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 10, label: 'POSITIVE' }),
+            usage: { input_tokens: 10, output_tokens: 10 },
+        });
+
+        await analyzeSentiment(['thanks!'], { apiKey: 'test-key', model: 'claude-opus-5' });
+
+        const body = mock.getLastRequest()?.body as Record<string, unknown>;
+        expect(body.model).toBe('claude-opus-5');
+        // Asserted on the VALUE, not key presence: aimock's journal is a
+        // normalized view and always carries a `temperature` key, holding
+        // `undefined` when we sent none.
+        expect(body.temperature).toBeUndefined();
+    });
+
+    // The consequence, not just the shape: account-scoring skips its DB write
+    // only when `degraded` is set, so an empty response returning a fabricated
+    // NEUTRAL with degraded:false flipped a fail-closed gate to fail-open and
+    // persisted a sentiment nobody measured.
+    it('reports degraded when the response has no text, so the DB write is skipped', async () => {
+        mock.onMessage(/./, {
+            content: '',
+            reasoning: 'thought about it and emitted no text',
+            usage: { input_tokens: 10, output_tokens: 10 },
+        });
+
+        const result = await analyzeSentiment(['this is still broken'], { apiKey: 'test-key' });
+
+        expect(result.degraded).toBe(true);
+    });
+
+    it('should read the score past a leading thinking block', async () => {
+        mock.onMessage(/./, {
+            content: JSON.stringify({ score: 65, label: 'NEGATIVE' }),
+            reasoning: 'internal thinking that is not the score',
+            usage: { input_tokens: 200, output_tokens: 20 },
+        });
+
+        const result = await analyzeSentiment(['This is still broken.'], { apiKey: 'test-key' });
+
+        expect(result.score).toBe(65);
+        expect(result.label).toBe(SentimentLabel.NEGATIVE);
+    });
+
     it('should classify negative messages correctly', async () => {
         mock.onMessage(/./, {
             content: JSON.stringify({ score: 65, label: 'NEGATIVE' }),
