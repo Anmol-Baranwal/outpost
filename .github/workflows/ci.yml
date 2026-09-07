@@ -1,12 +1,24 @@
 name: CI
 
 on:
-    # `main` is the known-good line and deploys production; `staging` is the
-    # integration line and deploys staging. Railway's deploy triggers wait for a CI
-    # check suite on the pushed commit, so both branches must run CI here — dropping
-    # one would leave its deploys waiting on a check that never arrives.
+    # No branch filter on pull_request, deliberately.
+    #
+    # Filtering to [main, staging] meant a PR based on another PR's branch — a
+    # stack — got no CI at all. `Static analysis (zizmor)` uses a bare
+    # `pull_request:` trigger because it is a required status check, so it still
+    # reported and still passed, and GitHub then read the PR as CLEAN and
+    # mergeable. #249 sat that way: 618 lines presenting as green with a workflow
+    # linter as its only signal and no test run behind it.
+    #
+    # A check that reports success without evaluating anything is worse than no
+    # check, so this now runs on every pull request whatever its base.
     pull_request:
-        branches: [main, staging]
+    # `push` keeps the filter. `main` is the known-good line and deploys
+    # production; `staging` is the integration line and deploys staging. Railway's
+    # deploy triggers wait for a CI check suite on the pushed commit, so both
+    # branches must run CI here — dropping one would leave its deploys waiting on a
+    # check that never arrives. No other branch deploys, so no other branch needs a
+    # push-triggered suite; its PR run covers it.
     push:
         branches: [main, staging]
 
