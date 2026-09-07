@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { LLMock } from '@copilotkit/aimock';
-import { ConfidenceScorer } from './confidence.js';
+import { ConfidenceScorer, CONFIDENCE_SYSTEM_PROMPT } from './confidence.js';
 import { ConfidenceLevel } from './types.js';
 import type { SearchResult } from './types.js';
 
@@ -229,5 +229,26 @@ describe('ConfidenceScorer', () => {
 
             expect(many.score).toBeGreaterThan(single.score);
         });
+    });
+});
+
+// The generator was taught that retrieved source code is fair to cite. This
+// prompt is the other half: it used to tell the scorer the assistant "could not
+// read CopilotKit's source", so a correct code-grounded answer was exactly the
+// shape it was instructed to mark down — and the pipeline takes min(generator,
+// scorer), so the code-search win got clawed back at scoring time.
+describe('CONFIDENCE_SYSTEM_PROMPT', () => {
+    it('no longer tells the scorer the assistant could not read the source', () => {
+        expect(CONFIDENCE_SYSTEM_PROMPT).not.toContain("could not read CopilotKit's source");
+    });
+
+    it('tells the scorer that citing retrieved code is correct, not a markdown', () => {
+        expect(CONFIDENCE_SYSTEM_PROMPT).toContain('SOURCE CODE');
+        expect(CONFIDENCE_SYSTEM_PROMPT).toContain('do NOT mark a response down for citing');
+    });
+
+    it('still holds the line on what the assistant genuinely cannot do', () => {
+        expect(CONFIDENCE_SYSTEM_PROMPT).toContain('reproduce the user');
+        expect(CONFIDENCE_SYSTEM_PROMPT).toContain('run any test');
     });
 });

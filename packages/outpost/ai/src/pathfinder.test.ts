@@ -125,6 +125,209 @@ describe('PathfinderClient', () => {
         });
     });
 
+    // The code-search tools return a DIFFERENT snippet shape than the docs
+    // tools: REPOSITORY/PATH/CONTENT, with no TITLE line. `parseSnippets` used to
+    // require /TITLE:/ to accept a block, so every code hit was dropped on the
+    // floor and searchCode returned [] while looking like it had worked — a
+    // retrieval source that silently contributes nothing is worse than one that
+    // errors, because the answer just quietly has less to stand on.
+    const CODE_SNIPPETS = [
+        'SNIPPET 1',
+        'REPOSITORY: https://github.com/CopilotKit/CopilotKit.git',
+        'PATH: packages/core/src/core/run-handler.ts',
+        'CONTENT:',
+        '// File: packages/core/src/core/run-handler.ts',
+        '1114 |     const agent = this._internal.getAgent(resolvedAgentId);',
+        '',
+        'SNIPPET 2',
+        'REPOSITORY: https://github.com/CopilotKit/CopilotKit.git',
+        'PATH: packages/runtime/src/langgraph/agent.ts',
+        'CONTENT:',
+        'export function streamSubgraphEvents() {}',
+    ].join('\n');
+
+    describe('searchCode', () => {
+        it('parses the REPOSITORY/PATH/CONTENT shape the code tools actually return', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: CODE_SNIPPETS }] }) }),
+            );
+
+            const results = await client.searchCode({ query: 'subagent task tool' });
+
+            expect(results).toHaveLength(2);
+            // The file path is the only human-meaningful title a code hit has.
+            expect(results[0].title).toBe('packages/core/src/core/run-handler.ts');
+            expect(results[0].content).toContain('getAgent(resolvedAgentId)');
+            expect(results[1].title).toBe('packages/runtime/src/langgraph/agent.ts');
+        });
+
+        // "If the answer only exists in the source, link the file in the repo. A
+        // repo link is a real answer." So the blob URL has to be built, or the
+        // reply has nothing to cite and collapses to a handoff.
+        it('builds a repo blob URL so the reply has something to cite', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: CODE_SNIPPETS }] }) }),
+            );
+
+            const results = await client.searchCode({ query: 'x' });
+
+            expect(results[0].sourceUrl).toBe(
+                'https://github.com/CopilotKit/CopilotKit/blob/main/packages/core/src/core/run-handler.ts',
+            );
+        });
+
+        // The header regexes were unanchored, so the first `title:`/`source:`
+        // ANYWHERE in the block won — and a code block's body is source code,
+        // where `title: "Chat"` and `source: 'user'` are everyday object
+        // literals. A real run-handler.ts came back titled `"Chat", source:
+        // 'user' };` with sourceUrl `'user' };`, which went into the prompt as
+        // `[Source 1: "Chat", source: 'user' };] URL: 'user' };` and buried the
+        // file path the reply was supposed to cite.
+        it('is not fooled by title: or source: appearing inside the code itself', async () => {
+            const withLiterals = [
+                'SNIPPET 1',
+                'REPOSITORY: https://github.com/CopilotKit/CopilotKit.git',
+                'PATH: packages/core/src/core/run-handler.ts',
+                'CONTENT:',
+                '  12 |   const card = { title: "Chat", source: \'user\' };',
+            ].join('\n');
+
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: withLiterals }] }) }),
+            );
+
+            const results = await client.searchCode({ query: 'x' });
+
+            expect(results[0].title).toBe('packages/core/src/core/run-handler.ts');
+            expect(results[0].sourceUrl).toBe(
+                'https://github.com/CopilotKit/CopilotKit/blob/main/packages/core/src/core/run-handler.ts',
+            );
+        });
+
+        it('marks a code hit as code so the prompt can label it', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: CODE_SNIPPETS }] }) }),
+            );
+
+            const results = await client.searchCode({ query: 'x' });
+
+            expect(results[0].kind).toBe('code');
+        });
+
+        it('calls the search-code tool, not search-docs', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: CODE_SNIPPETS }] }) }),
+            );
+
+            await client.searchCode({ query: 'subagent' });
+
+            const body = JSON.parse(mockFetch.mock.calls[2][1].body);
+            expect(body.params.name).toBe('search-code');
+            expect(body.params.arguments.query).toBe('subagent');
+        });
+
+        it('returns [] rather than throwing when the tool errors', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        error: { message: 'index unavailable' },
+                    }),
+                }),
+            );
+
+            await expect(client.searchCode({ query: 'x' })).resolves.toEqual([]);
+        });
+    });
+
+    // The mirror image of the code-block fix, and the reason headers are now read
+    // only from above CONTENT:. A docs body quotes source code, so a line-initial
+    // `path:` — `copilotRuntimeNextJSAppRouter({ path: "/api/copilotkit" })` is in
+    // the self-hosting guide — used to read as a PATH header, make the block look
+    // like code, and take the docs URL away with it. A docs page that loses its URL
+    // cannot be cited, and the reply rules then collapse the answer into a handoff.
+    describe('docs blocks whose content quotes code', () => {
+        const DOCS_QUOTING_CODE = [
+            'SNIPPET 1',
+            'TITLE: Self-hosting the CopilotKit Runtime',
+            'SOURCE: https://docs.copilotkit.ai/guides/self-hosting',
+            'CONTENT:',
+            '```ts',
+            'const handler = copilotRuntimeNextJSAppRouter({',
+            '  path: "/api/copilotkit",',
+            '});',
+            '```',
+        ].join('\n');
+
+        it('keeps the real title when the body contains a line-initial path:', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: DOCS_QUOTING_CODE }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'self hosting' });
+
+            expect(results[0].title).toBe('Self-hosting the CopilotKit Runtime');
+        });
+
+        it('keeps the docs URL rather than trying to build a blob URL', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: DOCS_QUOTING_CODE }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'self hosting' });
+
+            expect(results[0].sourceUrl).toBe('https://docs.copilotkit.ai/guides/self-hosting');
+        });
+
+        it('classifies it as docs, not code', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: DOCS_QUOTING_CODE }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'self hosting' });
+
+            expect(results[0].kind).toBe('docs');
+        });
+    });
+
+    describe('the AG-UI tools', () => {
+        it('searchAgUiCode calls search-ag-ui-code', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: CODE_SNIPPETS }] }) }),
+            );
+
+            await client.searchAgUiCode({ query: 'protocol event' });
+
+            expect(JSON.parse(mockFetch.mock.calls[2][1].body).params.name).toBe(
+                'search-ag-ui-code',
+            );
+        });
+
+        it('searchAgUiDocs calls search-ag-ui-docs', async () => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: CODE_SNIPPETS }] }) }),
+            );
+
+            await client.searchAgUiDocs({ query: 'protocol event' });
+
+            expect(JSON.parse(mockFetch.mock.calls[2][1].body).params.name).toBe(
+                'search-ag-ui-docs',
+            );
+        });
+    });
+
     describe('searchDocs', () => {
         it('parses the SNIPPET/TITLE/SOURCE/CONTENT text format', async () => {
             mockConnect();

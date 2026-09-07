@@ -94,6 +94,13 @@ function createPipeline() {
     return new AIPipeline({
         pathfinder: {
             searchDocs: vi.fn().mockResolvedValue(SOURCES),
+            // Retrieval now queries code alongside docs, so this stub has to
+            // answer both. Returning [] rather than SOURCES keeps this file's
+            // subject — that the groundedness penalty is deducted exactly once —
+            // measured against the same source set it was written for.
+            searchCode: vi.fn().mockResolvedValue([]),
+            searchAgUiDocs: vi.fn().mockResolvedValue([]),
+            searchAgUiCode: vi.fn().mockResolvedValue([]),
             searchAll: vi.fn().mockResolvedValue(SOURCES),
             exploreDocs: vi.fn(),
             queryKnowledgeBase: vi.fn(),
