@@ -300,6 +300,63 @@ describe('PathfinderClient', () => {
         });
     });
 
+    // Three layers independently prevent a docs block being read as code: the
+    // title prefers TITLE over PATH, `isCode` requires the absence of TITLE, and
+    // headers are read only from above CONTENT:. That redundancy is deliberate,
+    // and it means no single one of them is pinned by the docs-quoting-code test
+    // above — reverting any one alone leaves the suite green. These two isolate a
+    // layer each, so simplifying one away is visible.
+    describe('each structural layer, isolated', () => {
+        // Isolates the title order and `isCode`. A block carrying BOTH headers is
+        // the shape that appears if the server ever gives code hits a title —
+        // a contract we do not own. It must read as docs and keep its SOURCE.
+        it('treats a block with both TITLE and PATH as docs', async () => {
+            const both = [
+                'SNIPPET 1',
+                'TITLE: Self-hosting the CopilotKit Runtime',
+                'SOURCE: https://docs.copilotkit.ai/guides/self-hosting',
+                'PATH: packages/core/src/core/run-handler.ts',
+                'CONTENT:',
+                'const handler = copilotRuntimeNextJSAppRouter({});',
+            ].join('\n');
+
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: both }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'self hosting' });
+
+            expect(results[0].kind).toBe('docs');
+            expect(results[0].title).toBe('Self-hosting the CopilotKit Runtime');
+            expect(results[0].sourceUrl).toBe('https://docs.copilotkit.ai/guides/self-hosting');
+        });
+
+        // Isolates the header region. This block has no real SOURCE header, and a
+        // line-initial `SOURCE:` inside its content. Matching headers over the
+        // whole block would adopt that line as the citation.
+        it('does not read a SOURCE header out of the content', async () => {
+            const sourceInBody = [
+                'SNIPPET 1',
+                'TITLE: Configuring the runtime',
+                'CONTENT:',
+                '```yaml',
+                'SOURCE: https://evil.example.com/not-a-real-page',
+                '```',
+            ].join('\n');
+
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: sourceInBody }] }) }),
+            );
+
+            const results = await client.searchDocs({ query: 'configuring' });
+
+            expect(results[0].title).toBe('Configuring the runtime');
+            expect(results[0].sourceUrl).toBeUndefined();
+        });
+    });
+
     describe('the AG-UI tools', () => {
         it('searchAgUiCode calls search-ag-ui-code', async () => {
             mockConnect();
