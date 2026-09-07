@@ -47,4 +47,14 @@ export type {
     TopIssueInput,
     ScoredTopIssue,
 } from './front-door.js';
+// The rule set and the scorer are API — Phase 3's linter consumes them.
+// HISTORICAL_FAILURES and TARGET_SHAPE deliberately are NOT: they are test data,
+// and exporting them put reconstructed bad replies containing
+// `useCopilotFabricatedRender` and `@copilotkitnext/react` into dist and the
+// worker image, where they would surface in a bundle grep for the dead package.
+// Import them from './eval/harness.js' directly in tests and offline runners.
+export { checkReply, RULES, HANDOFF_WORD_CAP, MIN_REPLY_WORDS } from './eval/rules.js';
+export type { RuleId, RuleResult } from './eval/rules.js';
+export { scoreCases, formatReport } from './eval/harness.js';
+export type { EvalCase, CaseScore, EvalReport } from './eval/harness.js';
 export * from './types.js';
