@@ -240,7 +240,8 @@ export class ResponseGenerator {
                 // code wins a disagreement with the docs. Rendering both as an
                 // identical `[Source N: title]` left that instruction resolvable
                 // only by guessing at the title's shape.
-                const kindLabel = s.kind === 'code' ? 'SOURCE CODE ' : s.kind === 'docs' ? 'DOCS ' : '';
+                const kindLabel =
+                    s.kind === 'code' ? 'SOURCE CODE ' : s.kind === 'docs' ? 'DOCS ' : '';
                 return `[${kindLabel}Source ${i + 1}: ${s.title} (relevance: ${s.score.toFixed(2)})]${urlLine}\n${s.content}`;
             })
             .join('\n\n');

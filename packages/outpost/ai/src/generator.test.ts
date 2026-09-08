@@ -333,9 +333,7 @@ describe('ResponseGenerator', () => {
         // The JSON result format and the plain-text fallback carry no marker, so an
         // unlabelled source must not be asserted as either kind.
         it('leaves a source of unknown kind unlabelled', () => {
-            const prompt = build([
-                { title: 'Untitled', content: 'something', score: 0.5 },
-            ]);
+            const prompt = build([{ title: 'Untitled', content: 'something', score: 0.5 }]);
 
             expect(prompt).toContain('[Source 1: Untitled');
             expect(prompt).not.toContain('DOCS Source 1');
@@ -347,7 +345,9 @@ describe('ResponseGenerator', () => {
         it('states the model has not reproduced or tested, and has read only what was retrieved', () => {
             expect(GROUNDING_RULES).toContain('reproduced');
             expect(GROUNDING_RULES).toContain('run any test');
-            expect(GROUNDING_RULES).toContain('not read any file that is not in the Documentation Context');
+            expect(GROUNDING_RULES).toContain(
+                'not read any file that is not in the Documentation Context',
+            );
         });
 
         // The regression guard that matters. This exact instruction was in the
