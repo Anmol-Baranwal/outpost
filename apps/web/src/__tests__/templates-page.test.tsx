@@ -181,6 +181,49 @@ describe('the editor reports what the server actually said (outpost#226)', () =>
     });
 });
 
+// A save writes the override and every read surface honours it, but outgoing email
+// does not — `sendEmail` consults an override only when handed a `dbLookup`, and
+// neither invite call site passes one, so the invitee gets the on-disk copy.
+// "Template saved successfully" was true about the row and false about the thing
+// the author cared about. These pin the honest copy, because the dishonest version
+// is the shorter and more natural string to write.
+describe('the editor does not claim more than a save delivers (outpost#226)', () => {
+    beforeEach(() => {
+        mockApiFetch.mockReset();
+    });
+
+    it('says the save is not yet used for outgoing email', async () => {
+        mockApiFetch.mockImplementation(async (url: string, init?: { method?: string }) => {
+            if (url === '/api/templates') return jsonOk(TEMPLATE_LIST);
+            if (url === '/api/templates/welcome' && (!init?.method || init.method === 'GET')) {
+                return jsonOk(TEMPLATE_DETAIL);
+            }
+            return jsonOk({ ok: true });
+        });
+        await openTemplate();
+
+        fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+        const banner = await screen.findByText(/not yet used for outgoing email/i);
+        expect(banner).toBeTruthy();
+        // The bare claim must not be what the author reads.
+        expect(screen.queryByText('Template saved successfully')).toBeNull();
+    });
+
+    it('marks an overridden template as preview-only in the list', async () => {
+        // The shared fixture is un-overridden, so this test supplies its own — the
+        // badge only appears for a template that actually has a stored override.
+        const overridden = [{ ...TEMPLATE_LIST[0], isOverride: true }];
+        mockApiFetch.mockImplementation(async (url: string) => {
+            if (url === '/api/templates') return jsonOk(overridden);
+            return jsonOk(TEMPLATE_DETAIL);
+        });
+        render(<TemplatesPage />);
+
+        expect(await screen.findByText(/custom \(preview only\)/i)).toBeTruthy();
+    });
+});
+
 describe('reset gives the author feedback (outpost#226)', () => {
     beforeEach(() => {
         mockApiFetch.mockReset();

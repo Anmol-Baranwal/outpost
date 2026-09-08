@@ -123,7 +123,19 @@ export default function TemplatesPage() {
             });
             if (!res.ok) throw new Error(await describeFailure(res, 'Save failed'));
             await fetchTemplates();
-            setSuccess('Template saved successfully');
+            // Says what actually happened. The override is written and every read
+            // surface honours it — this list, GET, the preview — but outgoing email
+            // does not: `sendEmail` consults an override only when handed a
+            // `dbLookup` (shared/src/email/sender.ts:166), and neither
+            // api/team/invite/route.ts:72 nor invite/resend/route.ts:52 passes one.
+            // So an invitee receives the on-disk copy.
+            //
+            // "Template saved successfully" was true about the row and false about
+            // the thing the author cared about, which is the same silent-success
+            // shape as the rest of this screen's history. Wiring the lookup is
+            // tracked separately, and per outpost#253 would not make an edited
+            // template reach an invitee today either.
+            setSuccess('Saved. Not yet used for outgoing email — see outpost#226.');
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Save failed');
         } finally {
@@ -162,12 +174,9 @@ export default function TemplatesPage() {
         <div>
             <PageHeader
                 title="Email Templates"
-                description="Manage outbound email templates. Customize content and preview before saving."
+                description="Edit and preview outbound email templates. Saved edits are not yet used for outgoing email — see outpost#226."
                 icon={Mail}
-                breadcrumbs={[
-                    { label: 'Settings', href: '/settings' },
-                    { label: 'Templates' },
-                ]}
+                breadcrumbs={[{ label: 'Settings', href: '/settings' }, { label: 'Templates' }]}
             />
 
             {error && (
@@ -209,7 +218,7 @@ export default function TemplatesPage() {
                                                     : 'bg-muted text-muted-foreground'
                                             }`}
                                         >
-                                            {t.isOverride ? 'Custom' : 'Default'}
+                                            {t.isOverride ? 'Custom (preview only)' : 'Default'}
                                         </span>
                                     </div>
                                     <p className="mt-1 text-xs text-muted-foreground truncate">
@@ -275,27 +284,27 @@ export default function TemplatesPage() {
                                         </p>
                                     </div>
                                     {/*
-                                      * Rendered in a sandboxed iframe, not via
-                                      * dangerouslySetInnerHTML. Template bodies are
-                                      * author-editable and stored, so injecting them
-                                      * here would execute saved script in every later
-                                      * viewer's session — and because the csrf cookie
-                                      * must be readable by client JS for the
-                                      * double-submit header, that script could read the
-                                      * CSRF token too.
-                                      *
-                                      * `sandbox=""` grants nothing: no scripts, no
-                                      * same-origin access. Do not add allow-scripts or
-                                      * allow-same-origin — together they let the frame
-                                      * remove its own sandbox. An allowlist sanitiser
-                                      * was the alternative and was rejected: templates
-                                      * legitimately contain rich HTML, so a sanitiser
-                                      * fights the feature and gets loosened over time.
-                                      *
-                                      * The height is fixed because measuring content to
-                                      * auto-size requires scripting in the frame, which
-                                      * is the thing being prevented.
-                                      */}
+                                     * Rendered in a sandboxed iframe, not via
+                                     * dangerouslySetInnerHTML. Template bodies are
+                                     * author-editable and stored, so injecting them
+                                     * here would execute saved script in every later
+                                     * viewer's session — and because the csrf cookie
+                                     * must be readable by client JS for the
+                                     * double-submit header, that script could read the
+                                     * CSRF token too.
+                                     *
+                                     * `sandbox=""` grants nothing: no scripts, no
+                                     * same-origin access. Do not add allow-scripts or
+                                     * allow-same-origin — together they let the frame
+                                     * remove its own sandbox. An allowlist sanitiser
+                                     * was the alternative and was rejected: templates
+                                     * legitimately contain rich HTML, so a sanitiser
+                                     * fights the feature and gets loosened over time.
+                                     *
+                                     * The height is fixed because measuring content to
+                                     * auto-size requires scripting in the frame, which
+                                     * is the thing being prevented.
+                                     */}
                                     <iframe
                                         title="Template preview"
                                         sandbox=""

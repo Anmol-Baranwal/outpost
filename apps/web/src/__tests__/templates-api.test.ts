@@ -61,12 +61,23 @@ const MEMBER_SESSION = { user: { id: 'u-member', email: 'member@copilotkit.ai', 
 /** A slug that exists in the repo-root templates/ directory. */
 const REAL_SLUG = 'welcome';
 
+// Both `text` and `json` are stubbed because the two routes read the body
+// differently: PUT uses `json()`, and preview reads `text()` once and parses it
+// itself — a request body can only be read once, so calling `json()` first would
+// consume the stream and leave an unparseable body looking empty.
 function jsonRequest(body: unknown): NextRequest {
-    return { json: async () => body } as unknown as NextRequest;
+    return {
+        text: async () => JSON.stringify(body),
+        json: async () => body,
+    } as unknown as NextRequest;
 }
 
+/** A request with no body at all, which preview treats as "render what is stored". */
 function bareRequest(): NextRequest {
-    return { json: async () => ({}) } as unknown as NextRequest;
+    return {
+        text: async () => '',
+        json: async () => ({}),
+    } as unknown as NextRequest;
 }
 
 function routeParams(slug: string) {
@@ -251,6 +262,63 @@ describe('template persistence and preview (outpost#226)', () => {
         });
     });
 
+    // The slug reached `join(dir, slug + '.md')` unvalidated, and Next decodes
+    // percent-encoding in a dynamic segment before a handler runs — so
+    // `../docs/deployment` arrived as a traversal, the loader read the file, and GET
+    // returned its `subject` and `body` in the JSON response. Confirmed against the
+    // real loader: `../README`, `../CLAUDE`, `../docs/deployment` and
+    // `invite/../../README` all returned file contents.
+    //
+    // The existence checks did not close it — they WERE it. A guard shaped like
+    // `if (!loadFromFilesystem(slug))` succeeds for every path above, so it approved
+    // the request it appeared to reject.
+    describe('a slug outside the template set is refused everywhere', () => {
+        const TRAVERSALS = ['../README', '../CLAUDE', '../docs/deployment', 'invite/../../README'];
+
+        it.each(TRAVERSALS)('GET refuses %s rather than returning the file', async (slug) => {
+            const res = await getTemplate(bareRequest(), routeParams(slug));
+
+            expect(res.status).toBe(404);
+            const data = await res.json();
+            // The proof is the absence of file content, not just the status: a 200
+            // carrying the deployment guide is the failure being pinned.
+            expect(data.body).toBeUndefined();
+            expect(data.subject).toBeUndefined();
+        });
+
+        it.each(TRAVERSALS)('PUT refuses %s', async (slug) => {
+            const res = await putTemplate(
+                jsonRequest({ subject: 'x', body: 'y' }),
+                routeParams(slug),
+            );
+
+            expect(res.status).toBe(404);
+            expect(mockOverrideUpsert).not.toHaveBeenCalled();
+        });
+
+        it.each(TRAVERSALS)('preview refuses %s', async (slug) => {
+            const res = await previewTemplate(bareRequest(), routeParams(slug));
+
+            expect(res.status).toBe(404);
+        });
+
+        // Harmless on its own — deleteMany matches nothing — but all four handlers
+        // should answer the same way for the same input.
+        it.each(TRAVERSALS)('DELETE refuses %s', async (slug) => {
+            const res = await deleteTemplate(bareRequest(), routeParams(slug));
+
+            expect(res.status).toBe(404);
+            expect(mockOverrideDeleteMany).not.toHaveBeenCalled();
+        });
+
+        it('still serves the real slugs', async () => {
+            const res = await getTemplate(bareRequest(), routeParams(REAL_SLUG));
+
+            expect(res.status).toBe(200);
+            expect((await res.json()).body.length).toBeGreaterThan(0);
+        });
+    });
+
     describe('DELETE actually removes the override', () => {
         it('deletes the stored row', async () => {
             const res = await deleteTemplate(bareRequest(), routeParams(REAL_SLUG));
@@ -326,6 +394,9 @@ describe('template persistence and preview (outpost#226)', () => {
 
         it('rejects a body that is not valid JSON', async () => {
             const badRequest = {
+                // Unparseable text rather than a throwing `json()`: the route parses
+                // the text itself, so that is the shape a real bad body arrives in.
+                text: async () => '{ not json',
                 json: async () => {
                     throw new SyntaxError('Unexpected token');
                 },

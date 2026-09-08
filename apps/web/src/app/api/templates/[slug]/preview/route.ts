@@ -2,13 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
-import { loadFromFilesystem, renderTemplate } from '@copilotkit/outpost/shared/server';
+import { isKnownTemplateSlug, renderTemplate } from '@copilotkit/outpost/shared/server';
 import type { TemplateContext } from '@copilotkit/outpost/shared/server';
 
 /** Sample data used for template previews. */
 const SAMPLE_CONTEXT: TemplateContext = {
     org: { name: 'Acme Corp', email: 'support@acme.com' },
-    member: { name: 'Jane Smith', email: 'jane@acme.com', invitedBy: 'John Admin', role: 'Engineer' },
+    member: {
+        name: 'Jane Smith',
+        email: 'jane@acme.com',
+        invitedBy: 'John Admin',
+        role: 'Engineer',
+    },
     customer: { name: 'Alex Customer', email: 'alex@example.com' },
     invite: { url: 'https://app.outpost.dev/invite/sample-token', expiresIn: '7 days' },
     app: { url: 'https://app.outpost.dev' },
@@ -18,12 +23,23 @@ const SAMPLE_CONTEXT: TemplateContext = {
         url: 'https://app.outpost.dev/tickets/tkt-0042',
         priority: 'HIGH',
         assignee: 'Jane Smith',
-        resolution: 'The API endpoint was updated to v2. Updated the SDK configuration to point to the new URL.',
+        resolution:
+            'The API endpoint was updated to v2. Updated the SDK configuration to point to the new URL.',
     },
     sla: { target: '4 hours', elapsed: '6 hours 23 minutes' },
-    escalation: { by: 'System', from: 'Jane Smith', to: 'John Admin', reason: 'SLA breach and no response in 6 hours' },
+    escalation: {
+        by: 'System',
+        from: 'Jane Smith',
+        to: 'John Admin',
+        reason: 'SLA breach and no response in 6 hours',
+    },
     digest: {
-        date: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+        date: new Date().toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+        }),
         openTickets: '12',
         resolvedToday: '5',
         breachedSla: '1',
@@ -56,25 +72,36 @@ export async function POST(
     // A template must exist on disk for an override or a draft to layer onto, and PUT
     // refuses a slug that has none. Checked here too so preview and save agree —
     // otherwise a renamed or deleted template previews happily and then fails to save.
-    if (!loadFromFilesystem(slug)) {
+    //
+    // Membership rather than an existence probe, for the reason PUT gives: a read
+    // of `../docs/deployment` succeeds, so `if (!loadFromFilesystem(slug))`
+    // approved the traversal it looked like it rejected.
+    if (!isKnownTemplateSlug(slug)) {
         return NextResponse.json({ error: 'Template not found' }, { status: 404 });
     }
 
+    // Read once, then parsed here rather than by `request.json()`.
+    //
+    // No body at all is fine — it means "preview what is stored". Unparseable JSON
+    // is not: silently rendering the stored template would show the author content
+    // they did not ask for, which is the bug this route was fixed for.
+    //
+    // Two reasons for this shape. "Empty" now comes from the body itself instead of
+    // `content-length`, because a bodiless POST can arrive with no such header at
+    // all — chunked, or a server-side `new Request(url, { method: 'POST' })` — and
+    // keying on `!== '0'` sent those to a 400 rather than previewing, the opposite
+    // of the intent. And a request body can only be read once: calling
+    // `request.json()` first consumes the stream, so a later `text()` returns empty
+    // and an unparseable body would have read as "no body" and previewed the stored
+    // template — reintroducing the bug this route exists to fix.
+    const raw = await request.text().catch(() => '');
+
     let parsed: unknown = null;
-    try {
-        parsed = await request.json();
-    } catch {
-        // No body at all is fine — it means "preview what is stored". Unparseable JSON
-        // is not: silently rendering the stored template would show the author content
-        // they did not ask for, which is the bug this route was fixed for.
-        if (request.headers.get('content-length') !== '0') {
-            const hasBody = await Promise.resolve(true);
-            if (hasBody) {
-                return NextResponse.json(
-                    { error: 'Request body is not valid JSON' },
-                    { status: 400 },
-                );
-            }
+    if (raw.trim() !== '') {
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            return NextResponse.json({ error: 'Request body is not valid JSON' }, { status: 400 });
         }
     }
 

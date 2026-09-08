@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireSession, requireAdmin } from '@/lib/require-admin';
 import { prisma } from '@copilotkit/outpost/db';
-import { loadFromFilesystem, loadTemplate } from '@copilotkit/outpost/shared/server';
+import { isKnownTemplateSlug, loadTemplate } from '@copilotkit/outpost/shared/server';
 
 /** Bounds on stored template content. The subject becomes an email header downstream. */
 const SUBJECT_MAX = 500;
@@ -33,6 +33,16 @@ export async function GET(
     if (error) return error;
 
     const { slug } = await params;
+
+    // Checked before the loader sees it. `loadFromFilesystem` builds
+    // `join(dir, slug + '.md')` with no validation and Next decodes
+    // percent-encoding in a dynamic segment, so `../docs/deployment` reached the
+    // loader as a traversal and this handler returned the file's `subject` and
+    // `body` in its JSON. Verified against the real function before fixing.
+    if (!isKnownTemplateSlug(slug)) {
+        return NextResponse.json({ error: 'Template not found' }, { status: 404 });
+    }
+
     const loaded = await loadTemplate(slug, findOverride);
 
     if (!loaded) {
@@ -54,10 +64,7 @@ export async function GET(
  *
  * Save a template override (ADMIN only).
  */
-export async function PUT(
-    request: NextRequest,
-    { params }: { params: Promise<{ slug: string }> },
-) {
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
     const { error, session } = await requireAdmin();
     if (error) return error;
 
@@ -98,7 +105,13 @@ export async function PUT(
     // An override only means anything layered over a real template: the loader takes
     // its name and `from` from the filesystem entry, and the editor lists filesystem
     // slugs. Without this check an arbitrary slug would create a row nothing reads.
-    if (!loadFromFilesystem(slug)) {
+    //
+    // Membership rather than an existence probe. `if (!loadFromFilesystem(slug))`
+    // read as a guard and was the traversal: the read SUCCEEDS for
+    // `../docs/deployment`, so the check approved the request it appeared to
+    // reject. A traversal path is never a member of the slug list however it is
+    // spelled, and a slug that passes here is already known to exist.
+    if (!isKnownTemplateSlug(slug)) {
         return NextResponse.json({ error: 'Template not found' }, { status: 404 });
     }
 
@@ -140,6 +153,16 @@ export async function DELETE(
     if (error) return error;
 
     const { slug } = await params;
+
+    // Not a traversal risk on its own — `deleteMany` on an unknown slug matches
+    // nothing. Checked anyway so all four handlers answer the same way for the
+    // same input; GET returning 404 while DELETE reports `reset: true` for the
+    // same slug is the kind of disagreement that gets read as one of them being
+    // wrong.
+    if (!isKnownTemplateSlug(slug)) {
+        return NextResponse.json({ error: 'Template not found' }, { status: 404 });
+    }
+
     const { count } = await prisma.templateOverride.deleteMany({ where: { slug } });
 
     return NextResponse.json({ slug, reset: true, hadOverride: count > 0 });
