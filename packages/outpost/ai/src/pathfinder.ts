@@ -523,7 +523,10 @@ export class PathfinderClient {
             const score = matchCount / queryTerms.length;
 
             // Extract title from first line
-            const firstLine = section.split('\n')[0].replace(/^#+\s*/, '').trim();
+            const firstLine = section
+                .split('\n')[0]
+                .replace(/^#+\s*/, '')
+                .trim();
 
             return {
                 title: firstLine || 'Documentation',

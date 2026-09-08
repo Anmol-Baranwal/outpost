@@ -47,7 +47,8 @@ const TEST_PATTERNS = ['**/*.test.ts', '**/__tests__/**', '**/__fixtures__/**'];
 
 describe('the config typecheck reads', () => {
     it('does not exclude test material, or tests stop being typechecked', () => {
-        const exclude = (readTsconfig(join(packageRoot, 'tsconfig.json')).exclude ?? []) as string[];
+        const exclude = (readTsconfig(join(packageRoot, 'tsconfig.json')).exclude ??
+            []) as string[];
 
         for (const pattern of TEST_PATTERNS) {
             expect(exclude).not.toContain(pattern);
