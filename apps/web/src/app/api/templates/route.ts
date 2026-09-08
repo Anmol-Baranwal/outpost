@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@copilotkit/outpost/db';
-import {
-    listTemplateSlugs,
-    loadFromFilesystem,
-} from '@copilotkit/outpost/shared/server';
+import { listTemplateSlugs, loadFromFilesystem } from '@copilotkit/outpost/shared/server';
 import type { TemplateListEntry } from '@copilotkit/outpost/shared/server';
 
 /**
