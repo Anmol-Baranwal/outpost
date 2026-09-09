@@ -93,7 +93,7 @@ describe('handleOnboardingDigest', () => {
 
     it('queries members for the given date range', async () => {
         mockOnboardingMember.findMany
-            .mockResolvedValueOnce([makeMemberRow()])  // date-filtered query
+            .mockResolvedValueOnce([makeMemberRow()]) // date-filtered query
             .mockResolvedValueOnce([makeMemberRow()]); // all-members query for metrics
 
         const ctx = makeContext();
@@ -111,8 +111,8 @@ describe('handleOnboardingDigest', () => {
 
     it('handles zero new members gracefully', async () => {
         mockOnboardingMember.findMany
-            .mockResolvedValueOnce([])   // no members for the day
-            .mockResolvedValueOnce([]);  // no members overall
+            .mockResolvedValueOnce([]) // no members for the day
+            .mockResolvedValueOnce([]); // no members overall
 
         const ctx = makeContext();
         const result = await handleOnboardingDigest({ date: '2026-04-15' }, ctx);
@@ -127,9 +127,7 @@ describe('handleOnboardingDigest', () => {
         const ctx = makeContext();
         await handleOnboardingDigest({ date: '2026-04-15' }, ctx);
 
-        const progressCalls = ctx.reportProgress.mock.calls.map(
-            (c: number[]) => c[0],
-        );
+        const progressCalls = ctx.reportProgress.mock.calls.map((c: number[]) => c[0]);
         expect(progressCalls).toEqual([10, 50, 70, 90, 100]);
     });
 
@@ -151,9 +149,7 @@ describe('handleOnboardingDigest', () => {
             makeMemberRow({ id: 'om-3', username: 'charlie#9012' }),
         ];
 
-        mockOnboardingMember.findMany
-            .mockResolvedValueOnce(members)
-            .mockResolvedValueOnce(members);
+        mockOnboardingMember.findMany.mockResolvedValueOnce(members).mockResolvedValueOnce(members);
 
         const ctx = makeContext();
         const result = await handleOnboardingDigest({ date: '2026-04-15' }, ctx);
@@ -230,9 +226,7 @@ describe('handleOnboardingDigest', () => {
 
         expect(result.success).toBe(true);
         expect(mockFetch).not.toHaveBeenCalled();
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('Shadow mode'),
-        );
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Shadow mode'));
 
         consoleSpy.mockRestore();
         vi.unstubAllGlobals();
@@ -266,9 +260,7 @@ describe('handleOnboardingDigest', () => {
         process.env.DISCORD_TOKEN = 'test-bot-token';
         process.env.DISCORD_DIGEST_CHANNEL_ID = '1234567890';
 
-        mockOnboardingMember.findMany
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([]);
+        mockOnboardingMember.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
         const mockFetch = vi.fn().mockResolvedValue({
             ok: false,
@@ -278,8 +270,9 @@ describe('handleOnboardingDigest', () => {
         vi.stubGlobal('fetch', mockFetch);
 
         const ctx = makeContext();
-        await expect(handleOnboardingDigest({ date: '2026-04-15' }, ctx))
-            .rejects.toThrow('Discord API error 403');
+        await expect(handleOnboardingDigest({ date: '2026-04-15' }, ctx)).rejects.toThrow(
+            'Discord API error 403',
+        );
 
         vi.unstubAllGlobals();
     });

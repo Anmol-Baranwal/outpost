@@ -106,9 +106,15 @@ export async function handleOnboardingDigest(
     digestLines.push('');
     digestLines.push('Funnel Summary (all time):');
     digestLines.push(`  Joined: ${metrics.stageCounts.JOINED}`);
-    digestLines.push(`  Contacted: ${metrics.stageCounts.CONTACTED} (${metrics.conversionRates.joinedToContacted}%)`);
-    digestLines.push(`  Responded: ${metrics.stageCounts.RESPONDED} (${metrics.conversionRates.contactedToResponded}%)`);
-    digestLines.push(`  Meeting Booked: ${metrics.stageCounts.MEETING_BOOKED} (${metrics.conversionRates.respondedToMeetingBooked}%)`);
+    digestLines.push(
+        `  Contacted: ${metrics.stageCounts.CONTACTED} (${metrics.conversionRates.joinedToContacted}%)`,
+    );
+    digestLines.push(
+        `  Responded: ${metrics.stageCounts.RESPONDED} (${metrics.conversionRates.contactedToResponded}%)`,
+    );
+    digestLines.push(
+        `  Meeting Booked: ${metrics.stageCounts.MEETING_BOOKED} (${metrics.conversionRates.respondedToMeetingBooked}%)`,
+    );
 
     const digest = digestLines.join('\n');
 
@@ -124,7 +130,9 @@ export async function handleOnboardingDigest(
         await postToDiscord(channelId, digest);
     } else {
         // Development fallback when DISCORD_DIGEST_CHANNEL_ID is not set
-        console.log(`[Onboarding Digest] DISCORD_DIGEST_CHANNEL_ID not set, logging to console:\n${digest}`);
+        console.log(
+            `[Onboarding Digest] DISCORD_DIGEST_CHANNEL_ID not set, logging to console:\n${digest}`,
+        );
     }
 
     await context.reportProgress(100);
