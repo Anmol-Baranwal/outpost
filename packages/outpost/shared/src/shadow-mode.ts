@@ -12,16 +12,32 @@
  * an operator would reasonably expect to work — the direction a safety flag must
  * never fail.
  *
- * So this fails CLOSED instead: anything that looks like an attempt to turn
- * shadow mode on turns it on, and anything unrecognized is treated as ON and
+ * So every value that IS set fails CLOSED instead: recognized off values are
+ * off, recognized on values are on, and anything else is treated as ON and
  * logged. The asymmetry is deliberate. A false positive costs a parallel-run
  * window where nothing is posted and someone notices from the logs; a false
  * negative posts machine-generated text at real people under a flag that was
  * meant to prevent exactly that.
+ *
+ * `SHADOW_MODE` being ABSENT is the one exception and it means off, because a
+ * fresh deployment defaulting to ON would silently answer nobody. That
+ * exception is stated here rather than only on the function, because a reader
+ * who skims this header and concludes a missing variable is the safe case has
+ * formed exactly the belief this module exists to kill.
  */
 
-/** Values that mean "off". Everything else that is set means "on". */
-const EXPLICITLY_OFF = new Set(['false', '0', 'no', 'off', '']);
+/**
+ * Values that mean "off". Everything else that is set means "on".
+ *
+ * `''` is deliberately NOT here. A declared-but-cleared Railway variable, or a
+ * `.env` line with nothing after the `=`, is a value that IS set — so by this
+ * module's own rule it is an operator trying to say something unclear, and the
+ * safe reading of that is the one that posts nothing. It falls through to the
+ * unrecognized branch, which turns shadow mode on and says so. The cost is a
+ * cleared variable stopping the bot instead of starting it, which is the side
+ * of that trade this module exists to take.
+ */
+const EXPLICITLY_OFF = new Set(['false', '0', 'no', 'off']);
 
 /** Values that mean "on" without comment. Others are honored but logged. */
 const EXPLICITLY_ON = new Set(['true', '1', 'yes', 'on']);

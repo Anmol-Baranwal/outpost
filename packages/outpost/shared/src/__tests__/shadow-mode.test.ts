@@ -34,16 +34,35 @@ describe('isShadowMode', () => {
     // surfaces — a safety flag failing open on values an operator would
     // reasonably expect to work.
     it.each(['TRUE', 'True', '1', 'yes', 'YES', 'on', 'ON', ' true ', 'tRuE'])(
-        'treats %j as ON',
+        'treats %j as ON, recognized rather than guessed',
         (value) => {
             set(value);
             expect(isShadowMode()).toBe(true);
+            // Asserting the absence of the warning is what pins EXPLICITLY_ON.
+            // On the boolean alone, shrinking the set to `['true']` left all of
+            // these passing — a dropped member still comes back `true` through
+            // the fail-closed branch, just for the wrong reason and with a
+            // spurious warning. This also pins `.trim()` and `.toLowerCase()`,
+            // which were each held down by exactly one OFF case.
+            expect(warn).not.toHaveBeenCalled();
         },
     );
 
-    it.each(['false', 'FALSE', '0', 'no', 'off', '', '  '])('treats %j as OFF', (value) => {
+    it.each(['false', 'FALSE', '0', 'no', 'off'])('treats %j as OFF', (value) => {
         set(value);
         expect(isShadowMode()).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
+    });
+
+    // A cleared value is still a value that IS set, so it takes the same
+    // fail-closed path as any other unclear instruction. A declared-but-empty
+    // Railway variable, or a `.env` line with nothing after the `=`, used to
+    // read as "post for real" silently; it now stops the bot and says why.
+    it.each(['', '  '])('treats the cleared value %j as ON, and says so', (value) => {
+        set(value);
+        expect(isShadowMode()).toBe(true);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain(JSON.stringify(value));
     });
 
     // Anything set but unrecognized is an operator trying to say something. The
