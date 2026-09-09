@@ -107,7 +107,8 @@ describe('InboundHandler', () => {
 
             // Ticket was created
             expect(prisma.ticket.create).toHaveBeenCalledTimes(1);
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(ticketData.source).toBe('DISCORD');
             expect(ticketData.sourceId).toBe('thread-123');
             expect(ticketData.status).toBe('OPEN');
@@ -116,7 +117,8 @@ describe('InboundHandler', () => {
 
             // First message was created
             expect(prisma.message.create).toHaveBeenCalledTimes(1);
-            const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(msgData.ticketId).toBe('ticket-1');
             expect(msgData.author).toContain('testuser');
             expect(msgData.author).toContain('user-123');
@@ -160,7 +162,8 @@ describe('InboundHandler', () => {
             const msg = makeInboundMessage({ content: longContent });
             await handler.handle(msg);
 
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(ticketData.title.length).toBeLessThanOrEqual(200);
             expect(ticketData.description.length).toBeLessThanOrEqual(4000);
         });
@@ -187,26 +190,38 @@ describe('InboundHandler', () => {
             for (const { source, expectedTarget } of sources) {
                 const freshPrisma = createMockPrisma();
                 const freshCreateJob = createMockCreateJob();
-                const freshHandler = new InboundHandler({ prisma: freshPrisma, createJob: freshCreateJob });
+                const freshHandler = new InboundHandler({
+                    prisma: freshPrisma,
+                    createJob: freshCreateJob,
+                });
 
                 const msg = makeInboundMessage({ source });
                 await freshHandler.handle(msg);
 
-                expect(freshCreateJob).toHaveBeenCalledWith('AI_RESPONSE', expect.objectContaining({
-                    source: expectedTarget,
-                }));
+                expect(freshCreateJob).toHaveBeenCalledWith(
+                    'AI_RESPONSE',
+                    expect.objectContaining({
+                        source: expectedTarget,
+                    }),
+                );
             }
         });
 
         it('passes attachments to message record when present', async () => {
             const msg = makeInboundMessage({
                 attachments: [
-                    { filename: 'screenshot.png', url: 'https://cdn.example.com/screenshot.png', size: 1024, contentType: 'image/png' },
+                    {
+                        filename: 'screenshot.png',
+                        url: 'https://cdn.example.com/screenshot.png',
+                        size: 1024,
+                        contentType: 'image/png',
+                    },
                 ],
             });
             await handler.handle(msg);
 
-            const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(msgData.attachments).toBeDefined();
             expect(msgData.attachments[0].filename).toBe('screenshot.png');
         });
@@ -230,7 +245,8 @@ describe('InboundHandler', () => {
             });
             expect(prisma.user.create).not.toHaveBeenCalled();
 
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(ticketData.userId).toBe('user-existing-1');
         });
 
@@ -249,7 +265,8 @@ describe('InboundHandler', () => {
                 },
             });
 
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(ticketData.userId).toBe('user-new-1');
         });
 
@@ -264,7 +281,10 @@ describe('InboundHandler', () => {
                 // race -> the winner's row. (A later call from isTeamMember
                 // falls through to null.)
                 .mockResolvedValueOnce(null)
-                .mockResolvedValueOnce({ id: 'user-raced-1', email: 'discord-user-123@reporters.outpost.internal' })
+                .mockResolvedValueOnce({
+                    id: 'user-raced-1',
+                    email: 'discord-user-123@reporters.outpost.internal',
+                })
                 .mockResolvedValue(null);
             (prisma.user.create as ReturnType<typeof vi.fn>)
                 .mockReset()
@@ -276,7 +296,8 @@ describe('InboundHandler', () => {
             expect(result.isNewTicket).toBe(true);
             expect(prisma.user.create).toHaveBeenCalledTimes(1);
 
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(ticketData.userId).toBe('user-raced-1');
         });
 
@@ -286,7 +307,9 @@ describe('InboundHandler', () => {
                 .mockReset()
                 .mockRejectedValueOnce({ code: 'P1001', message: 'db unreachable' });
 
-            await expect(handler.handle(makeInboundMessage())).rejects.toMatchObject({ code: 'P1001' });
+            await expect(handler.handle(makeInboundMessage())).rejects.toMatchObject({
+                code: 'P1001',
+            });
         });
     });
 
@@ -320,7 +343,8 @@ describe('InboundHandler', () => {
 
             // Message was appended
             expect(prisma.message.create).toHaveBeenCalledTimes(1);
-            const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const msgData = (prisma.message.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(msgData.ticketId).toBe('ticket-existing');
             expect(msgData.content).toBe('Follow up question');
         });
@@ -460,7 +484,10 @@ describe('InboundHandler', () => {
                     status,
                 });
                 const freshCreateJob = createMockCreateJob();
-                const freshHandler = new InboundHandler({ prisma: freshPrisma, createJob: freshCreateJob });
+                const freshHandler = new InboundHandler({
+                    prisma: freshPrisma,
+                    createJob: freshCreateJob,
+                });
 
                 const msg = makeInboundMessage({ isThreadStart: false });
                 await freshHandler.handle(msg);
@@ -580,7 +607,8 @@ describe('InboundHandler', () => {
 
             await handler.handle(msg);
 
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             // Slack tickets use composite sourceId so reply lookups match
             expect(ticketData.sourceId).toBe('C0ABCDEF1:1234567890.123456');
         });
@@ -595,7 +623,8 @@ describe('InboundHandler', () => {
 
             await handler.handle(msg);
 
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             // A bare ts is not a Slack key — the reply lookup would build
             // "channel:ts" and never find it, so refuse to pretend otherwise.
             expect(ticketData.sourceId).toBeNull();
@@ -659,7 +688,8 @@ describe('InboundHandler', () => {
 
             await handler.handle(msg);
 
-            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+            const ticketData = (prisma.ticket.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+                .data;
             expect(ticketData.sourceId).toBeNull();
         });
 
@@ -712,7 +742,9 @@ describe('InboundHandler', () => {
                 );
                 // No query at all is the correct read of a null key.
                 const read =
-                    findFirst.mock.calls.length === 0 ? null : findFirst.mock.calls[0][0].where.sourceId;
+                    findFirst.mock.calls.length === 0
+                        ? null
+                        : findFirst.mock.calls[0][0].where.sourceId;
 
                 expect(read).toBe(written);
             },
