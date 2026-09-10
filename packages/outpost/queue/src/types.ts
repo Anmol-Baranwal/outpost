@@ -172,7 +172,30 @@ export interface WorkerHealthStatus {
     running: boolean;
     activeJobCount: number;
     activeJobsByType: Record<string, number>;
+    /** When the most recent poll STARTED. Frozen for the duration of that poll. */
     lastPollTime: Date | null;
+    /**
+     * When the in-flight poll began, or null when no poll is running.
+     *
+     * poll() awaits every job it claims, so `lastPollTime` stops advancing for
+     * as long as the longest job runs. Reading it alone makes a busy worker
+     * indistinguishable from a wedged one. Consumers deciding liveness must ask
+     * whether a poll is in progress before judging staleness.
+     */
+    pollStartedAt: Date | null;
+    /** When the last poll returned. Only meaningful while `pollStartedAt` is null. */
+    lastPollCompletedAt: Date | null;
+    /**
+     * In-flight jobs that have outlived their OWN timeout plus a grace.
+     *
+     * The honest liveness signal. Poll duration is not: claimJobsByType awaits
+     * each type's batch sequentially, so a single poll may legitimately run the
+     * sum of every registered type's timeout. Non-zero here means the timeout
+     * machinery failed, not that the worker is slow.
+     */
+    overdueJobCount: number;
+    /** When a job last settled, whatever the outcome. Null before the first one. */
+    lastJobSettledAt: Date | null;
     registeredHandlers: string[];
     upSince: Date | null;
 }
