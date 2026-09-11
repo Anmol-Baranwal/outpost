@@ -410,3 +410,91 @@ describe('self-commentary the narrower patterns let through (CopilotKit#6927)', 
         expect(broken(`${line} ${cited}`)).not.toContain('no-banned-phrases');
     });
 });
+
+// The needle strips its own trailing `/#?`, so a reply reproducing a
+// canonicalised URL VERBATIM arrived at the boundary check with `/` next and was
+// read as a path continuation — "cited nothing" against a reply quoting the
+// retrieved URL exactly. Doc sites canonicalise with a trailing slash, so every
+// row below is ordinary traffic rather than an exotic input, and the failure was
+// a false positive: the direction that silently argues against ever enforcing.
+//
+// Every existing fixture URL in this file is bare, which is why this read as
+// covered.
+describe('trailing slashes on either side of the citation', () => {
+    // Past HANDOFF_WORD_CAP, or the handoff branch satisfies the rule and the
+    // citation half is never exercised.
+    const LONG =
+        ' The header is dropped before the transport is constructed, so nothing reaches the wire and the server sees an anonymous request instead of an authenticated one.'.repeat(
+            3,
+        );
+    const cites = (reply: string, sourceUrl: string): boolean => {
+        const result = checkReply(reply + LONG, [
+            { title: 'Reference', content: 'CopilotChat instructions prop', score: 0.9, sourceUrl },
+        ]);
+        return result.find((r) => r.rule === 'cites-or-is-a-short-handoff')!.passed;
+    };
+
+    const BARE = 'https://docs.copilotkit.ai/reference';
+    const SLASHED = `${BARE}/`;
+
+    it('counts a reply that reproduces a canonicalised URL exactly', () => {
+        expect(cites(`See ${SLASHED}`, SLASHED)).toBe(true);
+    });
+
+    it('counts a reply that adds a slash the retrieved URL did not have', () => {
+        expect(cites(`See ${SLASHED}`, BARE)).toBe(true);
+    });
+
+    it('counts a markdown link where both sides carry the slash', () => {
+        expect(cites(`See [docs](${SLASHED})`, SLASHED)).toBe(true);
+    });
+
+    it('counts a slashed URL carrying a query', () => {
+        expect(cites(`See ${SLASHED}?v=2`, SLASHED)).toBe(true);
+    });
+
+    // The control, and the reason the boundary check exists at all: stepping over
+    // ONE slash must not excuse a further path segment. Retrieval routinely
+    // returns a section URL, and a reply can invent a page beneath it.
+    it('still refuses a deeper path invented under the retrieved URL', () => {
+        expect(cites(`See ${BARE}/hooks/useCopilotFabricated`, BARE)).toBe(false);
+    });
+
+    it('still counts an anchor on a bare retrieved URL', () => {
+        expect(cites(`See ${BARE}#slots`, BARE)).toBe(true);
+    });
+});
+
+// `blocksPublish` is exported API. lintDraft filters on `applicable` before
+// reading it, but a consumer reading it alone must not be handed `true` for a
+// rule that could not be evaluated — that is the draft `applicable` exists to
+// protect: Pathfinder's plain-text fallback, where a correct answer has nothing
+// it could possibly cite.
+describe('blocksPublish is never true for a rule that could not be evaluated', () => {
+    it('does not block when retrieval returned results but none carries a URL', () => {
+        const longUncited = 'The header is dropped before the transport is constructed. '.repeat(
+            12,
+        );
+        const citation = checkReply(longUncited, [
+            { title: 'Reference', content: 'CopilotChat instructions prop', score: 0.9 },
+        ]).find((r) => r.rule === 'cites-or-is-a-short-handoff')!;
+
+        expect(citation.applicable).toBe(false);
+        expect(citation.passed).toBe(false);
+        expect(citation.blocksPublish).toBe(false);
+    });
+
+    // Zero retrieval is a different fact and must still block: a long uncited
+    // reply built on nothing is the doc's Case A.
+    it('still blocks a long uncited reply built on zero retrieval', () => {
+        const longUncited = 'The header is dropped before the transport is constructed. '.repeat(
+            12,
+        );
+        const citation = checkReply(longUncited, []).find(
+            (r) => r.rule === 'cites-or-is-a-short-handoff',
+        )!;
+
+        expect(citation.applicable).toBe(true);
+        expect(citation.blocksPublish).toBe(true);
+    });
+});

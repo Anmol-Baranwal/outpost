@@ -206,7 +206,21 @@ function citesARetrievedSource(reply: string, sources: SearchResult[]): boolean 
             // `…/reference/hooks/useCopilotFabricated` counted as citing
             // `…/reference`. The character after the match has to end the URL
             // rather than continue its path.
-            const next = haystack[at + needle.length];
+            // The needle has its own trailing `/#?` stripped, so a reply that
+            // reproduces a canonicalised URL VERBATIM lands here with `/` as the
+            // next character. Treating that as a path continuation made the rule
+            // report "cited nothing" against a reply quoting the retrieved URL
+            // exactly — a false positive, in the direction that looks
+            // conservative, which is the worst kind to leave in a measurement
+            // this PR exists to collect. Doc sites canonicalise with a trailing
+            // slash, so it is an ordinary input rather than an exotic one.
+            //
+            // Only a FURTHER path segment continues the URL, so step over one
+            // slash and judge what follows it: `…/reference/` ends, while
+            // `…/reference/hooks/useCopilotFabricated` still does not cite
+            // `…/reference`.
+            let next = haystack[at + needle.length];
+            if (next === '/') next = haystack[at + needle.length + 1];
             if (
                 next === undefined ||
                 /[\s)\]}.,;"'<>]/.test(next) ||
@@ -295,13 +309,28 @@ export function checkReply(reply: string, sources: SearchResult[]): RuleResult[]
     const banned = BANNED_PHRASES.filter(({ pattern }) => pattern.test(reply));
     const hedged = HEDGED_NAME_PATTERNS.filter((pattern) => pattern.test(reply));
 
+    // Each rule's verdict, bound once. `blocksPublish` used to restate these
+    // expressions, twice over for no-dead-package — which is the drift this
+    // module exists to prevent, reintroduced inside the module itself.
+    const saysSomething = words >= MIN_REPLY_WORDS;
+    const citationSatisfied = cites || isShortEnoughForHandoff;
+    const citationApplicable = !(
+        sources.length > 0 &&
+        !anySourceHasUrl &&
+        !isShortEnoughForHandoff
+    );
+    const noBannedPhrases = banned.length === 0;
+    const noHedgedNames = hedged.length === 0;
+    const deadPackageOk =
+        !DEAD_PACKAGE.test(reply) || (LIVE_PACKAGE.test(reply) && MIGRATION_FRAMING.test(reply));
+
     return [
         {
             rule: 'says-something',
             // Metric and gate agree for this rule.
-            blocksPublish: !(words >= MIN_REPLY_WORDS),
+            blocksPublish: !saysSomething,
             applicable: true,
-            passed: words >= MIN_REPLY_WORDS,
+            passed: saysSomething,
             detail:
                 words >= MIN_REPLY_WORDS
                     ? ''
@@ -326,8 +355,13 @@ export function checkReply(reply: string, sources: SearchResult[]): RuleResult[]
             // which presented five independent signals as six and double-counted
             // every failure in both the per-rule table and the report.
             rule: 'cites-or-is-a-short-handoff',
-            // Metric and gate agree for this rule.
-            blocksPublish: !(cites || isShortEnoughForHandoff),
+            // `applicable &&` is load-bearing, not defensive. When retrieval
+            // returned results but none carries a URL, `passed` is false because
+            // nothing WAS cited — but nothing COULD be, so this must not stop a
+            // publish. lintDraft already filters on `applicable`; computing it
+            // here means a consumer reading `blocksPublish` on its own cannot
+            // collapse the very draft `applicable` was added to protect.
+            blocksPublish: citationApplicable && !citationSatisfied,
             // Not-applicable ONLY when retrieval returned results that happen to
             // carry no URL — Pathfinder's plain-text fallback, where a correct
             // answer has nothing it could cite.
@@ -336,41 +370,35 @@ export function checkReply(reply: string, sources: SearchResult[]): RuleResult[]
             // uncited reply built on zero retrieval is the doc's Case A, the
             // exact input where the citation requirement matters most. Treating
             // the two the same let that reply publish under enforcement.
-            applicable: isShortEnoughForHandoff || sources.length === 0 || anySourceHasUrl,
-            passed: cites || isShortEnoughForHandoff,
-            detail:
-                sources.length > 0 && !anySourceHasUrl && !isShortEnoughForHandoff
-                    ? 'not evaluated: retrieval returned results but none carries a URL, so nothing could be cited'
-                    : cites || isShortEnoughForHandoff
-                      ? ''
-                      : `${words} words and no link to a retrieved source, over the ${HANDOFF_WORD_CAP}-word handoff cap; a reply this long has to cite what it came from`,
+            applicable: citationApplicable,
+            passed: citationSatisfied,
+            detail: !citationApplicable
+                ? 'not evaluated: retrieval returned results but none carries a URL, so nothing could be cited'
+                : citationSatisfied
+                  ? ''
+                  : `${words} words and no link to a retrieved source, over the ${HANDOFF_WORD_CAP}-word handoff cap; a reply this long has to cite what it came from`,
         },
         {
             rule: 'no-banned-phrases',
             // Metric and gate agree for this rule.
-            blocksPublish: !(banned.length === 0),
+            blocksPublish: !noBannedPhrases,
             applicable: true,
-            passed: banned.length === 0,
+            passed: noBannedPhrases,
             detail: banned.map(({ why }) => why).join('; '),
         },
         {
             rule: 'no-hedged-names',
             // Metric and gate agree for this rule.
-            blocksPublish: !(hedged.length === 0),
+            blocksPublish: !noHedgedNames,
             applicable: true,
-            passed: hedged.length === 0,
+            passed: noHedgedNames,
             detail: hedged.length ? 'hedges an API name, which means it is guessing' : '',
         },
         {
             rule: 'no-dead-package',
             applicable: true,
-            passed:
-                !DEAD_PACKAGE.test(reply) ||
-                (LIVE_PACKAGE.test(reply) && MIGRATION_FRAMING.test(reply)),
-            blocksPublish: !(
-                !DEAD_PACKAGE.test(reply) ||
-                (LIVE_PACKAGE.test(reply) && MIGRATION_FRAMING.test(reply))
-            ),
+            passed: deadPackageOk,
+            blocksPublish: !deadPackageOk,
             detail: !DEAD_PACKAGE.test(reply)
                 ? ''
                 : LIVE_PACKAGE.test(reply)
