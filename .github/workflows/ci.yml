@@ -1,17 +1,31 @@
 name: CI
 
 on:
-    # `main` is the known-good line and deploys production; `staging` is the
-    # integration line and deploys staging. Railway's deploy triggers wait for a CI
-    # check suite on the pushed commit, so both branches must run CI here — dropping
-    # one would leave its deploys waiting on a check that never arrives.
+    # No branch filter on pull_request, deliberately.
+    #
+    # Filtering to [main, staging] meant a PR based on another PR's branch — a
+    # stack — got no CI at all. `Static analysis (zizmor)` uses a bare
+    # `pull_request:` trigger because it is a required status check, so it still
+    # reported and still passed, and GitHub then read the PR as CLEAN and
+    # mergeable. #249 sat that way: 618 lines presenting as green with a workflow
+    # linter as its only signal and no test run behind it.
+    #
+    # A check that reports success without evaluating anything is worse than no
+    # check, so this now runs on every pull request whatever its base.
     pull_request:
-        branches: [main, staging]
+    # `push` keeps the filter. `main` is the known-good line and deploys
+    # production; `staging` is the integration line and deploys staging. Railway's
+    # deploy triggers wait for a CI check suite on the pushed commit, so both
+    # branches must run CI here — dropping one would leave its deploys waiting on a
+    # check that never arrives. No other branch deploys, so no other branch needs a
+    # push-triggered suite; its PR run covers it.
     push:
         branches: [main, staging]
 
 permissions:
     contents: read
+    # Read-only, and only so the format check can ask which files a PR touches.
+    pull-requests: read
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
@@ -309,14 +323,58 @@ jobs:
             - name: Build
               run: pnpm build
 
-            # Lint is NOT run here yet, even though this job is named "Lint, Typecheck &
-            # Test" and branch protection requires that check. Enabling it needs the
-            # ESLint 9 flat-config migration (this repo still uses .eslintrc.cjs, and
-            # ESLint 9 will not read it without ESLINT_USE_FLAT_CONFIG=false, which does
-            # not survive turbo's environment sanitization). That migration also changes
-            # lint resolution for editors, per-package invocations, and apps/web's
-            # separate Next config, so it is being landed as its own PR where those
-            # effects can be verified in isolation rather than bundled here.
+            - name: Lint
+              run: pnpm lint
+
+            # Formatting is checked on the files this change touches, not repo-wide.
+            #
+            # 311 files predate any enforcement, and reformatting them in one commit
+            # would collide with every open PR while burying the change that
+            # actually mattered. Checking the diff enforces the convention from here
+            # on and lets the backlog be cleared on its own schedule.
+            #
+            # Push builds have no base to diff against, so this only runs on pull
+            # requests. `templates/` is excluded via .prettierignore — those markdown
+            # files are rendered into customer emails, so reflowing them is a content
+            # change wearing a whitespace diff.
+            # The file list comes from the API, not from git. `actions/checkout` runs
+            # with `persist-credentials: false` and a shallow clone, so the base
+            # commit is absent locally and `git fetch` has no credentials to go get
+            # it — it fails with "could not read Username for 'https://github.com'".
+            # Asking the API avoids both problems and needs no extra checkout depth.
+            #
+            # Everything reaches the script through `env`. Interpolating `${{ }}`
+            # directly into `run` is the template-injection shape zizmor flags.
+            - name: Format check (changed files)
+              if: github.event_name == 'pull_request'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPO: ${{ github.repository }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+              run: |
+                  # `|| true` on grep: no formattable files in the diff is a pass,
+                  # and grep exits 1 when it matches nothing, which `set -e` would
+                  # otherwise turn into a failed build.
+                  files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
+                      --jq '.[] | select(.status != "removed") | .filename' \
+                      | grep -E '\.(ts|tsx|js|jsx|json|md)$' || true)
+                  if [ -z "$files" ]; then
+                      echo "No formattable files changed."
+                      exit 0
+                  fi
+                  echo "Checking:"
+                  echo "$files" | sed 's/^/  /'
+                  # NUL-delimited so a path containing a space stays one argument.
+                  # Word-splitting would hand prettier a nonexistent path, and
+                  # --no-error-on-unmatched-pattern would then skip the real file in
+                  # silence. `tr | xargs -0` rather than `xargs -d` because -d is
+                  # GNU-only, and a line that cannot be run locally is how the first
+                  # version of this step shipped broken.
+                  #
+                  # That flag covers genuinely absent paths only — prettier 3 does
+                  # not error on a named file that .prettierignore covers, it just
+                  # reports nothing for it.
+                  echo "$files" | tr '\n' '\0' | xargs -0 npx prettier --no-error-on-unmatched-pattern --check
 
             - name: Typecheck
               run: pnpm typecheck

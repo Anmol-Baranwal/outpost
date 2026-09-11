@@ -1,0 +1,23 @@
+# Generated or vendored — never ours to format.
+node_modules/
+dist/
+.next/
+coverage/
+pnpm-lock.yaml
+packages/outpost/db/prisma/migrations/
+
+# Agent worktrees hold full copies of the repo.
+.claude/worktrees/
+
+# Email templates are RENDERED, not just read. Prettier reflows markdown —
+# wrapping lines, renumbering lists, normalising emphasis — and every one of
+# those changes what lands in a customer's inbox. This directory is loaded at
+# runtime by shared/src/templates/loader.ts and sent by the email transport, so
+# formatting it is a content change wearing a whitespace diff.
+#
+# Anchored with a leading slash. Unanchored, `templates/` is a gitignore-style
+# pattern that matches a directory of that name at ANY depth — which swallowed
+# 11 tracked source files under packages/outpost/shared/src/templates/ and
+# apps/web/src/app/**/templates/, exempting them from both the CI check and
+# `pnpm format` with no way to bring them back into compliance.
+/templates/
