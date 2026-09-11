@@ -83,8 +83,30 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; why: string }> = [
     // Case D's "What I can't do from here" section, and the rule against the
     // agent performing its own humility.
     { pattern: /\bwhat i (?:can'?t|cannot) do\b/i, why: 'self-commentary about its own limits' },
+    // Widened from `read the source` after CopilotKit#6927 (2026-09-06), where the
+    // agent opened with "I haven't run this code or inspected the source". The
+    // narrower pattern missed it on the verb alone, so the whole self-positioning
+    // paragraph published.
+    //
+    // The verb binds DIRECTLY to its object, with no free gap between them. An
+    // earlier draft allowed up to 60 characters and flagged two ordinary reporter
+    // sentences in testing — "I haven't run the repro yet, can you share the code
+    // you used?" and "I haven't run into this, but the implementation forwards
+    // headers only for stdio". Both are the reporter talking about their own
+    // testing, and in the linter a false positive collapses a correct answer into
+    // a handoff. So the object list is closed and adjacency is required: this
+    // matches the agent saying it did not look at the code, not someone saying
+    // they have not run something.
     {
-        pattern: /\bi (?:haven'?t|have not) read the source\b/i,
+        pattern:
+            /\bi (?:haven'?t|have not|did ?n'?t|did not|do not|don'?t)\s+(?:\w+\s+){0,2}?(?:run|read|inspect(?:ed)?|review(?:ed)?|examine(?:d)?|look(?:ed)? at)\s+(?:this|the)\s+(?:source|code|codebase|implementation)\b/i,
+        why: 'self-commentary about its own limits',
+    },
+    // Same reply's framing device. The agent announcing its own epistemic
+    // standing is the thing the doc bans; it is never information the reporter
+    // asked for, and it reads as hedging a correct answer.
+    {
+        pattern: /\bto be clear about my (?:position|limits|limitations)\b/i,
         why: 'self-commentary about its own limits',
     },
     {

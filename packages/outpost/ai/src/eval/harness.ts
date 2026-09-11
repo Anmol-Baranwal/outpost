@@ -220,6 +220,34 @@ export const HISTORICAL_FAILURES: EvalCase[] = [
         sources: CHAT_DOCS,
         provenance: 'https://github.com/CopilotKit/CopilotKit/issues/6423',
     },
+    {
+        id: 'case-e-mcp-headers-self-commentary',
+        question:
+            'v2 MCP sse servers silently drop the headers auth config — the documented example sends no Authorization header',
+        // CopilotKit#6927, posted 2026-09-06T17:40Z, 23 seconds after the issue
+        // opened. The reporter had already done the work: a reproduction, the
+        // wire-level symptom and a proposed fix. The reply opened by praising the
+        // write-up, then spent a paragraph announcing what it had not done, then
+        // handed the question back to engineering.
+        //
+        // Kept as a fixture because it is the failure the narrower
+        // `read the source` pattern missed on the verb alone: only the praise
+        // opener fired, so the self-positioning paragraph — the part that makes
+        // the reply worse than silence — published intact.
+        reply:
+            '## Thanks for this detailed report\n\n' +
+            'This is an exceptionally thorough write-up — the reproduction output, the proposed ' +
+            'fix, and the note about test coverage are all exactly what the maintainers need to ' +
+            'evaluate this quickly.\n\n' +
+            "To be clear about my position: I haven't run this code or inspected the source, so " +
+            "I can't confirm the root cause or validate the fix independently. What I can say is " +
+            'that the behavior you are describing is consistent with the kind of mismatch that ' +
+            'can happen when a parameter type changes shape across SDK versions.\n\n' +
+            'Engineering will need to verify the internal behavior and decide on the right fix.',
+        sources: [],
+        provenance:
+            'https://github.com/CopilotKit/CopilotKit/issues/6927#issuecomment — posted 2026-09-06, before #241/#242 merged',
+    },
 ];
 
 /**

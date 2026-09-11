@@ -39,6 +39,24 @@ describe('the documented failures are all caught', () => {
         expect(failed).toContain('no-banned-phrases');
     });
 
+    // Looked up by id rather than index: the cases above are positional, so
+    // inserting anywhere but the end silently reassigns which case each of those
+    // assertions is about.
+    it('catches case E for the praise opener and the self-positioning paragraph', () => {
+        const caseE = HISTORICAL_FAILURES.find(
+            (c) => c.id === 'case-e-mcp-headers-self-commentary',
+        );
+        if (!caseE) throw new Error('case-e fixture is missing');
+
+        const failed = scoreCases([caseE]).cases[0].failed;
+
+        // `failed` carries rule ids, not which phrase fired, so this pins the
+        // fixture rather than the pattern — the opener alone would satisfy it.
+        // Which phrases are caught is pinned in rules.test.ts, where reverting the
+        // widened pattern fails six cases.
+        expect(failed).toContain('no-banned-phrases');
+    });
+
     it('catches case B for the dead package and the invented name', () => {
         const failed = scoreCases([HISTORICAL_FAILURES[1]]).cases[0].failed;
         expect(failed).toContain('no-dead-package');

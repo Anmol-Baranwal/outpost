@@ -361,3 +361,52 @@ describe('no-dead-package', () => {
         expect(broken('Install `@copilotkit/react-core` first.')).not.toContain('no-dead-package');
     });
 });
+
+// CopilotKit#6927, 2026-09-06. The reply praised the write-up, then spent a
+// paragraph announcing what it had not done, then handed the question back. Only
+// the praise opener fired against the rule set as it stood: `read the source`
+// missed "inspected the source" on the verb alone, so the self-positioning
+// paragraph — the part that makes the reply worse than silence — published.
+describe('self-commentary the narrower patterns let through (CopilotKit#6927)', () => {
+    const cited = 'See https://docs.copilotkit.ai/integrations/built-in-agent/mcp-servers.';
+
+    it.each([
+        "I haven't run this code or inspected the source, so I can't confirm the root cause.",
+        'I have not inspected the source, so I cannot confirm this.',
+        "I haven't read the code in question.",
+        "I didn't review the implementation before answering.",
+        "I haven't looked at the codebase for this.",
+        'I did not examine the code.',
+    ])('flags %j', (line) => {
+        expect(broken(`${line} ${cited}`)).toContain('no-banned-phrases');
+    });
+
+    it('flags the self-positioning framing on its own', () => {
+        expect(
+            broken(
+                `To be clear about my position: the header is dropped before the transport. ${cited}`,
+            ),
+        ).toContain('no-banned-phrases');
+    });
+
+    // The docblock on BANNED_PHRASES is explicit that a false positive costs a
+    // reporter a correct answer, because a linter failure collapses the draft into
+    // a handoff. These are the shapes closest to the patterns that must NOT fire:
+    // a reporter describing their own testing, and the agent describing the code
+    // rather than itself.
+    it.each([
+        "I haven't run this on Windows yet, but the repro is attached.",
+        "You haven't inspected the source here — the header is dropped in SSEClientTransport.",
+        // These two flagged under an earlier draft that allowed a 60-character gap
+        // between the verb and its object. Both are the reporter describing their
+        // own testing, and collapsing either into a handoff costs them an answer.
+        "I haven't run the repro yet — can you share the code you used?",
+        "I haven't run into this, but the implementation forwards headers only for stdio.",
+        "I haven't been able to reproduce it with the code you posted.",
+        'The transport does not read the headers option, so nothing reaches the wire.',
+        'Run the code in the reproduction and the Authorization header is absent.',
+        'To be clear about the behaviour: headers are accepted but never forwarded.',
+    ])('does not flag %j', (line) => {
+        expect(broken(`${line} ${cited}`)).not.toContain('no-banned-phrases');
+    });
+});
