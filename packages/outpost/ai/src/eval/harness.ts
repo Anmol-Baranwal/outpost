@@ -76,18 +76,26 @@ export function scoreCases(cases: EvalCase[]): EvalReport {
         return {
             id: c.id,
             results,
-            failed: results.filter((r) => !r.passed).map((r) => r.rule),
+            // A rule that could not be evaluated is not a failure.
+            failed: results.filter((r) => r.applicable && !r.passed).map((r) => r.rule),
         };
     });
 
+    // `total` counts only the cases where the rule could be evaluated, so a rule
+    // that was inapplicable everywhere reads as 0/0 rather than as a clean sweep.
     const perRule = Object.fromEntries(
-        RULES.map((rule) => [
-            rule,
-            {
-                passed: scored.filter((s) => !s.failed.includes(rule)).length,
-                total: scored.length,
-            },
-        ]),
+        RULES.map((rule) => {
+            const applicable = scored.filter(
+                (s) => s.results.find((r) => r.rule === rule)?.applicable,
+            );
+            return [
+                rule,
+                {
+                    passed: applicable.filter((s) => !s.failed.includes(rule)).length,
+                    total: applicable.length,
+                },
+            ];
+        }),
     ) as Record<RuleId, { passed: number; total: number }>;
 
     return {
@@ -103,14 +111,23 @@ export function formatReport(report: EvalReport): string {
     const lines = [`${report.cleanCases}/${report.totalCases} cases clean`, ''];
     for (const rule of RULES) {
         const { passed, total } = report.perRule[rule];
-        lines.push(`  ${passed === total ? 'ok  ' : 'FAIL'} ${rule}: ${passed}/${total}`);
+        // `n/a` rather than `ok` when nothing exercised the rule — `passed === total`
+        // is trivially true at 0/0, which is how an unevaluated rule used to read as
+        // a clean sweep.
+        const verdict = total === 0 ? 'n/a ' : passed === total ? 'ok  ' : 'FAIL';
+        lines.push(`  ${verdict} ${rule}: ${passed}/${total}`);
     }
     const dirty = report.cases.filter((c) => c.failed.length > 0);
     if (dirty.length) {
         lines.push('', 'Failing cases:');
         for (const c of dirty) {
             lines.push(`  ${c.id}`);
-            for (const r of c.results.filter((r) => !r.passed)) {
+            // Filtered on `applicable` as well: a not-applicable rule carries
+            // `passed: false`, so without this the report printed `n/a` for a rule
+            // two lines above and then listed it as a failure — re-creating in the
+            // human-readable output exactly the double-counting removed from
+            // `perRule`.
+            for (const r of c.results.filter((r) => r.applicable && !r.passed)) {
                 lines.push(`    - ${r.rule}: ${r.detail}`);
             }
         }
@@ -202,6 +219,34 @@ export const HISTORICAL_FAILURES: EvalCase[] = [
             'Let me know if any of that needs clarifying and someone will pick it up. '.repeat(3),
         sources: CHAT_DOCS,
         provenance: 'https://github.com/CopilotKit/CopilotKit/issues/6423',
+    },
+    {
+        id: 'case-e-mcp-headers-self-commentary',
+        question:
+            'v2 MCP sse servers silently drop the headers auth config — the documented example sends no Authorization header',
+        // CopilotKit#6927, posted 2026-09-06T17:40Z, 23 seconds after the issue
+        // opened. The reporter had already done the work: a reproduction, the
+        // wire-level symptom and a proposed fix. The reply opened by praising the
+        // write-up, then spent a paragraph announcing what it had not done, then
+        // handed the question back to engineering.
+        //
+        // Kept as a fixture because it is the failure the narrower
+        // `read the source` pattern missed on the verb alone: only the praise
+        // opener fired, so the self-positioning paragraph — the part that makes
+        // the reply worse than silence — published intact.
+        reply:
+            '## Thanks for this detailed report\n\n' +
+            'This is an exceptionally thorough write-up — the reproduction output, the proposed ' +
+            'fix, and the note about test coverage are all exactly what the maintainers need to ' +
+            'evaluate this quickly.\n\n' +
+            "To be clear about my position: I haven't run this code or inspected the source, so " +
+            "I can't confirm the root cause or validate the fix independently. What I can say is " +
+            'that the behavior you are describing is consistent with the kind of mismatch that ' +
+            'can happen when a parameter type changes shape across SDK versions.\n\n' +
+            'Engineering will need to verify the internal behavior and decide on the right fix.',
+        sources: [],
+        provenance:
+            'https://github.com/CopilotKit/CopilotKit/issues/6927#issuecomment — posted 2026-09-06, before #241/#242 merged',
     },
 ];
 
