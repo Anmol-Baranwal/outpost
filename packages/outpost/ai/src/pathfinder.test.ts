@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PathfinderClient } from './pathfinder.js';
+import { PathfinderClient, capQuery } from './pathfinder.js';
+import { config } from './config.js';
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -338,8 +339,7 @@ describe('PathfinderClient', () => {
                             content: [
                                 {
                                     type: 'text',
-                                    text:
-                                        'SNIPPET 1\nTITLE: CopilotKit Actions\nSOURCE: https://docs.copilotkit.ai/actions\nCONTENT:\nuseCopilotAction lets you define actions.\n\n---\n\nSNIPPET 2\nTITLE: Getting Started\nSOURCE: https://docs.copilotkit.ai/quickstart\nCONTENT:\nInstall CopilotKit with npm install.',
+                                    text: 'SNIPPET 1\nTITLE: CopilotKit Actions\nSOURCE: https://docs.copilotkit.ai/actions\nCONTENT:\nuseCopilotAction lets you define actions.\n\n---\n\nSNIPPET 2\nTITLE: Getting Started\nSOURCE: https://docs.copilotkit.ai/quickstart\nCONTENT:\nInstall CopilotKit with npm install.',
                                 },
                             ],
                         },
@@ -452,8 +452,12 @@ describe('PathfinderClient', () => {
 
         it('returns empty when both MCP and fallback fail', async () => {
             mockConnect();
-            mockFetch.mockResolvedValueOnce(mkResp({ ok: false, status: 500, statusText: 'Error' }));
-            mockFetch.mockResolvedValueOnce(mkResp({ ok: false, status: 500, statusText: 'Error' }));
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ ok: false, status: 500, statusText: 'Error' }),
+            );
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ ok: false, status: 500, statusText: 'Error' }),
+            );
 
             const results = await client.searchDocs({ query: 'anything' });
             expect(results).toEqual([]);
@@ -479,5 +483,129 @@ describe('PathfinderClient', () => {
             );
             expect(initCalls).toHaveLength(2); // one per connect (before + after disconnect)
         });
+    });
+});
+
+/** A minimal well-formed docs reply, shared by the relay-hygiene tests. */
+const SNIPPETS = [
+    'SNIPPET 1',
+    'TITLE: Actions',
+    'SOURCE: https://docs.copilotkit.ai/actions',
+    'CONTENT:',
+    'Use useCopilotAction to register a frontend action.',
+].join('\n');
+
+// The SEO-spam wave of 2026-09-10/11 got here because the relay forwards a
+// GitHub issue body VERBATIM as the retrieval query: 23 spam issues became 46
+// `query_log` rows of 3.3 KB marketing copy, which then ranked in Top Queries
+// and seeded the gap-analysis LLM prompt. These two guards are the
+// content-independent half of the fix — they bound the NEXT campaign too — so
+// they are asserted at the wire, on the JSON that actually leaves the process.
+describe('PathfinderClient — relay hygiene', () => {
+    let client: PathfinderClient;
+
+    beforeEach(() => {
+        client = new PathfinderClient(BASE);
+        mockFetch.mockReset();
+    });
+
+    afterEach(() => {
+        client.disconnect();
+    });
+
+    it('identifies itself with X-Pathfinder-Source on initialize', async () => {
+        mockConnect('sess-src');
+
+        await client.connect();
+
+        const initHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+        expect(initHeaders['X-Pathfinder-Source']).toBe(config.pathfinder.sourceTag);
+    });
+
+    // Pathfinder captures the header ONCE, when the session is minted, and closes
+    // over it for the session's lifetime. A tool call that carried it would be
+    // ignored, so asserting it on `initialize` specifically is the point.
+    it('sends the source header on the session-minting request, not per tool call', async () => {
+        mockConnect('sess-src');
+        mockFetch.mockResolvedValueOnce(
+            mkResp({ body: jsonRpc({ content: [{ type: 'text', text: SNIPPETS }] }) }),
+        );
+
+        await client.searchDocs({ query: 'actions' });
+
+        const toolHeaders = mockFetch.mock.calls[2][1].headers as Record<string, string>;
+        expect(toolHeaders['Mcp-Session-Id']).toBe('sess-src');
+        expect(toolHeaders['X-Pathfinder-Source']).toBeUndefined();
+    });
+
+    it.each(['search-docs', 'search-code'] as const)(
+        'caps an oversized %s query before it reaches the wire',
+        async (tool) => {
+            mockConnect();
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ body: jsonRpc({ content: [{ type: 'text', text: SNIPPETS }] }) }),
+            );
+
+            // Shaped like the real thing: long, and with no whitespace anywhere
+            // near the cut so the word-boundary pull-back cannot mask the cap.
+            const blob = 'spam '.repeat(400) + 'x'.repeat(500);
+            expect(blob.length).toBeGreaterThan(2000);
+
+            if (tool === 'search-docs') {
+                await client.searchDocs({ query: blob });
+            } else {
+                await client.searchCode({ query: blob });
+            }
+
+            const sent = JSON.parse(mockFetch.mock.calls[2][1].body);
+            expect(sent.params.name).toBe(tool);
+            expect(sent.params.arguments.query.length).toBeLessThanOrEqual(
+                config.pathfinder.maxQueryChars,
+            );
+            // The HEAD is kept — that is where a real question lives.
+            expect(blob.startsWith(sent.params.arguments.query)).toBe(true);
+        },
+    );
+
+    it('leaves a normal-length query untouched', async () => {
+        mockConnect();
+        mockFetch.mockResolvedValueOnce(
+            mkResp({ body: jsonRpc({ content: [{ type: 'text', text: SNIPPETS }] }) }),
+        );
+
+        await client.searchDocs({ query: 'how do I self-host the runtime?' });
+
+        const sent = JSON.parse(mockFetch.mock.calls[2][1].body);
+        expect(sent.params.arguments.query).toBe('how do I self-host the runtime?');
+    });
+});
+
+describe('capQuery', () => {
+    it('returns the input unchanged when it already fits', () => {
+        expect(capQuery('short', 100)).toBe('short');
+    });
+
+    it('cuts at a word boundary when one is near the cut', () => {
+        // Boundary at 16 of 18 — inside the trailing 15% the pull-back looks in.
+        const out = capQuery('alpha beta gamma delta epsilon', 18);
+        expect(out.length).toBeLessThanOrEqual(18);
+        expect(out).toBe('alpha beta gamma');
+    });
+
+    // Deliberate: the pull-back only looks at the last 15%, so it can never
+    // discard a meaningful share of the query to chase a boundary. Losing a few
+    // characters of one token beats losing a sentence of context.
+    it('accepts a mid-token cut rather than reaching far back for a boundary', () => {
+        expect(capQuery('alpha beta gamma delta epsilon', 20)).toBe('alpha beta gamma del');
+    });
+
+    // A single unbroken token has no boundary to fall back to; a hard cut is
+    // still better than shipping the whole blob.
+    it('hard-cuts when there is no late whitespace to fall back to', () => {
+        expect(capQuery('x'.repeat(50), 10)).toBe('x'.repeat(10));
+    });
+
+    it('treats a non-positive cap as "no cap" rather than emptying the query', () => {
+        expect(capQuery('anything', 0)).toBe('anything');
     });
 });
