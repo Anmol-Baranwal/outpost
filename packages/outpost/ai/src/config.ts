@@ -110,7 +110,7 @@ export function validateConfig(): void {
     if (!config.anthropicApiKey) {
         throw new Error(
             '[AI Config] ANTHROPIC_API_KEY is required but not set. ' +
-            'Set the ANTHROPIC_API_KEY environment variable before starting the pipeline.',
+                'Set the ANTHROPIC_API_KEY environment variable before starting the pipeline.',
         );
     }
 }

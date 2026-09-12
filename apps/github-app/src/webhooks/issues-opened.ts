@@ -15,13 +15,11 @@ export async function handleIssueOpened(
 
     console.log(
         `[GitHub App] Issue opened: ${repository.full_name}#${issue.number} ` +
-        `"${issue.title}" by ${sender.login}`,
+            `"${issue.title}" by ${sender.login}`,
     );
 
     if (!isRepoAllowed(repository.full_name, config.allowedRepos)) {
-        console.log(
-            `[GitHub App] Ignoring issue on non-allowlisted repo ${repository.full_name}`,
-        );
+        console.log(`[GitHub App] Ignoring issue on non-allowlisted repo ${repository.full_name}`);
         return;
     }
 

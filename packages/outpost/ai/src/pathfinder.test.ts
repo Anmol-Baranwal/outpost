@@ -339,8 +339,7 @@ describe('PathfinderClient', () => {
                             content: [
                                 {
                                     type: 'text',
-                                    text:
-                                        'SNIPPET 1\nTITLE: CopilotKit Actions\nSOURCE: https://docs.copilotkit.ai/actions\nCONTENT:\nuseCopilotAction lets you define actions.\n\n---\n\nSNIPPET 2\nTITLE: Getting Started\nSOURCE: https://docs.copilotkit.ai/quickstart\nCONTENT:\nInstall CopilotKit with npm install.',
+                                    text: 'SNIPPET 1\nTITLE: CopilotKit Actions\nSOURCE: https://docs.copilotkit.ai/actions\nCONTENT:\nuseCopilotAction lets you define actions.\n\n---\n\nSNIPPET 2\nTITLE: Getting Started\nSOURCE: https://docs.copilotkit.ai/quickstart\nCONTENT:\nInstall CopilotKit with npm install.',
                                 },
                             ],
                         },
@@ -453,8 +452,12 @@ describe('PathfinderClient', () => {
 
         it('returns empty when both MCP and fallback fail', async () => {
             mockConnect();
-            mockFetch.mockResolvedValueOnce(mkResp({ ok: false, status: 500, statusText: 'Error' }));
-            mockFetch.mockResolvedValueOnce(mkResp({ ok: false, status: 500, statusText: 'Error' }));
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ ok: false, status: 500, statusText: 'Error' }),
+            );
+            mockFetch.mockResolvedValueOnce(
+                mkResp({ ok: false, status: 500, statusText: 'Error' }),
+            );
 
             const results = await client.searchDocs({ query: 'anything' });
             expect(results).toEqual([]);

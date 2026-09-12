@@ -46,9 +46,7 @@ function bugReportBody(): string {
 
 describe('maxLinksToOneThirdPartyHost', () => {
     it('counts repeats of the same third-party host', () => {
-        expect(
-            maxLinksToOneThirdPartyHost('a https://1rank.app/x b https://1rank.app/y'),
-        ).toBe(2);
+        expect(maxLinksToOneThirdPartyHost('a https://1rank.app/x b https://1rank.app/y')).toBe(2);
     });
 
     it('does not count our own hosts or GitHub, at any subdomain', () => {
@@ -73,7 +71,8 @@ describe('maxLinksToOneThirdPartyHost', () => {
 
     it('returns the MAX for one host, not the total across hosts', () => {
         // Six links, but spread three ways — nothing is being advertised.
-        const body = 'https://a.io/1 https://a.io/2 https://b.io/1 https://b.io/2 https://c.io/1 https://c.io/2';
+        const body =
+            'https://a.io/1 https://a.io/2 https://b.io/1 https://b.io/2 https://c.io/1 https://c.io/2';
         expect(maxLinksToOneThirdPartyHost(body)).toBe(2);
     });
 });
@@ -107,9 +106,7 @@ describe('isLikelySpamIssue', () => {
     });
 
     it('does not flag a long, link-heavy bug report that carries a repro', () => {
-        expect(isLikelySpamIssue({ body: bugReportBody(), authorAssociation: 'NONE' })).toBe(
-            false,
-        );
+        expect(isLikelySpamIssue({ body: bugReportBody(), authorAssociation: 'NONE' })).toBe(false);
     });
 
     it('does not flag a short body even if it is all links', () => {
@@ -127,8 +124,10 @@ describe('isLikelySpamIssue', () => {
 
     it('does not flag a long body that only links GitHub and our docs', () => {
         const body =
-            Array.from({ length: 12 }, (_, i) => `https://github.com/CopilotKit/x/issues/${i} `)
-                .join('') + 'y'.repeat(3000);
+            Array.from(
+                { length: 12 },
+                (_, i) => `https://github.com/CopilotKit/x/issues/${i} `,
+            ).join('') + 'y'.repeat(3000);
         expect(isLikelySpamIssue({ body, authorAssociation: 'NONE' })).toBe(false);
     });
 

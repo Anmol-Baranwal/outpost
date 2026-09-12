@@ -80,17 +80,17 @@ function makeEvent(overrides: Record<string, unknown> = {}): EmitterWebhookEvent
                 title: 'Bug: CopilotKit crashes on init',
                 body: 'When I call useCopilotKit() in my Next.js app, it crashes.',
                 html_url: 'https://github.com/CopilotKit/CopilotKit/issues/42',
-                ...(overrides.issue as Record<string, unknown> ?? {}),
+                ...((overrides.issue as Record<string, unknown>) ?? {}),
             },
             repository: {
                 full_name: 'CopilotKit/CopilotKit',
-                ...(overrides.repository as Record<string, unknown> ?? {}),
+                ...((overrides.repository as Record<string, unknown>) ?? {}),
             },
             sender: {
                 login: 'user123',
                 id: 999,
                 type: 'User',
-                ...(overrides.sender as Record<string, unknown> ?? {}),
+                ...((overrides.sender as Record<string, unknown>) ?? {}),
             },
             ...overrides,
         },
@@ -104,7 +104,9 @@ describe('handleIssueOpened', () => {
             ticketId: 'ticket-internal-id',
             plugin: 'github',
             externalId: 'CopilotKit/CopilotKit#42',
-        } as ReturnType<typeof prisma.ticketExternalLink.create> extends Promise<infer T> ? T : never);
+        } as ReturnType<typeof prisma.ticketExternalLink.create> extends Promise<infer T>
+            ? T
+            : never);
     });
 
     it('uses GitHubPlatformAdapter to parse the event', async () => {

@@ -90,7 +90,10 @@ function isFirstParty(host: string): boolean {
 export function maxLinksToOneThirdPartyHost(body: string): number {
     const counts = new Map<string, number>();
     for (const match of body.matchAll(/https?:\/\/([^/\s)>\]"'`]+)/gi)) {
-        const host = match[1].toLowerCase().replace(/^www\./, '').replace(/:\d+$/, '');
+        const host = match[1]
+            .toLowerCase()
+            .replace(/^www\./, '')
+            .replace(/:\d+$/, '');
         if (isFirstParty(host)) continue;
         counts.set(host, (counts.get(host) ?? 0) + 1);
     }
