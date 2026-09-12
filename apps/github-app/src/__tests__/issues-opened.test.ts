@@ -171,4 +171,51 @@ describe('handleIssueOpened', () => {
         expect(prisma.ticketExternalLink.create).not.toHaveBeenCalled();
         expect(mockPostSystemMessage).not.toHaveBeenCalled();
     });
+
+    // The gate has to sit HERE, before the ticket exists. Creating the ticket is
+    // what enqueues the AI job, and that job is what forwards the body verbatim
+    // into search-docs/search-code on mcp.copilotkit.ai and posts a public
+    // reply. A filter further down would still have paid for the relay.
+    it('ignores a link-spam issue without creating a ticket or relaying anything', async () => {
+        const event = makeEvent({
+            issue: {
+                body:
+                    Array.from(
+                        { length: 8 },
+                        (_, i) => `Read [our SEO guide ${i}](https://1rank.app/g-${i}). `,
+                    ).join('') + 'Search visibility wins customers. '.repeat(100),
+                author_association: 'NONE',
+            },
+        });
+
+        await handleIssueOpened(event);
+
+        expect(mockParseInboundEvent).not.toHaveBeenCalled();
+        expect(mockHandle).not.toHaveBeenCalled();
+        expect(prisma.ticketExternalLink.create).not.toHaveBeenCalled();
+        expect(mockPostResponse).not.toHaveBeenCalled();
+    });
+
+    // The other half of the same guarantee: a long, link-carrying bug report
+    // from a first-time reporter still gets answered.
+    it('still relays a long bug report from an untrusted author', async () => {
+        const event = makeEvent({
+            issue: {
+                body: [
+                    'Repro: https://github.com/someone/repro',
+                    'Docs: https://docs.copilotkit.ai/quickstart',
+                    '```ts',
+                    'useCopilotAction({ name: "x" });',
+                    '```',
+                    'Stack trace follows. '.repeat(200),
+                ].join('\n'),
+                author_association: 'NONE',
+            },
+        });
+
+        await handleIssueOpened(event);
+
+        expect(mockHandle).toHaveBeenCalled();
+        expect(prisma.ticketExternalLink.create).toHaveBeenCalled();
+    });
 });
