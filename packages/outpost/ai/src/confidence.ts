@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { SearchResult, TokenUsage } from './types.js';
 import { ConfidenceLevel, classifyConfidence } from './types.js';
 import { config } from './config.js';
+import { samplingParams } from './model-capabilities.js';
+import { extractResponseText } from './generator.js';
 
 export interface ConfidenceAssessment {
     level: ConfidenceLevel;
@@ -11,14 +13,21 @@ export interface ConfidenceAssessment {
     degraded: boolean;
 }
 
-const CONFIDENCE_SYSTEM_PROMPT = `You are a confidence scoring system for an AI support assistant. Your job is to assess whether a generated response adequately answers the user's question based on the provided search results.
+/**
+ * Exported for testing, like GROUNDING_RULES in generator.ts. A prompt that
+ * contradicts the generator's is invisible at runtime — the pipeline takes
+ * min(generator, scorer), so the scorer quietly claws back what the generator
+ * was allowed to do — and the only way to pin the two together is to assert on
+ * the text.
+ */
+export const CONFIDENCE_SYSTEM_PROMPT = `You are a confidence scoring system for an AI support assistant. Your job is to assess whether a generated response adequately answers the user's question based on the provided search results.
 
 Evaluate these factors:
 1. **Relevance**: Do the search results actually cover the topic the user asked about?
 2. **Coverage**: Does the response address all parts of the question?
 3. **Specificity**: Is the response specific and actionable, or vague and generic?
 4. **Accuracy indicators**: Does the response cite specific features, APIs, or code patterns that exist in CopilotKit?
-5. **Groundedness**: Is every specific claim traceable to the search results above? The assistant that wrote this response could not read CopilotKit's source, reproduce the user's problem, or run any test — it only had these search results. Score LOW when the response:
+5. **Groundedness**: Is every specific claim traceable to the search results above? The search results may include CopilotKit SOURCE CODE as well as documentation pages, and naming a file that appears in them is correct and expected — do NOT mark a response down for citing retrieved code. What the assistant could not do is reproduce the user's problem or run any test, and it had nothing beyond these search results. Score LOW when the response:
    - confirms a bug, asserts a root cause, or claims to have reproduced or tested anything
    - names a file, CSS class, component, prop, hook, or version that does not appear in the search results
    - hedges ("likely", "may vary") and then states the same claim as fact
@@ -64,12 +73,23 @@ export class ConfidenceScorer {
             const message = await this.client.messages.create({
                 model: this.model,
                 max_tokens: config.maxConfidenceTokens,
-                temperature: config.confidenceTemperature,
+                ...samplingParams(this.model, config.confidenceTemperature),
                 system: CONFIDENCE_SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: userMessage }],
             });
 
-            const text = message.content[0].type === 'text' ? message.content[0].text : '';
+            const text = extractResponseText(message.content);
+
+            // An empty extraction is a FAILURE, not a result. Falling through to
+            // the parser turned it into a fabricated value reported as healthy:
+            // the parse catch returned a constant while `degraded` stayed false,
+            // so the caller could not tell a measured answer from a missing one.
+            // Reachable as soon as a thinking-default model is configured, since
+            // this call's max_tokens sits below a thinking turn — which is exactly
+            // the swap the temperature gate exists to enable.
+            if (!text.trim()) {
+                throw new Error('Model response contained no usable text');
+            }
             const tokenUsage: TokenUsage = {
                 inputTokens: message.usage.input_tokens,
                 outputTokens: message.usage.output_tokens,

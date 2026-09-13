@@ -38,6 +38,92 @@ describe('TicketClassifier', () => {
     });
 
     describe('classify', () => {
+        // Reading only content[0] made every thinking-first model silently useless
+        // here: the text block is second, `text` came out '', parseClassification
+        // found nothing, and the call degraded to the heuristic with no error. That
+        // is the shape of any request to a model with thinking on by default, which
+        // is what removing the temperature gate makes reachable.
+        // The PR's title claim, pinned at the call site rather than only in the
+        // unit test for samplingParams. Every other test in this file constructs
+        // the client with an allowlisted model, so the parameter is sent either
+        // way and no assertion can tell whether the call site uses the gate.
+        it('sends no temperature at all when the model rejects one', async () => {
+            mock.onMessage(/./, {
+                content: JSON.stringify({ priority: 'LOW', type: 'QUESTION', tags: [] }),
+                usage: { input_tokens: 10, output_tokens: 10 },
+            });
+
+            await new TicketClassifier({ apiKey: 'test-key', model: 'claude-opus-5' }).classify(
+                'how do I do the thing?',
+            );
+
+            const body = mock.getLastRequest()?.body as Record<string, unknown>;
+            expect(body.model).toBe('claude-opus-5');
+            // Asserted on the VALUE, not key presence: aimock's journal is a
+            // normalized view of the request and always carries a `temperature`
+            // key, holding `undefined` when we sent none. Absence on the wire is
+            // what model-capabilities.test.ts pins; this pins that the call site
+            // routes through the gate at all.
+            expect(body.temperature).toBeUndefined();
+        });
+
+        it('still sends it for a model that accepts one', async () => {
+            mock.onMessage(/./, {
+                content: JSON.stringify({ priority: 'LOW', type: 'QUESTION', tags: [] }),
+                usage: { input_tokens: 10, output_tokens: 10 },
+            });
+
+            await new TicketClassifier({
+                apiKey: 'test-key',
+                model: 'claude-haiku-4-5-20251001',
+            }).classify('how do I do the thing?');
+
+            const body = mock.getLastRequest()?.body as Record<string, unknown>;
+            expect(body.temperature).toBeDefined();
+        });
+
+        // The inner parse catch swallowed an empty response and returned a
+        // hardcoded MEDIUM/OTHER while reporting degraded: false — throwing away
+        // the heuristic verdict it had already computed, and telling the caller
+        // nothing was wrong. Reachable the moment a thinking-default model is
+        // configured, since maxClassifierTokens (512) is below a thinking turn.
+        it('falls back to the heuristic, and says so, when the response has no text', async () => {
+            mock.onMessage(/./, {
+                content: '',
+                reasoning: 'thought about it and emitted no text',
+                usage: { input_tokens: 10, output_tokens: 10 },
+            });
+
+            const result = await classifier.classify(
+                'TypeError: Cannot read properties of undefined in CopilotRuntime.',
+            );
+
+            expect(result.degraded).toBe(true);
+            // The heuristic's own verdict, not the parse fallback's MEDIUM/OTHER.
+            expect(result.priority).toBe(TicketPriority.HIGH);
+        });
+
+        it('should read past a leading thinking block', async () => {
+            mock.onMessage(/./, {
+                content: JSON.stringify({
+                    priority: 'HIGH',
+                    type: 'BUG',
+                    tags: ['copilotkit-runtime'],
+                    reasoning: 'Error report with stack trace',
+                }),
+                reasoning: 'internal thinking that is not the classification',
+                usage: { input_tokens: 100, output_tokens: 40 },
+            });
+
+            const result = await classifier.classify(
+                'TypeError: Cannot read properties of undefined in CopilotRuntime.',
+            );
+
+            // BUG, not the heuristic's default: proves the JSON was actually parsed.
+            expect(result.type).toBe(TicketType.BUG);
+            expect(result.tags).toContain('copilotkit-runtime');
+        });
+
         it('should classify an error report as HIGH priority ISSUE', async () => {
             mock.onMessage(/./, {
                 content: JSON.stringify({

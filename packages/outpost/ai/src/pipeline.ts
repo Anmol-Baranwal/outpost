@@ -19,7 +19,7 @@ import {
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
 } from './formatter.js';
-import { validateConfig } from './config.js';
+import { config, validateConfig } from './config.js';
 
 /**
  * The text published in place of a suppressed draft.
@@ -45,6 +45,30 @@ export const SUPPRESSED_RESPONSE_TEXT =
  * under AI_CONFIDENCE.HIGH_THRESHOLD if those bands are ever re-tuned.
  */
 const DEGRADED_CONFIDENCE_CAP = AI_CONFIDENCE.HIGH_THRESHOLD - 0.01;
+
+/**
+ * Merge two rank-ordered result lists, alternating between them, `first` leading.
+ *
+ * Concatenating would let a weak hit from the leading list outrank a strong hit
+ * from the other purely by which source it came from, and the merged list is
+ * capped before it reaches the prompt — so the file that actually answers the
+ * question could fall off the end while loosely-related pages stayed.
+ * Alternating keeps each source's best material near the front, which is what
+ * the context window sees.
+ *
+ * Not a score merge: the two tools score on different scales (docs carry real
+ * relevance numbers, code snippets get a synthesized descending rank), so
+ * comparing the numbers across sources would be meaningless. That is also why
+ * order is decided by policy — source first — rather than by the numbers.
+ */
+function interleaveByRank(first: SearchResult[], second: SearchResult[]): SearchResult[] {
+    const merged: SearchResult[] = [];
+    for (let i = 0; i < Math.max(first.length, second.length); i++) {
+        if (i < first.length) merged.push(first[i]);
+        if (i < second.length) merged.push(second[i]);
+    }
+    return merged;
+}
 
 /**
  * Main entry point for the Outpost AI pipeline.
@@ -97,18 +121,80 @@ export class AIPipeline {
         const startTime = Date.now();
         const totalTokenUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
-        // Step 1: Query Pathfinder for relevant content
-        let searchResults: SearchResult[];
-        try {
-            searchResults = await this.pathfinder.searchDocs({
-                query: question,
-            });
-        } catch (error) {
-            console.error(
-                `[Pipeline] Pathfinder search failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-            searchResults = [];
+        // Step 1: Query Pathfinder for relevant content — docs AND source.
+        //
+        // Source first, docs second, per the decision in the Agent's Output Doc:
+        // we ship fast, so the code is the truth and the docs are the lagging
+        // indicator. Until this, only `searchDocs` ran, so any question whose
+        // answer lived in the source had nothing behind it and the answer came
+        // from general framework priors. That is how a reporter asking whether
+        // Deep Agents supports subagents got told there was no timeline for a
+        // feature that already shipped.
+        //
+        // Run in parallel and merge rather than sequentially: they are
+        // independent queries against the same server, and a docs-only latency
+        // budget is the one we already live with.
+        //
+        // Each tool gets half the budget and the merged list is still capped, so
+        // the prompt carries what it always did. Without either, it would have
+        // carried up to 2x the sources — and code snippets are line-numbered file
+        // excerpts far larger than doc snippets, so input tokens per ticket
+        // roughly doubled, with a real path to a context-length error that lands
+        // in the generator's catch and publishes the apology fallback.
+        //
+        // AG-UI is deliberately NOT queried here. `searchAgUiDocs` and
+        // `searchAgUiCode` exist on the client, but firing them on every
+        // CopilotKit question buys noise and spend with no way to tell when they
+        // are relevant. Choosing the retrieval strategy from the kind of question
+        // asked is the doc's step 5, and it needs the classifier's answer.
+        // allSettled, not all: `Promise.all` rejects on the first failure, so one
+        // retrieval throwing threw away the other one's results and the answer was
+        // built from nothing. Whichever source survives is worth more than
+        // symmetry.
+        // Split the budget across the two tools instead of asking each for a full
+        // `defaultLimit` and discarding half. Over-fetching paid for 16 snippets to
+        // keep 8, and it also cost docs recall on the majority path: a purely
+        // docs-answerable question used to get 8 docs snippets and would have got
+        // 4, with the other 4 going to code hits that merely cleared min_score.
+        const perTool = Math.ceil(config.pathfinder.defaultLimit / 2);
+        const [docsOutcome, codeOutcome] = await Promise.allSettled([
+            this.pathfinder.searchDocs({ query: question, limit: perTool }),
+            this.pathfinder.searchCode({ query: question, limit: perTool }),
+        ]);
+        for (const [label, outcome] of [
+            ['searchDocs', docsOutcome],
+            ['searchCode', codeOutcome],
+        ] as const) {
+            if (outcome.status === 'rejected') {
+                console.error(
+                    `[Pipeline] ${label} failed: ${
+                        outcome.reason instanceof Error
+                            ? outcome.reason.message
+                            : String(outcome.reason)
+                    }`,
+                );
+            }
         }
+        // Coerced rather than trusted. This class's contract is that it never
+        // crashes, and `Promise.allSettled` reports a non-promise or an
+        // `undefined` return as *fulfilled* — so a client that answers with
+        // anything other than an array would reach the merge and throw on
+        // `.length`, taking down the one code path that is supposed to always
+        // produce an answer. The old `try`/`catch` hid this; removing it made it
+        // reachable, which is a good reason to handle it rather than re-wrap.
+        const asResults = (outcome: PromiseSettledResult<SearchResult[]>): SearchResult[] =>
+            outcome.status === 'fulfilled' && Array.isArray(outcome.value) ? outcome.value : [];
+        const docs = asResults(docsOutcome);
+        const code = asResults(codeOutcome);
+
+        // Code leads, because the stated precedence is source first, docs second.
+        // Interleaved rather than concatenated so neither source is buried: the
+        // list is capped just below, and docs-then-code would let weak docs hits
+        // push the file that actually answers the question off the end.
+        const searchResults = interleaveByRank(code, docs).slice(
+            0,
+            config.pathfinder.defaultLimit,
+        );
 
         // Step 2: Generate response
         const pipelineContext: PipelineContext = {

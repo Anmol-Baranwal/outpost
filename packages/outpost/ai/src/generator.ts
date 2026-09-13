@@ -5,20 +5,42 @@ import { ConfidenceLevel, SUPPRESSED_CONFIDENCE_CAP, classifyConfidence } from '
 import type { GroundednessAssessment } from './groundedness.js';
 import { assessGroundedness } from './groundedness.js';
 import { config } from './config.js';
+import { samplingParams } from './model-capabilities.js';
 
 /**
  * Epistemic guardrails. The generator is a SINGLE stateless model call over
- * documentation search results — it cannot read CopilotKit's source, cannot run
- * a repro, and cannot execute tests. Without these rules it will happily assert
- * a confirmed root cause built from generic framework priors (see
- * CopilotKit/CopilotKit#6167, where the bot posted "Bug Confirmed" plus invented
- * CSS class names for a cursor-jump report it never reproduced).
+ * retrieval results — it cannot run a repro and cannot execute tests. Without
+ * these rules it will happily assert a confirmed root cause built from generic
+ * framework priors (see CopilotKit/CopilotKit#6167, where the bot posted "Bug
+ * Confirmed" plus invented CSS class names for a cursor-jump report it never
+ * reproduced).
  *
  * Every rule here exists to keep the response's claims inside what the provided
  * Documentation Context actually supports.
+ *
+ * ## What changed when code search landed
+ *
+ * These rules previously opened with "You have NOT read CopilotKit's source
+ * code. Never write or imply otherwise." That was true while the pipeline only
+ * called `search-docs`, and it is now false: `searchCode` results are in the
+ * Documentation Context, so the old line instructed the model to disclaim the
+ * best evidence it had. It is the reason a reporter asking whether Deep Agents
+ * supports subagents was told there was no timeline for a feature that already
+ * shipped — the docs did not cover it, and the model was forbidden from having
+ * looked anywhere else.
+ *
+ * The honest boundary is narrower than the old one and still real: retrieved
+ * code is fair to cite, files that were NOT retrieved are not, and a repro or a
+ * test run remains something the model cannot do. Note also that documentation
+ * silence stopped being evidence of absence the moment code became searchable,
+ * which is why "never say not supported on the strength of the docs alone" sits
+ * alongside the capability rather than after it.
  */
 export const GROUNDING_RULES = `Grounding rules (these override the personality and formatting rules above when they conflict):
-- You have NOT read CopilotKit's source code, reproduced the user's problem, or run any test. Never write or imply otherwise.
+- The Documentation Context may include CopilotKit SOURCE CODE as well as documentation pages. Code entries are shown with their file path. You may state what that code does, and cite the file.
+- You have NOT reproduced the user's problem or run any test, and you have not read any file that is not in the Documentation Context. Never write or imply otherwise.
+- Documentation silence is not evidence a feature is missing. If the docs do not cover something but the code shows it working, say it works and that the docs do not cover it yet. Never say "not supported" on the strength of the docs alone.
+- Where code and docs disagree, the code is what ships. Say so plainly rather than reporting both.
 - Never confirm a bug. Do not write "bug confirmed", "this is a real bug", "known issue", "root cause is", or "the fix is" about behavior you cannot see. Acknowledge the report and say engineering will verify.
 - Only name identifiers — file paths, CSS class names, component names, props, hooks, config keys, version numbers — that appear verbatim in the Documentation Context. If it is not there, describe the concept in prose instead of guessing a name.
 - Mark any causal explanation as a hypothesis exactly once ("one possibility is…"), and never restate it as established fact later in the same response. If you hedge a claim, do not close by asserting it.
@@ -51,14 +73,10 @@ ${GROUNDING_RULES}`;
 const CHANNEL_GUIDANCE: Record<PlatformTarget, string> = {
     discord:
         'This question was asked in the CopilotKit Discord. The user is ALREADY in Discord — never suggest they "join the Discord", never share a Discord invite link, and never tell them to ask in Discord. You may point them to the docs or GitHub if genuinely useful.',
-    github:
-        'This question was asked in a GitHub issue or discussion. The user is ALREADY on GitHub — never suggest they "open an issue", "file a bug report", or "open a GitHub discussion"; they already have. You may point them to the docs or Discord if genuinely useful.',
-    slack:
-        'This question was asked in Slack. The user is ALREADY in Slack — never suggest they reach out or ask again in Slack. You may point them to the docs, Discord, or GitHub if genuinely useful.',
-    teams:
-        'This question was asked in Microsoft Teams. The user is ALREADY in Teams — never suggest they reach out or ask again in Teams. You may point them to the docs, Discord, or GitHub if genuinely useful.',
-    web:
-        'This question was asked through the web support widget. Point the user to the docs, Discord, or GitHub if genuinely useful.',
+    github: 'This question was asked in a GitHub issue or discussion. The user is ALREADY on GitHub — never suggest they "open an issue", "file a bug report", or "open a GitHub discussion"; they already have. You may point them to the docs or Discord if genuinely useful.',
+    slack: 'This question was asked in Slack. The user is ALREADY in Slack — never suggest they reach out or ask again in Slack. You may point them to the docs, Discord, or GitHub if genuinely useful.',
+    teams: 'This question was asked in Microsoft Teams. The user is ALREADY in Teams — never suggest they reach out or ask again in Teams. You may point them to the docs, Discord, or GitHub if genuinely useful.',
+    web: 'This question was asked through the web support widget. Point the user to the docs, Discord, or GitHub if genuinely useful.',
 };
 
 /**
@@ -78,6 +96,23 @@ export function buildChannelGuidance(source?: PlatformTarget): string {
         guidance,
         'General rule: never redirect the user to the same channel they are already using to ask this question.',
     ].join('\n');
+}
+
+/**
+ * Extract all text blocks from an Anthropic response, in response order.
+ *
+ * Joined with a blank line rather than concatenated. Two text blocks are only
+ * ever adjacent because something non-text sat between them (a `tool_use`, a
+ * `thinking` block), which means they were separate emissions and not two halves
+ * of one sentence — concatenating them produces `...first step.Next you...`.
+ * Filtering explicitly rather than mapping non-text blocks to `''` is what makes
+ * the separator apply where it should and nowhere else.
+ */
+export function extractResponseText(content: Anthropic.ContentBlock[]): string {
+    return content
+        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n\n');
 }
 
 /**
@@ -114,13 +149,15 @@ export class ResponseGenerator {
             const message = await this.client.messages.create({
                 model: this.model,
                 max_tokens: config.maxResponseTokens,
-                temperature: config.responseTemperature,
+                ...samplingParams(this.model, config.responseTemperature),
                 system: systemPrompt,
                 messages,
             });
 
-            const responseText =
-                message.content[0].type === 'text' ? message.content[0].text : '';
+            const responseText = extractResponseText(message.content);
+            if (!responseText.trim()) {
+                throw new Error('Model response contained no usable text');
+            }
 
             const tokenUsage: TokenUsage = {
                 inputTokens: message.usage.input_tokens,
@@ -132,10 +169,7 @@ export class ResponseGenerator {
             // Assessed here (the response and its sources are both in hand) and
             // applied by the pipeline — exactly once.
             const groundedness = assessGroundedness(responseText, sources);
-            const confidenceLevel = this.classifyGroundedConfidence(
-                confidenceScore,
-                groundedness,
-            );
+            const confidenceLevel = this.classifyGroundedConfidence(confidenceScore, groundedness);
 
             return {
                 text: responseText,
@@ -182,16 +216,13 @@ export class ResponseGenerator {
             const stream = this.client.messages.stream({
                 model: this.model,
                 max_tokens: config.maxResponseTokens,
-                temperature: config.responseTemperature,
+                ...samplingParams(this.model, config.responseTemperature),
                 system: systemPrompt,
                 messages,
             });
 
             for await (const event of stream) {
-                if (
-                    event.type === 'content_block_delta' &&
-                    event.delta.type === 'text_delta'
-                ) {
+                if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
                     yield event.delta.text;
                 }
             }
@@ -204,7 +235,13 @@ export class ResponseGenerator {
         const sourceContext = sources
             .map((s, i) => {
                 const urlLine = s.sourceUrl ? `\nURL: ${s.sourceUrl}` : '';
-                return `[Source ${i + 1}: ${s.title} (relevance: ${s.score.toFixed(2)})]${urlLine}\n${s.content}`;
+                // Labelled by kind, because GROUNDING_RULES now tells the model
+                // that code entries are shown with their file path and that the
+                // code wins a disagreement with the docs. Rendering both as an
+                // identical `[Source N: title]` left that instruction resolvable
+                // only by guessing at the title's shape.
+                const kindLabel = s.kind === 'code' ? 'SOURCE CODE ' : s.kind === 'docs' ? 'DOCS ' : '';
+                return `[${kindLabel}Source ${i + 1}: ${s.title} (relevance: ${s.score.toFixed(2)})]${urlLine}\n${s.content}`;
             })
             .join('\n\n');
 
@@ -213,7 +250,8 @@ export class ResponseGenerator {
             buildChannelGuidance(source),
             '',
             '--- Documentation Context ---',
-            sourceContext || '(No relevant documentation found — answer from general CopilotKit knowledge if possible, otherwise say you need to escalate)',
+            sourceContext ||
+                '(No relevant documentation found — answer from general CopilotKit knowledge if possible, otherwise say you need to escalate)',
         ].join('\n');
     }
 
