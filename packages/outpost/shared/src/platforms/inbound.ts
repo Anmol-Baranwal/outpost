@@ -36,8 +36,8 @@ import { buildTicketSourceId } from './source-id.js';
  */
 export interface PrismaLike {
     ticket: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         create: (
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             args: any,
         ) => Promise<{
             id: string;
@@ -47,8 +47,8 @@ export interface PrismaLike {
             channel: string | null;
             source: string;
         }>;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         findFirst: (
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             args: any,
         ) => Promise<{
             id: string;
