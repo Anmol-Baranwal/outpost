@@ -21,3 +21,16 @@ packages/outpost/db/prisma/migrations/
 # apps/web/src/app/**/templates/, exempting them from both the CI check and
 # `pnpm format` with no way to bring them back into compliance.
 /templates/
+
+# Skill definitions under .claude/skills/ are hand-maintained spec prose, and
+# several carry wide reference tables. Prettier pads every cell out to the
+# widest one, so a one-word edit rewrites the whole table and the real change
+# disappears into the diff. Anchored so it matches the directory at the repo
+# root rather than any `skills` directory at any depth.
+/.claude/skills/
+
+# Operational dedup state for Reddit Pulse — appended by the weekly-report
+# routine rather than written by hand, and 2-space by construction. Formatting
+# it to the repo's 4-space width reindents all 412 lines and would do so again
+# after every run.
+/docs/community-signal/reddit-pulse-seen.json
