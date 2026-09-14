@@ -82,6 +82,16 @@ import {
 // self-healing; the two were never actually in tension.
 let boot: BootState = { phase: 'starting' };
 
+/**
+ * Read `boot` without control-flow narrowing.
+ *
+ * TypeScript narrows the module-level `boot` to its initializer and cannot see
+ * that failFatally reassigns it from a process-level handler while an await is
+ * pending, so a direct `boot.phase === 'crashed'` reads as an impossible
+ * comparison.
+ */
+const currentBoot = (): BootState => boot;
+
 let worker: Worker | null = null;
 let scheduler: Scheduler | null = null;
 
@@ -231,6 +241,14 @@ async function shutdown(signal: string): Promise<void> {
         // finish (up to 300s), and advertising a healthy /health for the whole
         // drain window tells the platform to keep routing to a replica that has
         // already committed to dying.
+        // Closed FIRST, which inverts main's order deliberately. worker.stop()
+        // blocks until in-flight jobs finish — up to the watchdog — and answering
+        // 200 for that whole window tells the platform to keep routing to a
+        // replica that has already committed to dying. The cost is that /health
+        // is unreachable during the drain, which is a real loss: the drain is
+        // when an operator most wants to ask what the worker is doing. The logs
+        // carry that instead, and routing work to a dying replica is the worse
+        // of the two.
         healthServer.close();
         scheduler?.stop();
         await worker?.stop();
@@ -393,13 +411,60 @@ if (lingerWarning) {
     configWarningList.push(lingerWarning);
 }
 
+// How long boot may sit in `starting` before it is treated as failed.
+//
+// BOOT_FAILURE_LINGER_MS arms inside the catch, so it only ever watches a boot
+// that THREW. A boot that HANGS never reaches it: buildSyncEngine() does three
+// database reads and Prisma applies no query timeout, so a Postgres that accepts
+// the connection and then stops answering — a failover, a saturated pool, a
+// partition that drops packets without resetting — leaves that await pending
+// forever. The process then sits at 503 `starting` processing nothing, and
+// restartPolicyType="ALWAYS" cannot fire because nothing exits.
+//
+// That is the indefinite wedge the header above argues is unacceptable, reached
+// through the one path the linger timer does not watch. Sized well above a cold
+// boot's three reads so a slow-but-fine start is never cut short.
+const { ms: BOOT_DEADLINE_MS, warning: deadlineWarning } = resolveDurationMs(
+    process.env.BOOT_DEADLINE_MS,
+    'BOOT_DEADLINE_MS',
+    180_000,
+);
+if (deadlineWarning) {
+    console.error(`[Worker] ${deadlineWarning}`);
+    configWarningList.push(deadlineWarning);
+}
+
+const bootDeadline = setTimeout(() => {
+    if (currentBoot().phase !== 'starting' || shuttingDown) return;
+    boot = {
+        phase: 'failed',
+        error: `boot did not finish within ${BOOT_DEADLINE_MS}ms — it is hung rather than failed, most likely on a database read that never returned`,
+    };
+    console.error(`[Worker] BOOT HUNG: ${boot.error}`);
+    console.error(
+        '[Worker] Exiting 1 so the restart policy retries; staying up would wedge this replica at zero jobs.',
+    );
+    // Exits immediately rather than lingering: unlike a thrown boot there is no
+    // error to publish that a reader has not already had the whole window to see.
+    process.exit(1);
+}, BOOT_DEADLINE_MS);
+
 try {
     await startWorker();
+    clearTimeout(bootDeadline);
     if (!shuttingDown) {
-        boot = { phase: 'ready' };
-        console.log('[Worker] Worker process started');
+        // Not if the process has already committed to dying. failFatally may have
+        // set `crashed` and armed exit(1) while boot was still finishing, and 200
+        // is the one answer that makes a load balancer send work.
+        if (currentBoot().phase === 'crashed') {
+            console.error('[Worker] Boot finished after a fatal error; not reporting ready.');
+        } else {
+            boot = { phase: 'ready' };
+            console.log('[Worker] Worker process started');
+        }
     }
 } catch (error) {
+    clearTimeout(bootDeadline);
     // startWorker() has already torn down anything it managed to start, so by
     // here the process holds no timers and no poll loop — only the health server.
     //

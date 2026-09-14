@@ -687,3 +687,64 @@ describe('completed jobs leave no overdue residue', () => {
         expect(worker.healthCheck().overdueJobCount).toBe(0);
     });
 });
+
+// A poll that recovers then spends a long time processing what it claimed must
+// not still read as failing. The counters are cleared when the CLAIM returns —
+// the moment the database proves it is answering — not at the end of the poll
+// body, which can be minutes later.
+describe('a recovering worker stops reporting failure at the claim, not at the end of the poll', () => {
+    let worker: InstanceType<typeof Worker>;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(async () => {
+        if (worker) await worker.stop();
+        vi.useRealTimers();
+    });
+
+    it('clears the failure window while the recovered poll is still processing', async () => {
+        // concurrencyByType populated so hasPerTypeLimits is true and the poll
+        // takes the claimJobsByType path — the one production uses, since
+        // apps/worker/src/index.ts names all ten types.
+        worker = new Worker({
+            pollIntervalMs: 50,
+            maxConcurrency: 1,
+            concurrencyByType: { [JobType.AI_RESPONSE]: 1 },
+        });
+
+        let release: (() => void) | undefined;
+        const stillWorking = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        worker.on(JobType.AI_RESPONSE, async () => {
+            await stillWorking;
+            return { success: true };
+        });
+
+        mockPrismaJob.update.mockResolvedValue({});
+        mockPrisma.$queryRaw
+            .mockRejectedValueOnce(new Error('connection refused'))
+            .mockRejectedValueOnce(new Error('connection refused'))
+            .mockResolvedValueOnce([makeJobRow({ id: 'recovered-1' })])
+            .mockResolvedValue([]);
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(60);
+        expect(worker.healthCheck().pollFailingSince).toBeInstanceOf(Date);
+
+        // The claim has now succeeded and the job is in flight. The poll body has
+        // NOT finished — it is awaiting the handler.
+        await vi.advanceTimersByTimeAsync(60);
+
+        const midRecovery = worker.healthCheck();
+        expect(midRecovery.activeJobCount).toBe(1);
+        expect(midRecovery.pollFailingSince).toBeNull();
+        expect(midRecovery.consecutivePollFailures).toBe(0);
+
+        release?.();
+        await vi.advanceTimersByTimeAsync(0);
+    });
+});

@@ -250,10 +250,9 @@ export class Worker {
 
             // If we processed jobs, poll immediately for more
             const nextPollDelay = processedCount > 0 ? 0 : this.pollIntervalMs;
-            // A poll that returned normally clears the failure window, however
-            // long it had been running.
-            this.pollFailingSince = null;
-            this.consecutivePollFailures = 0;
+            // Belt and braces: a poll that claimed nothing at all still proves
+            // the database answered.
+            this.recordPollSuccess();
             this.completePoll();
             this.reschedule(nextPollDelay);
         } catch (error) {
@@ -271,6 +270,12 @@ export class Worker {
      * running, and leaving pollStartedAt set would report a dead loop as busy
      * forever.
      */
+    /** The database answered a claim, so any open failure window is closed. */
+    private recordPollSuccess(): void {
+        this.pollFailingSince = null;
+        this.consecutivePollFailures = 0;
+    }
+
     private completePoll(): void {
         this.pollStartedAt = null;
         this.lastPollCompletedAt = new Date();
@@ -331,6 +336,12 @@ export class Worker {
 
             const limit = Math.min(available, remainingGlobalSlots, this.batchSize);
             const jobs = await this.claimJobsForType(type, limit);
+            // The claim came back, so the database is answering. Cleared here
+            // rather than at the end of the poll body: a poll that recovers then
+            // spends 300s processing what it claimed would otherwise report
+            // "every poll has failed" for that whole window, about a poll in the
+            // middle of succeeding.
+            this.recordPollSuccess();
 
             if (jobs.length > 0) {
                 const promises = jobs.map((job) => this.processJob(job));
@@ -406,6 +417,7 @@ export class Worker {
             )
             RETURNING id, type, payload, attempts, "maxAttempts"
         `;
+        this.recordPollSuccess();
 
         // Process jobs concurrently (each tracked in activeJobs)
         const promises = jobs.map(
