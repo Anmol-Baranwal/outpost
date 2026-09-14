@@ -24,9 +24,26 @@ const WORKER_HEALTH: WorkerHealthStatus = {
     lastPollCompletedAt: new Date(NOW - 1_000),
     overdueJobCount: 0,
     lastJobSettledAt: new Date(NOW - 1_000),
+    pollFailingSince: null,
+    consecutivePollFailures: 0,
     registeredHandlers: ['AI_RESPONSE', 'TRACKER_SYNC'],
     upSince: new Date(NOW - 3_600_000),
 };
+
+// The fixtures below are computed as `CONSTANT ± 1`, so they re-derive from
+// whatever the constant says and can never disagree with it. These pin the
+// literals, because the sizing is the thing that was wrong twice: 60s against a
+// 300s job timeout is what got the first attempt reverted, and a bound ten times
+// too lenient would ship green under fixtures alone.
+describe('the bounds themselves', () => {
+    it('sizes the between-polls bound for a loop that reschedules every second', () => {
+        expect(STALE_POLL_MS).toBe(60_000);
+    });
+
+    it('sizes the claim bound for a claim query, not for a poll', () => {
+        expect(CLAIM_STALL_MS).toBe(60_000);
+    });
+});
 
 describe('buildHealthResponse', () => {
     it('reports 200 with the worker snapshot once boot is ready and the worker is polling', () => {
@@ -207,7 +224,12 @@ describe('buildHealthResponse', () => {
         // A poll with nothing claimed is doing one bounded thing. Long silence
         // there is a blocked claim query, and no job can be blamed for it.
         it('reports 503 when a poll runs long with no job in flight', () => {
-            const claimBlocked = midPoll(CLAIM_STALL_MS + 1, { activeJobCount: 0 });
+            const claimBlocked = midPoll(CLAIM_STALL_MS + 1, {
+                activeJobCount: 0,
+                // Nothing has settled inside this poll, so the whole poll really
+                // has been spent claiming.
+                lastJobSettledAt: new Date(NOW - CLAIM_STALL_MS - 10_000),
+            });
 
             const { statusCode, body } = buildHealthResponse({ phase: 'ready' }, claimBlocked, NOW);
 
@@ -489,6 +511,20 @@ describe('resolveDurationMs', () => {
         },
     );
 
+    // Number() accepts hex and exponent forms, so `0x10` is a 16ms watchdog that
+    // forces exit(1) on every SIGTERM mid-drain and `3e2` is 300ms — the same
+    // coercion-leniency class as the Number('') === 0 trap this function exists
+    // to close. resolvePort guards it with a digits-only test; so does this.
+    it.each(['0x10', '3e2', '1_000', '+500', '5.5'])(
+        'falls back on the non-decimal form %j',
+        (raw) => {
+            const { ms, warning } = resolveDurationMs(raw, 'SHUTDOWN_WATCHDOG_MS', 330_000);
+
+            expect(ms).toBe(330_000);
+            expect(warning).toContain('SHUTDOWN_WATCHDOG_MS');
+        },
+    );
+
     it('accepts the largest value setTimeout honours', () => {
         expect(resolveDurationMs('2147483647', 'X_MS', 500).ms).toBe(2_147_483_647);
     });
@@ -583,12 +619,23 @@ describe('resolvePort — values that used to pass silently', () => {
         expect(fatal).toBe(true);
     });
 
-    it.each(['1', '3003', '65535', ' 3005 '])('accepts the valid port %j', (raw) => {
+    it.each(['1', '3003', '65535'])('accepts the valid port %j', (raw) => {
         const { port, warning, fatal } = resolvePort({ PORT: raw });
 
-        expect(port).toBe(Number(raw.trim()));
+        expect(port).toBe(Number(raw));
         expect(warning).toBeNull();
         expect(fatal).toBe(false);
+    });
+
+    // The container healthcheck probes ${PORT:-...} verbatim, so a padded value
+    // makes wget request an invalid URL every time while this process binds the
+    // trimmed port and answers 200 to anything that reaches it — the exact
+    // unprobeable-by-construction failure the fatal branch exists to prevent.
+    it.each([' 3000', '3000 ', ' 3000 '])('treats the padded port %j as fatal', (raw) => {
+        const { fatal, warning } = resolvePort({ PORT: raw });
+
+        expect(fatal).toBe(true);
+        expect(warning).toContain(raw);
     });
 
     it('is not fatal when nothing is set', () => {
@@ -635,5 +682,96 @@ describe('classifyFatalError', () => {
 
         expect(next).toBeNull();
         expect(shouldExit).toBe(false);
+    });
+});
+
+// A poll that THROWS is not a poll that found nothing. `completePoll()` runs on
+// the error path too — deliberately, so a dead loop is not reported as busy
+// forever — which stamps `lastPollCompletedAt` and makes a failing poll
+// indistinguishable from an idle one.
+//
+// The failure this closes: the schema drifts and `Job` is missing, or
+// credentials rotate, or Postgres refuses connections. buildSyncEngine reads
+// only SystemConfig, so boot SUCCEEDS and the worker settles into throwing once
+// a second forever. Every timing signal looks perfect and the probe answered 200
+// the whole way. Fast-failing is the more common Postgres failure by far, and it
+// was the one hole left open by bounding only the HUNG call.
+describe('a poll that keeps failing is not healthy', () => {
+    const failing = (sinceMs: number, failures: number): WorkerHealthStatus => ({
+        ...WORKER_HEALTH,
+        activeJobCount: 0,
+        pollStartedAt: null,
+        // The catch path stamps these exactly as a successful poll would.
+        lastPollTime: new Date(NOW - 500),
+        lastPollCompletedAt: new Date(NOW - 500),
+        pollFailingSince: new Date(NOW - sinceMs),
+        consecutivePollFailures: failures,
+    });
+
+    it('reports 503 once polls have been failing longer than the stale bound', () => {
+        const { statusCode, body } = buildHealthResponse(
+            { phase: 'ready' },
+            failing(STALE_POLL_MS + 1, 61),
+            NOW,
+        );
+
+        expect(statusCode).toBe(503);
+        expect(body.status).toBe('stalled');
+        expect(String(body.error)).toMatch(/fail/i);
+    });
+
+    // A single blip during a failover must not flap the probe, which is why this
+    // is a window rather than a count.
+    it('stays 200 for a brief run of failures inside the window', () => {
+        expect(buildHealthResponse({ phase: 'ready' }, failing(5_000, 5), NOW).statusCode).toBe(
+            200,
+        );
+    });
+
+    it('is healthy again once a poll succeeds and clears the window', () => {
+        const recovered: WorkerHealthStatus = {
+            ...failing(STALE_POLL_MS + 1, 61),
+            pollFailingSince: null,
+            consecutivePollFailures: 0,
+        };
+
+        expect(buildHealthResponse({ phase: 'ready' }, recovered, NOW).statusCode).toBe(200);
+    });
+});
+
+// The claim clock runs from the later of "this poll started" and "a job last
+// settled". claimJobsByType awaits each type's batch sequentially, so after a
+// long batch finishes, the remaining claim queries each run with
+// activeJobCount === 0 while pollDuration already carries that batch. Measuring
+// the whole poll reported a healthy worker stalled — the reverted defect, moved
+// rather than removed.
+describe('a settled job resets the claim clock', () => {
+    it('stays 200 when a batch settled recently, however long the poll has run', () => {
+        const afterLongBatch: WorkerHealthStatus = {
+            ...WORKER_HEALTH,
+            activeJobCount: 0,
+            pollStartedAt: new Date(NOW - 118_000),
+            lastPollTime: new Date(NOW - 118_000),
+            // The AI_RESPONSE batch finished a moment ago; the poll is now
+            // issuing the next type's claim query.
+            lastJobSettledAt: new Date(NOW - 200),
+        };
+
+        const { statusCode, body } = buildHealthResponse({ phase: 'ready' }, afterLongBatch, NOW);
+
+        expect(statusCode).toBe(200);
+        expect(body.status).toBe('busy');
+    });
+
+    it('reports 503 once nothing has settled for longer than the bound', () => {
+        const nothingSettling: WorkerHealthStatus = {
+            ...WORKER_HEALTH,
+            activeJobCount: 0,
+            pollStartedAt: new Date(NOW - 300_000),
+            lastPollTime: new Date(NOW - 300_000),
+            lastJobSettledAt: new Date(NOW - CLAIM_STALL_MS - 1),
+        };
+
+        expect(buildHealthResponse({ phase: 'ready' }, nothingSettling, NOW).statusCode).toBe(503);
     });
 });

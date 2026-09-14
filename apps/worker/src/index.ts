@@ -137,10 +137,19 @@ const healthServer = http.createServer((req, res) => {
             Date.now(),
             configWarningList,
         );
+        // Serialized BEFORE the headers are committed. With writeHead first,
+        // res.headersSent is already true, so the catch below would throw
+        // ERR_HTTP_HEADERS_SENT — an uncaught exception inside an http listener,
+        // which is a probe killing the process it exists to observe.
+        const payload = JSON.stringify(body);
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(body));
+        res.end(payload);
     } catch (error) {
         console.error('[Worker] /health handler threw:', error);
+        if (res.headersSent) {
+            res.end();
+            return;
+        }
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(
             JSON.stringify({

@@ -11,8 +11,6 @@
 
 import type { WorkerHealthStatus } from '@copilotkit/outpost/queue';
 
-export type BootPhase = 'starting' | 'ready' | 'failed' | 'crashed';
-
 /**
  * Discriminated so the failed-without-a-reason state is unrepresentable. A 503
  * carrying `error: null` is the exact signal-quality bug this module exists to
@@ -155,7 +153,16 @@ export function summarizeBootError(error: unknown): string {
         // when a code frame does, `([^`]+)` lifts a backticked token straight
         // out of source — publishing whatever happens to be quoted in that line
         // to an unauthenticated probe.
-        const object = /(?:table|column|model)\s+`([^`]+)`/i.exec(messageOf(error))?.[1];
+        // Scoped to the diagnostic sentence. Matching the whole blob returns the
+        // FIRST backticked token, which on a message carrying a code frame is a
+        // source token rather than the object name — published verbatim to an
+        // unauthenticated probe.
+        const sentence = messageOf(error)
+            .split('\n')
+            .find((line) => /does not exist/i.test(line));
+        const object = sentence
+            ? /(?:table|column|model)\s+`([^`]+)`/i.exec(sentence)?.[1]
+            : undefined;
         if (object) {
             return truncate(
                 `${code}: missing database object \`${object}\` — the database does not match schema.prisma`,
@@ -196,7 +203,13 @@ export function resolvePort(
     for (const [source, raw] of candidates) {
         if (raw === undefined || raw.trim() === '') continue;
 
-        const trimmed = raw.trim();
+        // Validated against the RAW value, not a trimmed one. The container
+        // healthcheck probes `${PORT:-...}` verbatim, so `PORT=" 3000"` makes
+        // wget request `http://127.0.0.1: 3000/health` — an invalid URL that
+        // fails every time — while this process binds 3000 and answers 200 to
+        // anything that reaches it. Trimming here would make the one input class
+        // that actually produces that failure non-fatal.
+        const trimmed = raw;
         // Number.parseInt is lenient in a way that matters here: it reads a
         // numeric PREFIX, so "3003abc" becomes 3003, "80.9" becomes 80 and "1e4"
         // becomes 1 — each a silent bind to a port the operator did not ask for.
@@ -261,7 +274,12 @@ export function resolveDurationMs(
 ): { ms: number; warning: string | null } {
     if (raw === undefined || raw.trim() === '') return { ms: fallback, warning: null };
 
-    const parsed = Number(raw);
+    // Digits only, for the reason resolvePort gives twelve lines up: `Number()`
+    // accepts hex and exponent forms, so `SHUTDOWN_WATCHDOG_MS=0x10` is a 16ms
+    // watchdog that forces exit(1) on every SIGTERM mid-drain, and `3e2` is
+    // 300ms. Same coercion-leniency class as the `Number('') === 0` trap this
+    // function was written to close.
+    const parsed = /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : Number.NaN;
     if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_TIMER_MS) {
         return {
             ms: fallback,
@@ -397,19 +415,53 @@ export function buildHealthResponse(
         };
     }
 
-    if (workerHealth.pollStartedAt) {
-        const pollDuration = now - workerHealth.pollStartedAt.getTime();
-
-        // Nothing claimed and still not back: the claim query itself is blocked.
-        // With jobs in flight the duration says nothing, since a poll waits out
-        // every type's batch in turn.
-        if (workerHealth.activeJobCount === 0 && pollDuration > CLAIM_STALL_MS) {
+    // Running, and every poll is throwing. Checked here with the overdue branch
+    // because both answer the same question — the worker is up and doing no work
+    // — and because every timing signal below looks perfect in this state: the
+    // error path stamps `lastPollCompletedAt` exactly as success does.
+    //
+    // A window, not a count: a Postgres failover produces a burst of failures and
+    // then recovers, and flapping the probe through that is worse than waiting.
+    if (workerHealth.pollFailingSince) {
+        const failingFor = now - workerHealth.pollFailingSince.getTime();
+        if (failingFor > STALE_POLL_MS) {
             return {
                 statusCode: 503,
                 body: {
                     ...workerHealth,
                     status: 'stalled',
-                    error: `the poll has run for ${pollDuration}ms with no job in flight — it is blocked claiming, most likely on a hung database call`,
+                    ...configWarnings(warnings),
+                    error: `every poll has failed for ${failingFor}ms (${workerHealth.consecutivePollFailures} in a row) — the worker is running but claiming nothing; see the worker logs for the underlying error`,
+                },
+            };
+        }
+    }
+
+    if (workerHealth.pollStartedAt) {
+        // Nothing claimed and still not back: the claim query itself is blocked.
+        // With jobs in flight the duration says nothing, since a poll waits out
+        // every type's batch in turn.
+        // Measured from the later of "this poll started" and "a job last
+        // settled", NOT from the start of the poll. claimJobsByType awaits each
+        // type's batch sequentially, so after a 118s batch of AI_RESPONSE jobs
+        // finishes, the nine remaining claim queries each run with
+        // activeJobCount === 0 and a pollDuration already carrying those 118s.
+        // Bounding the whole poll reported a healthy worker as stalled — the
+        // same mistake that got the previous two attempts reverted, moved rather
+        // than removed.
+        const claimingSince = Math.max(
+            workerHealth.pollStartedAt.getTime(),
+            workerHealth.lastJobSettledAt?.getTime() ?? 0,
+        );
+        const claimingFor = now - claimingSince;
+        if (workerHealth.activeJobCount === 0 && claimingFor > CLAIM_STALL_MS) {
+            return {
+                statusCode: 503,
+                body: {
+                    ...workerHealth,
+                    status: 'stalled',
+                    ...configWarnings(warnings),
+                    error: `no job has been in flight for ${claimingFor}ms of this poll — it is blocked claiming, most likely on a hung database call`,
                 },
             };
         }
@@ -430,6 +482,7 @@ export function buildHealthResponse(
             body: {
                 ...workerHealth,
                 status: 'stalled',
+                ...configWarnings(warnings),
                 error: `no poll has been in flight and none has completed for ${sincePoll ?? 'any'}ms — the poll loop has stopped rescheduling itself`,
             },
         };

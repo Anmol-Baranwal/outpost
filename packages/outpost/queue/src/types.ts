@@ -196,6 +196,17 @@ export interface WorkerHealthStatus {
     overdueJobCount: number;
     /** When a job last settled, whatever the outcome. Null before the first one. */
     lastJobSettledAt: Date | null;
+    /**
+     * When the current unbroken run of poll failures began, or null if the last
+     * poll returned normally.
+     *
+     * The error path stamps `lastPollCompletedAt` just as success does, so
+     * without this a worker failing every claim query — drifted schema, rotated
+     * credentials, refused connections — looks exactly like an idle one.
+     */
+    pollFailingSince: Date | null;
+    /** Polls that have thrown in a row. 0 once one returns normally. */
+    consecutivePollFailures: number;
     registeredHandlers: string[];
     upSince: Date | null;
 }

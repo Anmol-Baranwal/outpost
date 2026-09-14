@@ -55,6 +55,21 @@ export class Worker {
     >();
     /** When a job last reached its `finally`, whatever the outcome. */
     private lastJobSettledAt: Date | null = null;
+    /**
+     * When the current unbroken run of poll failures began, or null if the last
+     * poll returned normally.
+     *
+     * A poll that THROWS is not a poll that found nothing, but `completePoll()`
+     * runs on the error path too — deliberately, so a dead loop is not reported
+     * as busy forever — and that stamps `lastPollCompletedAt` exactly as success
+     * would. Without this, a worker whose every claim query fails is
+     * indistinguishable from an idle one, and answers 200 forever.
+     *
+     * A window rather than a count, so one blip during a Postgres failover does
+     * not flap the probe.
+     */
+    private pollFailingSince: Date | null = null;
+    private consecutivePollFailures = 0;
     /** When the last poll returned. Only meaningful while pollStartedAt is null. */
     private lastPollCompletedAt: Date | null = null;
     private upSince: Date | null = null;
@@ -146,6 +161,8 @@ export class Worker {
             lastPollCompletedAt: this.lastPollCompletedAt,
             overdueJobCount: this.overdueJobCount(),
             lastJobSettledAt: this.lastJobSettledAt,
+            pollFailingSince: this.pollFailingSince,
+            consecutivePollFailures: this.consecutivePollFailures,
             registeredHandlers: Array.from(this.handlers.keys()),
             upSince: this.upSince,
         };
@@ -233,10 +250,16 @@ export class Worker {
 
             // If we processed jobs, poll immediately for more
             const nextPollDelay = processedCount > 0 ? 0 : this.pollIntervalMs;
+            // A poll that returned normally clears the failure window, however
+            // long it had been running.
+            this.pollFailingSince = null;
+            this.consecutivePollFailures = 0;
             this.completePoll();
             this.reschedule(nextPollDelay);
         } catch (error) {
             console.error('[Queue Worker] Poll error:', error);
+            this.consecutivePollFailures++;
+            this.pollFailingSince ??= new Date();
             this.completePoll();
             this.reschedule(this.pollIntervalMs);
         }

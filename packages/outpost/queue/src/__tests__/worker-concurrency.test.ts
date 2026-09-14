@@ -553,3 +553,137 @@ describe('Worker health check — poll lifecycle', () => {
     // one until every slot it filled has drained. It is left calling
     // completePoll() for correctness rather than because a test can reach it.
 });
+
+// A poll that THROWS is not a poll that found nothing. completePoll() runs on
+// the error path too, stamping lastPollCompletedAt exactly as success does, so
+// without a failure record a worker whose every claim query fails — drifted
+// schema, rotated credentials, refused connections — is indistinguishable from
+// an idle one and answers 200 forever.
+describe('Worker health check — poll failures', () => {
+    let worker: InstanceType<typeof Worker>;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(async () => {
+        if (worker) await worker.stop();
+        vi.useRealTimers();
+    });
+
+    it('records nothing while polls succeed', async () => {
+        worker = new Worker({ pollIntervalMs: 50 });
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+        mockPrisma.$queryRaw.mockResolvedValue([]);
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(120);
+
+        const health: WorkerHealthStatus = worker.healthCheck();
+        expect(health.pollFailingSince).toBeNull();
+        expect(health.consecutivePollFailures).toBe(0);
+    });
+
+    it('opens a failure window when the claim query throws', async () => {
+        worker = new Worker({ pollIntervalMs: 50 });
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+        mockPrisma.$queryRaw.mockRejectedValue(new Error('relation "Job" does not exist'));
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(120);
+
+        const health = worker.healthCheck();
+        expect(health.pollFailingSince).toBeInstanceOf(Date);
+        expect(health.consecutivePollFailures).toBeGreaterThan(1);
+        // The tell: the error path stamps this exactly as success would, which is
+        // why it cannot be the liveness signal on its own.
+        expect(health.lastPollCompletedAt).toBeInstanceOf(Date);
+    });
+
+    it('closes the window as soon as a poll returns normally', async () => {
+        worker = new Worker({ pollIntervalMs: 50 });
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+        mockPrisma.$queryRaw
+            .mockRejectedValueOnce(new Error('connection refused'))
+            .mockRejectedValueOnce(new Error('connection refused'))
+            .mockResolvedValue([]);
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(60);
+        expect(worker.healthCheck().pollFailingSince).toBeInstanceOf(Date);
+
+        await vi.advanceTimersByTimeAsync(200);
+
+        const recovered = worker.healthCheck();
+        expect(recovered.pollFailingSince).toBeNull();
+        expect(recovered.consecutivePollFailures).toBe(0);
+    });
+});
+
+// `overdueJobCount` reads `activeJobStarts`, and nothing else prunes that map.
+// If a completed job's entry is left behind, every job the worker has EVER run
+// eventually crosses its timeout plus the grace, the count climbs without bound,
+// and — because overdue is checked before every timing branch — a healthy worker
+// answers 503 permanently and the container probe kills it. That is the exact
+// revert-worthy failure this endpoint exists to avoid, reached from the other
+// direction, plus an unbounded Map.
+describe('completed jobs leave no overdue residue', () => {
+    let worker: InstanceType<typeof Worker>;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+    });
+
+    afterEach(async () => {
+        if (worker) await worker.stop();
+        vi.useRealTimers();
+    });
+
+    it('reports no overdue jobs long after finished work would have aged out', async () => {
+        worker = new Worker({
+            pollIntervalMs: 50,
+            maxConcurrency: 2,
+            jobTimeouts: { [JobType.AI_RESPONSE]: 1_000 },
+        });
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: true }));
+
+        mockPrismaJob.update.mockResolvedValue({});
+        mockPrisma.$queryRaw
+            .mockResolvedValueOnce([makeJobRow({ id: 'done-1' }), makeJobRow({ id: 'done-2' })])
+            .mockResolvedValue([]);
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(worker.healthCheck().activeJobCount).toBe(0);
+
+        // Well past the 1s timeout plus the 60s grace. If the entries survived
+        // their jobs, both would now be counted overdue.
+        vi.setSystemTime(Date.now() + 120_000);
+
+        expect(worker.healthCheck().overdueJobCount).toBe(0);
+    });
+
+    // The failure path frees the slot too, so it must prune the same way.
+    it('leaves no residue when a job fails', async () => {
+        worker = new Worker({
+            pollIntervalMs: 50,
+            maxConcurrency: 1,
+            jobTimeouts: { [JobType.AI_RESPONSE]: 1_000 },
+        });
+        worker.on(JobType.AI_RESPONSE, async () => ({ success: false, error: 'nope' }));
+
+        mockPrismaJob.update.mockResolvedValue({});
+        mockPrisma.$queryRaw
+            .mockResolvedValueOnce([makeJobRow({ id: 'failed-1' })])
+            .mockResolvedValue([]);
+
+        worker.start();
+        await vi.advanceTimersByTimeAsync(0);
+        vi.setSystemTime(Date.now() + 120_000);
+
+        expect(worker.healthCheck().overdueJobCount).toBe(0);
+    });
+});
