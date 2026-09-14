@@ -47,7 +47,8 @@ export type {
     TopIssueInput,
     ScoredTopIssue,
 } from './front-door.js';
-// The rule set and the scorer are API — Phase 3's linter consumes them.
+// The rule set, the scorer and the linter are API — the linter consumes the
+// first two.
 //
 // The eval fixtures are not, and are no longer reachable from here: they live in
 // `eval/__fixtures__/`, which `ai/tsconfig.json` excludes from the build. Not
@@ -63,5 +64,7 @@ export type {
 export { checkReply, RULES, HANDOFF_WORD_CAP, MIN_REPLY_WORDS } from './eval/rules.js';
 export type { RuleId, RuleResult } from './eval/rules.js';
 export { scoreCases, formatReport } from './eval/harness.js';
+export { lintDraft, describeVerdict } from './eval/linter.js';
+export type { LintMode, LintVerdict } from './eval/linter.js';
 export type { EvalCase, CaseScore, EvalReport } from './eval/harness.js';
 export * from './types.js';

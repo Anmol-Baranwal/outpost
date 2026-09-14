@@ -76,18 +76,26 @@ export function scoreCases(cases: EvalCase[]): EvalReport {
         return {
             id: c.id,
             results,
-            failed: results.filter((r) => !r.passed).map((r) => r.rule),
+            // A rule that could not be evaluated is not a failure.
+            failed: results.filter((r) => r.applicable && !r.passed).map((r) => r.rule),
         };
     });
 
+    // `total` counts only the cases where the rule could be evaluated, so a rule
+    // that was inapplicable everywhere reads as 0/0 rather than as a clean sweep.
     const perRule = Object.fromEntries(
-        RULES.map((rule) => [
-            rule,
-            {
-                passed: scored.filter((s) => !s.failed.includes(rule)).length,
-                total: scored.length,
-            },
-        ]),
+        RULES.map((rule) => {
+            const applicable = scored.filter(
+                (s) => s.results.find((r) => r.rule === rule)?.applicable,
+            );
+            return [
+                rule,
+                {
+                    passed: applicable.filter((s) => !s.failed.includes(rule)).length,
+                    total: applicable.length,
+                },
+            ];
+        }),
     ) as Record<RuleId, { passed: number; total: number }>;
 
     return {
@@ -103,14 +111,23 @@ export function formatReport(report: EvalReport): string {
     const lines = [`${report.cleanCases}/${report.totalCases} cases clean`, ''];
     for (const rule of RULES) {
         const { passed, total } = report.perRule[rule];
-        lines.push(`  ${passed === total ? 'ok  ' : 'FAIL'} ${rule}: ${passed}/${total}`);
+        // `n/a` rather than `ok` when nothing exercised the rule — `passed === total`
+        // is trivially true at 0/0, which is how an unevaluated rule used to read as
+        // a clean sweep.
+        const verdict = total === 0 ? 'n/a ' : passed === total ? 'ok  ' : 'FAIL';
+        lines.push(`  ${verdict} ${rule}: ${passed}/${total}`);
     }
     const dirty = report.cases.filter((c) => c.failed.length > 0);
     if (dirty.length) {
         lines.push('', 'Failing cases:');
         for (const c of dirty) {
             lines.push(`  ${c.id}`);
-            for (const r of c.results.filter((r) => !r.passed)) {
+            // Filtered on `applicable` as well: a not-applicable rule carries
+            // `passed: false`, so without this the report printed `n/a` for a rule
+            // two lines above and then listed it as a failure — re-creating in the
+            // human-readable output exactly the double-counting removed from
+            // `perRule`.
+            for (const r of c.results.filter((r) => r.applicable && !r.passed)) {
                 lines.push(`    - ${r.rule}: ${r.detail}`);
             }
         }
