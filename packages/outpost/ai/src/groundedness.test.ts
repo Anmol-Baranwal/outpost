@@ -66,6 +66,128 @@ describe('extractCopilotKitIdentifiers', () => {
         ]);
     });
 
+    // ---- #147: the gate used to require the literal substring `copilotkit`, which
+    // exempted every name the model is actually likely to invent. These pin the
+    // widened surface; the false-positive block below pins its edges.
+
+    it('picks up an invented hook that is not literally CopilotKit-named', () => {
+        expect(extractCopilotKitIdentifiers('Call `useCopilotFabricated()` first.')).toEqual([
+            'useCopilotFabricated',
+        ]);
+        expect(extractCopilotKitIdentifiers('Register with `useCopilotReadable`.')).toEqual([
+            'useCopilotReadable',
+        ]);
+    });
+
+    it('picks up an invented PascalCase component that is not literally CopilotKit-named', () => {
+        expect(extractCopilotKitIdentifiers('Wrap it in `<CopilotInvented />`.')).toEqual([
+            'CopilotInvented',
+        ]);
+        expect(extractCopilotKitIdentifiers('Use the `CopilotSidebar` component.')).toEqual([
+            'CopilotSidebar',
+        ]);
+    });
+
+    // The shape in the issue report: a fabricated neighbour of a real hook plus a
+    // fabricated neighbour of a real component. Under the old substring guard this
+    // returned [] and the response published.
+    it('extracts both halves of the #147 reproduction', () => {
+        expect(
+            extractCopilotKitIdentifiers('Call `useCopilotFabricated()` and `<CopilotInvented />`'),
+        ).toEqual(['useCopilotFabricated', 'CopilotInvented']);
+    });
+
+    it('picks up a kebab-case CSS class under the widened selector rule', () => {
+        expect(
+            extractCopilotKitIdentifiers('Override `.copilot-chat` and `.copilotSidebarPanel`.'),
+        ).toEqual(['copilot-chat', 'copilotSidebarPanel']);
+    });
+
+    // #234. The class-selector case above passed only because `split('.')` happened
+    // to strip the prefix; `#` had no such path, so an ID selector reached the
+    // grounding lookup with its prefix attached. Grounding is a substring check,
+    // so `#copilotkitpanel` could never match a source writing `copilotKitPanel` —
+    // the one spelling the docs actually use.
+    it('strips a leading ID-selector prefix from a backticked name', () => {
+        expect(extractCopilotKitIdentifiers('Target `#copilotKitPanel` to move it.')).toEqual([
+            'copilotKitPanel',
+        ]);
+    });
+
+    it('treats the ID and class spellings of one name as the same identifier', () => {
+        // Both forms case-fold to one key, so a single name cannot fill two of the
+        // two threshold slots on its own.
+        expect(
+            extractCopilotKitIdentifiers(
+                'Give the node `#copilotKitPanel` and style `.copilotKitPanel`.',
+            ),
+        ).toEqual(['copilotKitPanel']);
+    });
+
+    it('unwraps a JSX component that carries props', () => {
+        // A model writing a fabricated component almost always gives it props, so
+        // the prop-less-only form was the least likely spelling to appear.
+        expect(
+            extractCopilotKitIdentifiers('Wrap it in `<CopilotFabricated debug={true} />`.'),
+        ).toEqual(['CopilotFabricated']);
+        expect(extractCopilotKitIdentifiers('Try `<CopilotInvented labels={{}} />`.')).toEqual([
+            'CopilotInvented',
+        ]);
+    });
+
+    // The `.copilot` selector branch pushes into `hits` WITHOUT a shape check, so
+    // position is the only thing standing between it and a reporter's own code.
+    // Each of these returns two identifiers if the lookbehind is dropped, which is
+    // enough to suppress on its own — a correct answer withheld, silently.
+    it('does not read member access as a CSS class selector', () => {
+        expect(
+            extractCopilotKitIdentifiers(
+                'Your handler reads `state.copilotOpen` and toggles `ui.copilotWidth`, ' +
+                    'neither is a CopilotKit API.',
+            ),
+        ).toEqual([]);
+        expect(
+            extractCopilotKitIdentifiers(
+                'Set `github.copilot.enable` to false, and check `settings.copilotInline` too.',
+            ),
+        ).toEqual([]);
+        // Not backticked, so only the selector branch can see it. A sentence that
+        // runs into a capitalized word is not a class.
+        expect(extractCopilotKitIdentifiers('a sentence.Copilot starts here')).toEqual([]);
+        // Nor is a member read off a call or an index.
+        expect(extractCopilotKitIdentifiers('Read `getPanel().copilotWidth` instead.')).toEqual([]);
+        expect(extractCopilotKitIdentifiers('Read `rows[0].copilotState` instead.')).toEqual([]);
+    });
+
+    it('still reads a genuine selector, bare or fenced', () => {
+        expect(extractCopilotKitIdentifiers('Override .copilotGhostPanel to fix it.')).toEqual([
+            'copilotGhostPanel',
+        ]);
+        expect(
+            extractCopilotKitIdentifiers('```css\n.copilot-ghost-input { color: red }\n```'),
+        ).toEqual(['copilot-ghost-input']);
+    });
+
+    // Pins the `^` on shapes 2 and 3. Without the anchors these read as identifiers
+    // and every helper someone names after the product becomes a fabrication claim.
+    it('requires the product name at the start of the segment, not anywhere in it', () => {
+        expect(extractCopilotKitIdentifiers('Call `getCopilotXValue()` to read it.')).toEqual([]);
+        expect(extractCopilotKitIdentifiers('Our `myUseCopilotHook` wrapper does that.')).toEqual(
+            [],
+        );
+    });
+
+    // The reason the rules are shapes and not a `/copilot/i` substring test: a
+    // false positive here withholds a CORRECT answer from a real reporter, and
+    // `copilot` on its own is a word we and our users both use in prose.
+    it('ignores the English word "copilot" and its inflections', () => {
+        expect(
+            extractCopilotKitIdentifiers(
+                'GitHub `Copilot` is unrelated; many `copilots` exist and `copiloting` is a word.',
+            ),
+        ).toEqual([]);
+    });
+
     it('ignores generic React vocabulary so real answers are not penalized', () => {
         const ids = extractCopilotKitIdentifiers(
             'Use `useRef`, `useLayoutEffect` and `setSelectionRange` to restore the cursor.',
@@ -147,6 +269,18 @@ describe('extractCopilotKitIdentifiers', () => {
 });
 
 describe('assessGroundedness', () => {
+    // #234, the consequence that matters: two ID selectors the sources DO contain
+    // suppressed a correct answer outright, with nothing logged.
+    it('does not suppress ID-selector names the sources actually contain', () => {
+        const result = assessGroundedness(
+            'Target `#copilotKitPanel` and `#copilotKitSidebar` to reposition it.',
+            [source('Set copilotKitPanel and copilotKitSidebar on the wrapper nodes.')],
+        );
+        expect(result.unsourcedIdentifiers).toEqual([]);
+        expect(result.suppress).toBe(false);
+        expect(result.penalty).toBe(0);
+    });
+
     it('gives a grounded answer no penalty and does not suppress it', () => {
         const response =
             'You can replace the chat input with the `input` prop on the `CopilotChat` component. ' +
@@ -482,6 +616,22 @@ const urlSource = (
     sourceUrl,
 });
 
+/**
+ * Documents the two shapes #147 widened the gate to cover, under their real
+ * names, so a corpus row can assert that a CORRECT answer naming them is still
+ * published. Without a row in this direction the widening is only pinned where
+ * it suppresses.
+ */
+const API_DOCS: SearchResult[] = [
+    {
+        title: 'Actions',
+        content:
+            'Register an action with useCopilotAction inside the CopilotChat component. ' +
+            'CopilotSidebar is the docked variant.',
+        score: 0.9,
+    },
+];
+
 /** A source with no `sourceUrl` at all, so URL text cannot accidentally ground anything. */
 const NO_URL_DOCS: SearchResult[] = [
     { title: 'CopilotChat', content: 'CopilotChat renders a chat window.', score: 0.9 },
@@ -669,6 +819,60 @@ const CORPUS: CorpusRow[] = [
         // 0.35 claim + 2 × 0.15 identifiers = 0.65, clipped to the ceiling.
         penalty: MAX_GROUNDEDNESS_PENALTY,
         unsourcedIdentifiers: ['copilotKitGhostA', 'copilotKitGhostB'],
+    },
+    // ---- #147: the gate no longer requires the literal substring `copilotkit` ---
+    {
+        // The failure the issue reports: both names are neighbours of real API
+        // names, neither contains the product name, and under the old substring
+        // guard this extracted nothing and published.
+        shape: 'two invented names that are neighbours of real API names (#147)',
+        response: 'Call `useCopilotFabricated()` and mount `<CopilotInvented />`.',
+        suppress: true,
+        claimCharged: false,
+        unsourcedIdentifiers: ['useCopilotFabricated', 'CopilotInvented'],
+    },
+    {
+        // The other direction, and the one that costs a real reporter if the
+        // widening is too loose: documented names must still publish.
+        shape: 'documented hook and component named without the literal product name',
+        response: 'Register it with `useCopilotAction()` inside `<CopilotChat />`.',
+        sources: API_DOCS,
+        suppress: false,
+        claimCharged: false,
+        penalty: 0,
+        unsourcedIdentifiers: [],
+    },
+    {
+        shape: 'invented kebab-case CSS classes under the widened selector rule',
+        response: 'Override `.copilot-ghost-panel` and `.copilot-ghost-input` to fix it.',
+        suppress: true,
+        claimCharged: false,
+        unsourcedIdentifiers: ['copilot-ghost-panel', 'copilot-ghost-input'],
+    },
+    {
+        // `copilot` is an English word. Prose about the product must never reach
+        // the gate, or the widening withholds correct answers. The backticks and
+        // the sentence-boundary `.Copilot` are load-bearing: without them this row
+        // reaches neither extraction path and passes whatever the rules say.
+        shape: 'the English word "copilot" in prose is not an identifier (#147 edge)',
+        response:
+            'GitHub `Copilot` is a separate product; plenty of `copilots` exist. ' +
+            'Ask them instead.Copilot is not ours.',
+        suppress: false,
+        claimCharged: false,
+        unsourcedIdentifiers: [],
+    },
+    {
+        // The false-positive direction of the widened selector rule, end to end: a
+        // reporter's own state read back to them must not suppress. Two matches is
+        // the suppression bar, so this row fails the moment the lookbehind goes.
+        shape: 'member access echoed from the reporter is not a fabricated selector',
+        response:
+            'Your handler reads `state.copilotOpen` and toggles `ui.copilotWidth`. ' +
+            'Neither is ours, so the reset is coming from your own code.',
+        suppress: false,
+        claimCharged: false,
+        unsourcedIdentifiers: [],
     },
     {
         shape: 'grounded answer that asserts nothing it cannot support',

@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { TicketClassification, TokenUsage } from './types.js';
 import { TicketPriority, TicketType } from './types.js';
 import { config } from './config.js';
+import { samplingParams } from './model-capabilities.js';
+import { extractResponseText } from './generator.js';
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a support ticket classifier for CopilotKit, an open-source AI framework. Classify the ticket and respond with ONLY a JSON object (no markdown, no explanation):
 
@@ -57,12 +59,23 @@ export class TicketClassifier {
             const message = await this.client.messages.create({
                 model: this.model,
                 max_tokens: config.maxClassifierTokens,
-                temperature: config.classifierTemperature,
+                ...samplingParams(this.model, config.classifierTemperature),
                 system: CLASSIFIER_SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: content.slice(0, 3000) }],
             });
 
-            const text = message.content[0].type === 'text' ? message.content[0].text : '';
+            const text = extractResponseText(message.content);
+
+            // An empty extraction is a FAILURE, not a result. Falling through to
+            // the parser turned it into a fabricated value reported as healthy:
+            // the parse catch returned a constant while `degraded` stayed false,
+            // so the caller could not tell a measured answer from a missing one.
+            // Reachable as soon as a thinking-default model is configured, since
+            // this call's max_tokens sits below a thinking turn — which is exactly
+            // the swap the temperature gate exists to enable.
+            if (!text.trim()) {
+                throw new Error('Model response contained no usable text');
+            }
             const tokenUsage: TokenUsage = {
                 inputTokens: message.usage.input_tokens,
                 outputTokens: message.usage.output_tokens,
