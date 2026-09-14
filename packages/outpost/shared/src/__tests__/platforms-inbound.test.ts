@@ -919,7 +919,7 @@ describe('InboundHandler', () => {
                 ['off', 'C0123456789', 'explicitly off'],
                 ['on', 'C0123456789', 'a typo that is not a recognized mode'],
                 ['live', undefined, 'live with no channel configured'],
-            ])('stays off when SLACK_MIRROR_MODE=%s (%s)', async (mode, channel) => {
+            ])('stays off when SLACK_MIRROR_MODE=%s (%s)', async (mode, channel, _why) => {
                 setMirrorEnv(mode, channel);
 
                 const handler = new InboundHandler({ prisma, createJob });
