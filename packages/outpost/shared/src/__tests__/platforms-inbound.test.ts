@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 
 // The handler's mirror default reads process.env. A developer (or CI) exporting
 // SLACK_MIRROR_MODE would otherwise change the createJob call counts asserted
@@ -867,6 +867,78 @@ describe('InboundHandler', () => {
                 ticketId: 'ticket-1',
                 source: 'discord',
                 kind: 'ticket',
+            });
+        });
+
+        // THE PRODUCTION ENABLE PATH. Every other test in this block passes
+        // `mirrorToSlack` explicitly, but no `new InboundHandler(...)` anywhere in
+        // apps/ does — all six rely on the `??` fallback, so the env branch is
+        // what actually turns the mirror on in production and it was the one line
+        // no test exercised. Replacing just the fallback with `false` left the
+        // whole suite green, because replacing the WHOLE expression kills five
+        // tests and makes the switch look covered.
+        //
+        // The symptom if it were ever wrong is an empty Slack channel, which is
+        // indistinguishable from "nobody filed anything today".
+        describe('the environment fallback, with no explicit flag', () => {
+            const setMirrorEnv = (mode: string | undefined, channel?: string) => {
+                if (mode === undefined) delete process.env.SLACK_MIRROR_MODE;
+                else process.env.SLACK_MIRROR_MODE = mode;
+                if (channel === undefined) delete process.env.SLACK_MIRROR_CHANNEL_ID;
+                else process.env.SLACK_MIRROR_CHANNEL_ID = channel;
+            };
+
+            afterEach(() => setMirrorEnv(undefined));
+
+            it('enables the mirror from SLACK_MIRROR_MODE=live', async () => {
+                setMirrorEnv('live', 'C0123456789');
+
+                const handler = new InboundHandler({ prisma, createJob });
+                await handler.handle(makeInboundMessage());
+
+                expect(createJob).toHaveBeenCalledWith('SLACK_MIRROR', {
+                    ticketId: 'ticket-1',
+                    source: 'discord',
+                    kind: 'ticket',
+                });
+            });
+
+            it('enables the mirror from SLACK_MIRROR_MODE=shadow', async () => {
+                setMirrorEnv('shadow', 'C0123456789');
+
+                const handler = new InboundHandler({ prisma, createJob });
+                await handler.handle(makeInboundMessage());
+
+                const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+                expect(types).toContain('SLACK_MIRROR');
+            });
+
+            // Fails closed, and each of these is a realistic way to get it wrong.
+            it.each([
+                [undefined, undefined, 'unset'],
+                ['off', 'C0123456789', 'explicitly off'],
+                ['on', 'C0123456789', 'a typo that is not a recognized mode'],
+                ['live', undefined, 'live with no channel configured'],
+            ])('stays off when SLACK_MIRROR_MODE=%s (%s)', async (mode, channel) => {
+                setMirrorEnv(mode, channel);
+
+                const handler = new InboundHandler({ prisma, createJob });
+                await handler.handle(makeInboundMessage());
+
+                const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+                expect(types).not.toContain('SLACK_MIRROR');
+            });
+
+            // An explicit flag still wins, so a caller that opts out is not
+            // overridden by a stray environment variable.
+            it('lets an explicit mirrorToSlack:false override a live environment', async () => {
+                setMirrorEnv('live', 'C0123456789');
+
+                const handler = new InboundHandler({ prisma, createJob, mirrorToSlack: false });
+                await handler.handle(makeInboundMessage());
+
+                const types = (createJob as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+                expect(types).not.toContain('SLACK_MIRROR');
             });
         });
 
