@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { scoreCases, formatReport, HISTORICAL_FAILURES, TARGET_SHAPE } from './harness.js';
+import { scoreCases, formatReport } from './harness.js';
+import { HISTORICAL_FAILURES, TARGET_SHAPE } from './__fixtures__/historical-failures.js';
 import { RULES } from './rules.js';
 import type { SearchResult } from '../types.js';
 
