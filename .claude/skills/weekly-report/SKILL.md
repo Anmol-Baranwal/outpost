@@ -62,7 +62,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
    ```
    An old front-door issue with in-window comment activity belongs in this week's report — in BOTH community reports if the broken artifact spans them (precedent: [ag-ui#1518](https://github.com/ag-ui-protocol/ag-ui/issues/1518), quickstart CLI broken since April, escalated via comment two months later; the failing `npx create-ag-ui-app` scaffold made it a CopilotKit front door too).
 
-4. **Spawn Subagent C — Deep-read** (see `deep-read-issue` skill). For each in-window actionable issue + every detected fix PR. Returns: file paths, reviewer concerns, hidden bugs, test coverage, fix-PR scope.
+4. **Spawn Subagent C — Deep-read** (see `deep-read-issue` skill). For each in-window actionable issue + every detected fix PR. Returns: file paths, reviewer concerns, hidden bugs, test coverage, fix-PR scope, and a `THREADS/PERSISTENCE: YES (💰) | NO` verdict per issue (feeds the 🧵 subsection).
 
 5. **Spawn Subagent D — Enrich reporters** (see `enrich-reporter` skill). For every GitHub author across both repos + the prior-week roster. Returns: company affiliation table + enterprise list.
 
@@ -78,6 +78,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
      - `REDDIT_SEARCH_ACROSS_SUBREDDITS` — one call per `REDDIT_BRAND_TERMS` entry (default `CopilotKit`, `AG-UI`, `ag-ui`), `restrict_sr=false`, `sort` new + relevance.
        **Bare brand terms alone LOSE POSTS — always run the narrowing queries too.** Reddit tokenizes `CopilotKit` as `copilot`+`kit` and `AG-UI` as `ag`+`ui`, so a bare `sort=new` search returns ~95% junk (exam-cheating spam, DNA reports, card collections) and **hits the 100-item cap inside the 90-day window**, silently truncating real hits. Add these six and they each return under the cap (= full recall): `title:copilotkit` · `selftext:copilotkit` · `title:"AG-UI"` · `"AG-UI protocol"` · `copilotkit agent` · `AG-UI CopilotKit`. (Precedent: on the 2026-08-14 run the bare queries capped out and the ONLY genuine CopilotKit mention of the cycle — a production user naming us across r/Playwright, r/mcp, r/AgentsOfAI and r/SaaS — was found only by the narrowing queries.)
      - `REDDIT_RETRIEVE_REDDIT_POST` — per `REDDIT_WATCHLIST` subreddit (default LocalLLaMA, LangChain, AI_Agents, nextjs, SaaS, LLMDevs) for landscape/competitor chatter.
+       **The watchlist is also a recall path, not just landscape colour — always regex the returned titles AND selftexts for `copilotkit|ag[-_ ]?ui\b` (word-bounded).** The search queries miss a post whose brand mention sits mid-body in a long selftext and whose title carries neither brand; the watchlist feed is the only thing that catches it. (Precedent 2026-09-11: `1w77iuo` — the LoomWeaver Angular shell, the joint-highest-weighted AG-UI post of the cycle — came back from **none** of the nine search queries in either sort, and was found only by sweeping the watchlist feeds.) **Word-bound every brand/competitor pattern** — unbounded alternation makes short terms like `adk` and `agno` match inside unrelated words (`diagnostic`), poisoning the competitor read.
      - `REDDIT_RETRIEVE_POST_COMMENTS` — for high-signal / debatable threads; pass the **bare base36 article id** (no `t3_`). Top comments are the sentiment.
    - **Relevance filter:** keep only genuine CopilotKit/AG-UI posts. Drop false positives (e.g. the `jscpd` tool listing CopilotKit in a scanned-repo list) and ambiguous `ag-ui` matches — but still record their ids in the ledger.
    - **Classify per post** 👍 good / 🙂 mixed-positive / 😐 neutral / 🫤 mixed-negative / 👎 pain, from post + top comments. Flag competitor comparisons (LangGraph, Vercel AI SDK, assistant-ui, Vapi…) and recurring comment themes (e.g. "how is AG-UI different from Google A2UI?").
@@ -147,7 +148,7 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 14. **Spawn Subagent F — link review (after the pages are built).** A dedicated review pass over both published pages. Two jobs:
    - **Claim support — open every Source link and ask whether it evidences the sentence beside it.** This is a SEPARATE check from coverage and correctness, and it is the one that has actually failed: a link can resolve, carry the right issue number, and match its quoted title, while still pointing at something that proves a *different* thing than the card asserts. Flag any card whose source, read cold by someone who knows nothing about the run, would lead them to the opposite conclusion. See "Source links are mandatory" for the 2026-08-14 precedent that both other checks passed.
    - **Fix-plan PR links — the PR leads the line, every named PR is clickable, and every "no fix PR yet" is re-checked.** Walk every card's **Fix plan** / **Status** / **Fix** line and confirm it opens with the linked live PR (`[PR #NNNN](url) · …`) or with `No PR yet · …`. Any PR referenced anywhere in the line must be a markdown link — flag bare `#NNNN`. Any card claiming no fix PR must be re-verified against the issue's `closedByPullRequestsReferences` at review time, because a PR can land after the report is drafted. Flag stale "not started" lines.
-   - **Coverage — every item has a source link.** Scan every Top-issue card, Demand/Pain bullet, Docs bullet, Resolved row, Reddit Pulse thread, Enterprise reporter, and Patterns entity. **Any item with no source link is flagged.** For each flagged item, hand it to a search retrieval pass (gh search for the issue/PR, Discord `list_forum_threads`/search for the thread, Composio for the Reddit permalink) to find the canonical link. If a link is found → add it. If none can be found → **the item does not stay on the page** (remove it). No bare claims survive. (See "Source links are mandatory".)
+   - **Coverage — every item has a source link.** Scan every Top-issue card, Demand/Pain bullet, Docs bullet, Resolved row, Reddit Pulse thread, 🧵 Threads & Persistence row, Enterprise reporter, and Patterns entity. **Any item with no source link is flagged.** For each flagged item, hand it to a search retrieval pass (gh search for the issue/PR, Discord `list_forum_threads`/search for the thread, Composio for the Reddit permalink) to find the canonical link. If a link is found → add it. If none can be found → **the item does not stay on the page** (remove it). No bare claims survive. (See "Source links are mandatory".)
    - **Correctness.** For links that exist: every Discord thread URL's thread ID came from this run's pull (never memory/prior report) and the anchor matches the thread's title; every issue/PR number matches the title quoted next to it; every Reddit permalink is the one returned by Composio this run; external links (YouTube/Loom repro, docs) appear verbatim in the source — never reconstructed; anchor text names what the reader lands on.
    - **🎯 Prospect LinkedIn links are sales-critical — VERIFY each against the person's own GitHub `social_accounts`.** For every prospect, run `gh api users/<login>/social_accounts`. If the person self-linked a `linkedin` URL there, the report's LinkedIn link **MUST equal it exactly** — a differing link is a wrong-person guess and must be corrected (or set to "LinkedIn not confirmed"). A self-linked account is authoritative; never publish a name-searched LinkedIn when the profile provides its own. (Precedent: the report linked `in/nchatlapalli` for Ashling Partners' Naveen when his GitHub self-linked `in/navaifanatic` — a different person.) **The published name must match the linked profile — verify it.** LinkedIn itself usually can't be fetched (returns HTTP 999), so confirm the person's FULL name (first + last) against a self-owned source that IS fetchable — their self-linked blog/personal site or a LinkedIn article they authored (byline). GitHub's `name` field is often just a first name or a handle — never publish that alone for a sales list. Don't attach a surname the sources don't support. (Precedent: published "Naveen" then a wrong-person link; his self-linked blog gave the full "Naveen Chatlapalli" and his GitHub self-linked the correct profile.)
    - **Product-surface claims re-verified against the live page.** Re-fetch the relevant page (`WebFetch` /pricing, /product, Intelligence, the products PDF) for every ⚠️ Product surface contradiction card, every 🏢 Enterprise "Surfaces this week" row, and any tier/price/Premium/free/"coming soon" statement anywhere in the report. Confirm the exact claim appears on the live page **now**. Anything that can't be quote-confirmed is **corrected or removed before publish** — a contradiction whose two quotes don't both check out is dropped.
@@ -186,7 +187,8 @@ Covering the **most recent complete Friday→Friday week** (Friday end-date incl
 ---
 
 ## 🏢 Enterprise                                ← ELEVATED — sits directly under Top issues / the contradictions category (highlighted near the top, not buried). Cross-community. **Scope: CopilotKit's COMMERCIAL surfaces** (Premium / CopilotKit Enterprise / Intelligence Platform / paid tiers), NOT "CopilotKit used at a big company" — apply the `product-surface-scan` classifier. See "Enterprise section".
-   ### 🚩 Enterprise questions & complaints     ← any enterprise-related question/complaint this week (e.g. threads/persistence = the "enterprise threads" tier). Each a card with owner + priority. Highlighted at the top of this section.
+   ### 🧵 Threads & Persistence {toggle="true"}  ← STANDING, FIRST subsection, COLLAPSIBLE. Every in-window item whose SUBJECT is a chat thread or persistence, both communities, one linked row each. Always renders — say "None this week." when empty. See "Threads & Persistence watch".
+   ### 🚩 Enterprise questions & complaints     ← any enterprise-related question/complaint this week (e.g. threads/persistence = the "enterprise threads" tier). Each a card with owner + priority.
    ### 🎯 Prospective enterprise customers {toggle="true"}   ← COLLAPSIBLE, company-first. Community members who look like enterprise prospects (e.g. Jasper AI), deep-enriched (LinkedIn + company site + size) via `enrich-prospect`, each with a **Passed to (sales):** owner field. See "Prospective enterprise customers".
    ### Surfaces this week                       ← table: Enterprise Intelligence, CopilotKit Cloud, License onboarding, Security disclosure channel, Self-host runtime. Skip SSO/OAuth + Billing rows when no reports.
    ### Companies building on us this week       ← CURRENT-employer only; per-company bullets
@@ -428,9 +430,11 @@ When the algorithm changes, update the child page (don't recreate it) AND this s
 
 **Scope — commercial surfaces only.** This section is CopilotKit's **commercial product** (Premium / CopilotKit Enterprise / Intelligence Platform / Cloud / paid-tier / license-gated), **not** "CopilotKit running at an enterprise company." Use the `product-surface-scan` **classifier** to decide whether a report belongs here: it belongs only if it hits a commercial surface (threads/persistence paid boundary, Inspector, Cloud/API-keys, self-host license/Helm, SSO/RBAC/SOC 2, analytics/self-learning, premium UI / Angular SDK, Slack/Teams, or a pricing/licensing question). A free-OSS bug (React SDK, AG-UI protocol, a backend/framework connection, a third-party integration's own auth) is a normal community issue **even when the reporter is at a big company** → Pain/Demand, not here. The "Surfaces this week" list is the `product-surface-scan` output, refreshed each run.
 
-Four subsections, in order:
+Five subsections, in order:
 
-**🚩 Enterprise questions & complaints** (highlighted first) — **any question or complaint this week that touches an enterprise surface or the enterprise offering**, gathered from GitHub + Discord + Slack. This is the catch-all so nothing enterprise hides in the general body.
+**🧵 Threads & Persistence watch** (first, standing) — see "Threads & Persistence watch" below. It renders every week, before the complaints subsection, because threads and persistence are the commercial surface the business tracks most closely.
+
+**🚩 Enterprise questions & complaints** — **any question or complaint this week that touches an enterprise surface or the enterprise offering**, gathered from GitHub + Discord + Slack. This is the catch-all so nothing enterprise hides in the general body.
 - The **threads / persistence ("enterprise threads") tier** is enterprise by definition — a complaint about paying for threads, the persistence tier, or the self-host runtime belongs here, not just in Pain. (Precedent this cycle: the "threads off" / paid-persistence friction is an enterprise complaint.)
 - Each item is a **card** in the universal format (What / Impact / Fix plan) **plus the Owner + Priority meta line** — owner blank for Nathan, priority derived from rank.
 - Cross-reference, don't duplicate: if it's already a Top issue, list it here with a one-line pointer ("see Top issue #N") rather than repeating the full card.
@@ -446,6 +450,49 @@ Four subsections, in order:
 - When correcting a prior week's overcount, say so in a short `<details>` so the trend stays honest.
 
 **Enterprise-offering reactions** — explicitly report community reaction to the enterprise surfaces, especially **Slack / Teams integrations** and **threads / persistence**. **If there was no reaction, say so** — silence is itself a signal.
+
+### Threads & Persistence watch
+
+A **standing, always-rendered, COLLAPSIBLE** (`{toggle="true"}`) subsection at the top of 🏢 Enterprise listing **every in-window item whose subject is a chat thread or persistence**, each with a link.
+
+**It lives ONLY on the main CopilotKit report page.** AG-UI items are listed here, on the main page, under their own heading — the AG-UI companion page never carries a copy of this section. One place to look, not two.
+
+**Two blocks, CopilotKit first:** a `**📦 CopilotKit**` label + table, then a `**🔷 AG-UI**` label + table (noting that the AG-UI full cards live on the companion page). Oldest → newest within each block. Because the block is the community, rows carry no Community column. Threads and persistence are the commercial surface the business tracks most closely, so these never get left to the cluster threshold or buried in Pain — they surface here regardless of volume, reporter count, or whether they also appear elsewhere.
+
+**Flag it when the SUBJECT is either:**
+- **A chat thread** — thread lifecycle, creation/locking/cancellation, reload and restore, message ordering within a thread, history replay, thread-scoped state or memory, thread caps and limits, resuming a thread across sessions or devices.
+- **Persistence, in any form** — retention windows, storage, durability, snapshot save/restore, resume/replay, session or state persistence, database-backed runtime state, or paying for persistence.
+
+**Do NOT flag** (these are ~85% of literal matches and they drown the section):
+- A `threadId` that merely passes through a stack trace, log line, config sample, or reproduction script while the issue is about something else.
+- Thread-safety, concurrency, race conditions, worker threads, async execution — different sense of the word.
+- "Thread" meaning a **Discord forum thread or a GitHub issue/PR discussion** — that is the container the report is read from, not the product feature.
+
+**Who makes the call — never a keyword match.** A regex over titles and bodies returns 34 of 48 CopilotKit issues in a typical week (measured on the Sep 04-11 window) and almost all are incidental, so the judgment is always "what is this item *about*", made by whoever read the item in full:
+- **GitHub issues and PRs that went through `deep-read-issue`** — its `THREADS/PERSISTENCE` line is the verdict.
+- **Every other in-window item** — GitHub issues that were not deep-read (non-actionable, Early-signal, or resolved-only), **Discord threads** from the per-channel pull, and **Reddit posts** from the sweep — is judged by the orchestrator at synthesis time against the same flag/don't-flag lists above, using the summary that pull already returned. `deep-read-issue` only ever sees actionable issues + fix PRs (step 4), so treating it as the sole judge would silently drop every Discord and Reddit item and every non-actionable issue.
+
+**Row format** — an XML table per block, three columns (`Item` · `Subject` · `Where it lives`), one row per item, oldest → newest inside the block. There is **no Community column** — the block heading carries it. Both tables are tab-indented under the toggle (see "Collapsible rendering" below). A row reads:
+
+```
+<tr>
+<td>💰 [#7078](https://github.com/CopilotKit/CopilotKit/issues/7078)</td>
+<td>On managed CopilotKit Intelligence, Stop reports success but leaves the thread locked, so the next message fails with `409 THREAD_LOCK_FAILED`.</td>
+<td>🚩 Enterprise questions & complaints below · 🔴 High · no PR, no reply yet</td>
+</tr>
+```
+
+- **Link is mandatory** and opens the `Item` cell — an issue, PR, Discord thread, or Reddit permalink. An item with no resolvable link does not go on the page (the standing source-link rule).
+- **One sentence** in `Subject` on what the item is about. Depth lives in the card wherever the item already has one.
+- **💰 marker** when it crosses the **paid boundary** — the thread cap, the retention window, storage limits, the Intelligence Platform, or paying for persistence at all. Use the `product-surface-scan` tier caps to decide; don't guess the numbers.
+- **Cross-reference, never duplicate.** An item that is also a Top issue, a Pain/Demand card, or an enterprise complaint gets a pointer here ("see Top issue #N", "see 💢 Pain"), not a second copy of the card.
+- **Include resolved items too**, marked ✅ with the release or PR that closed them — a fixed thread bug is still a data point about the surface.
+
+**Collapsible rendering.** The heading carries `{toggle="true"}` and **every line of the body is tab-indented under it** — the intro line, both `**📦 CopilotKit**` / `**🔷 AG-UI**` labels, both `<table …>` opening tags and their `</table>` closers, and the closing read. `<tr>` / `<td>` lines stay un-indented, exactly as 📈 Trends and 🎯 Prospective enterprise customers are written. Un-indented body content falls OUTSIDE the collapse and renders below it.
+
+**When the week has none:** render the heading and say so plainly — "No thread or persistence items this week." Silence on this surface is itself reportable, the same way the enterprise-offering reactions rule works.
+
+**Sources:** both repos, both Discord servers, and the Reddit sweep — the passes the report already runs. No extra pull; the classification happens on results that are already in hand.
 
 ### Prospective enterprise customers (community-sourced)
 

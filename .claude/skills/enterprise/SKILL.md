@@ -76,11 +76,24 @@ If no enterprise reporters this week, render the section with prior-week trend l
 **0 in actionable clusters this week** · **prior week: M** (...) · **trend ↓**
 ```
 
-## Enterprise questions & complaints (highlighted, top of section)
+## Threads & Persistence watch (standing, first subsection)
 
-In the weekly report the 🏢 Enterprise section is **elevated to the top of the main page** (under 🔝 Top issues, above the community body) and **leads with `### 🚩 Enterprise questions & complaints`** — the catch-all for **any question or complaint touching an enterprise surface or the enterprise offering**, gathered across GitHub + Discord + Slack so nothing enterprise hides in the general body.
+The 🏢 Enterprise section **opens with `### 🧵 Threads & Persistence {toggle="true"}`** — **collapsible**, and rendered **every week without exception**. It lists **every in-window item whose subject is a chat thread or persistence**, each with a link, across both communities. Threads and persistence are the commercial surface the business tracks most closely, so these never wait on the cluster threshold and never sit only in Pain.
 
-- **The threads / persistence ("enterprise threads") tier is enterprise by definition.** A complaint about paying for threads, the persistence tier, or self-host runtime ownership belongs here — not just buried in Pain. (Precedent: the "threads off" / paid-persistence friction is an enterprise complaint, surfaced here.)
+- **Flag when the SUBJECT is a chat thread** (lifecycle, locking, reload/restore, message ordering, history replay, thread-scoped state, thread caps, resume across sessions) **or persistence in any form** (retention, storage, durability, snapshot restore, resume/replay, session/state persistence, paying for persistence).
+- **Do not flag** a `threadId` passing through a stack trace while the issue is about something else, thread-safety/concurrency/worker threads, or "thread" meaning a Discord forum thread or GitHub discussion.
+- **The call comes from `deep-read-issue` reading the issue, never from a keyword match** — a regex catches roughly 34 of 48 CopilotKit issues in a typical week and nearly all are incidental.
+- **Two blocks, CopilotKit first** (`**📦 CopilotKit**` then `**🔷 AG-UI**`), oldest → newest inside each, no Community column since the block says it. The section renders **only on the main CopilotKit report page** — AG-UI rows sit in the second block there, never duplicated onto the AG-UI companion page.
+- **Row:** link first (mandatory), one sentence on the subject, a 💰 marker when it crosses the paid boundary (cap, retention, storage, Intelligence Platform, paid persistence), and a pointer to the full card when the item appears elsewhere. Resolved items stay in, marked ✅ with what closed them.
+- **None this week → say so plainly.** Silence on this surface is reportable.
+
+Full row format and worked example live in the `weekly-report` skill under "Threads & Persistence watch".
+
+## Enterprise questions & complaints
+
+Directly under the watch list, `### 🚩 Enterprise questions & complaints` is the catch-all for **any question or complaint touching an enterprise surface or the enterprise offering**, gathered across GitHub + Discord + Slack so nothing enterprise hides in the general body. The 🏢 Enterprise section as a whole is **elevated to the top of the main page** (under 🔝 Top issues, above the community body).
+
+- **The threads / persistence ("enterprise threads") tier is enterprise by definition.** A complaint about paying for threads, the persistence tier, or self-host runtime ownership belongs here — not just buried in Pain. (Precedent: the "threads off" / paid-persistence friction is an enterprise complaint, surfaced here.) It is also listed in the 🧵 watch above; cross-reference rather than duplicating.
 - Each item is a **card** (What / Impact / Fix plan) **plus an Owner + Priority meta line** — `**Owner:** _<blank>_ · **Priority:** 🔴/🟡/🟢` (owner blank for manual assignment; priority derived from rank — see `front-door-triage`).
 - Already a Top issue? List here with a one-line pointer ("see Top issue #N"), don't duplicate the card.
 - None this week → say so explicitly.

@@ -92,7 +92,8 @@ Any issue body/comment burying a SECOND, larger bug — flag it, note whether an
 ## Output
 
 Structured markdown:
-- ## A. Issue deep reads — one per issue, LEAD each with the `STATUS AS OF <today>:` line + the `COMMUNITY: CK|AG-UI (MIS-FILED?)` line, then maintainer-status quote, repro, refs.
+- ## A. Issue deep reads — one per issue, LEAD each with the `STATUS AS OF <today>:` line, the `COMMUNITY: CK|AG-UI (MIS-FILED?)` line, and the `THREADS/PERSISTENCE: YES (💰 paid boundary?) | NO` line, then maintainer-status quote, repro, refs.
+  - **`THREADS/PERSISTENCE`** — `YES` when the issue's **subject** is a chat thread (lifecycle, locking, reload/restore, message ordering, history replay, thread-scoped state, thread caps, resume across sessions) or **persistence in any form** (retention, storage, durability, snapshot restore, resume/replay, session/state persistence, paying for persistence). `NO` for an incidental `threadId` in a stack trace, thread-safety/concurrency/worker threads, or "thread" meaning a Discord forum thread or GitHub discussion. Judge what the issue is *about* — a keyword match returns ~70% of CopilotKit issues and is useless here. Add `💰` when it crosses the paid boundary (cap, retention, storage, Intelligence Platform, paid persistence). This line feeds the report's standing 🧵 Threads & Persistence watch, so a missed `YES` drops an item the business is tracking.
 - ## B. PR deep reads — one per PR; state + reviewDecision + who approved (association); comparison table when 2+ target one issue.
 - ## C. Cross-reference + cross-repo verdicts — evidence + both states.
 - ## D. New facts the orchestrator didn't have — status changes, linked PRs, maintainer confirmations the body-only / Discord-only view would have missed.
@@ -123,6 +124,7 @@ When a fix PR was closed for a non-technical reason (branch-name violation, lint
 - [ ] Every issue has a `STATUS AS OF <today>` line derived from state + maintainer comment + linked PR — not the body.
 - [ ] Every issue has a `CopilotKit version:` line — the reporter's version from repro/body/comments, or `unknown` if none stated (never guessed).
 - [ ] Every issue has a `TYPE:` line (bug / feature-request / UNSURE) derived from title + labels + PR prefix (`feat`/`proposal` ⇒ feature; `fix` ⇒ bug) — checks run BEFORE calling anything a bug; ambiguous ones flagged UNSURE, not defaulted to bug.
+- [ ] Every issue has a `THREADS/PERSISTENCE:` line — `YES` (with 💰 when it crosses the paid boundary) or `NO`, decided on what the issue is ABOUT, not on the word appearing in it. A missing or wrongly-`NO` line drops the item from the report's 🧵 watch.
 - [ ] Timeline/linked-PR scan run for every issue (not just the ones with obvious fix PRs).
 - [ ] Every "still open / no PR / unfixed" claim re-checked against current state + timeline (this is where the wrong calls happen).
 - [ ] Maintainer status quoted with author + date; support-bot text not mistaken for status.
