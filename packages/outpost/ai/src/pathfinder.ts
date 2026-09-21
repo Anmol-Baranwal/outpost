@@ -368,6 +368,15 @@ export class PathfinderClient {
             // A code block is the one with a PATH and no TITLE. Derived from the
             // headers rather than from PATH alone, so a docs block can never be
             // mistaken for code and lose its citable URL.
+            //
+            // This depends on a server-side contract we do not own: that a code
+            // hit never carries a TITLE. It holds against the current
+            // `tools/list` on mcp.copilotkit.ai. If a code result ever gains one,
+            // `isCode` goes false, `source` falls back to `header('SOURCE')`
+            // — absent on a code block — and the file path silently stops being
+            // citable, which the reply rules then turn into a handoff. The
+            // both-headers case is pinned in pathfinder.test.ts so the change in
+            // behaviour is visible rather than silent.
             const isCode = !titleHeader && !!path;
 
             const title = titleHeader ?? path ?? 'Documentation';

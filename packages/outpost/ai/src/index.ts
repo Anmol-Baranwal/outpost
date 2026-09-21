@@ -47,17 +47,20 @@ export type {
     TopIssueInput,
     ScoredTopIssue,
 } from './front-door.js';
-// The rule set, the scorer and the linter are API. HISTORICAL_FAILURES and
-// TARGET_SHAPE are not re-exported here because they are test data, not a public
-// surface — import them from './eval/harness.js' directly in tests and offline
-// runners.
+// The rule set, the scorer and the linter are API — the linter consumes the
+// first two.
 //
-// Note what this does NOT do: `tsc` emits per file and `index.ts` imports
-// `./eval/harness.js` for `scoreCases`, so `dist/eval/harness.js` still ships
-// `HISTORICAL_FAILURES` with its reconstructed replies — a bundle grep for
-// `@copilotkitnext` will still hit them. Keeping them out of the build needs the
-// fixtures moved outside the compiled graph, which is a separate change; the
-// earlier version of this comment claimed a guarantee it did not deliver.
+// The eval fixtures are not, and are no longer reachable from here: they live in
+// `eval/__fixtures__/`, which `ai/tsconfig.json` excludes from the build. Not
+// re-exporting them was never sufficient on its own — `tsc` emits per file and
+// this module imports `./eval/harness.js`, so while they lived in `harness.ts`
+// the reconstructed bad replies shipped in `dist/eval/harness.js` regardless of
+// what this entry point declared.
+//
+// Verified against a built `dist`: no fixture reply text remains. `@copilotkitnext`
+// still appears in `dist/eval/rules.js`, and has to — that is the rule which bans
+// it. A bundle grep for the dead package name will hit the rule, not a fabricated
+// example of it.
 export { checkReply, RULES, HANDOFF_WORD_CAP, MIN_REPLY_WORDS } from './eval/rules.js';
 export type { RuleId, RuleResult } from './eval/rules.js';
 export { scoreCases, formatReport } from './eval/harness.js';
