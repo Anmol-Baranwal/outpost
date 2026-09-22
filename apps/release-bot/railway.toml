@@ -1,0 +1,25 @@
+# Railway config — outpost-release-bot (scheduled community announcements)
+# In Railway: set this service's "Config file path" to apps/release-bot/railway.toml
+# and leave Root Directory empty (build context must be the repo root).
+#
+# This service is a CRON JOB, not a long-running process: it announces whatever is
+# new and exits.
+#
+# cronSchedule is set here rather than in the dashboard so a recreated service is
+# still scheduled. Without it, the service runs once at deploy and then never
+# again, with no error anywhere to say so.
+#
+# restartPolicyType = "NEVER" because a completed run exiting 0 is success, not a
+# crash. ALWAYS would restart it in a loop and re-announce on every boot.
+
+# watchPatterns keeps unrelated pushes from redeploying this service. A deploy
+# runs the job once immediately, so without it every merge anywhere in the
+# monorepo fires an extra announcement run outside the schedule.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/release-bot/Dockerfile"
+watchPatterns = ["apps/release-bot/**", "pnpm-lock.yaml", "tsconfig.json", "turbo.json"]
+
+[deploy]
+restartPolicyType = "NEVER"
+cronSchedule = "0 8 * * *"

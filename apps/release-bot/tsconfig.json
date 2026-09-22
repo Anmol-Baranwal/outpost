@@ -1,0 +1,18 @@
+{
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "types": ["node"],
+        // A deployed app, not a library: no consumer reads these.
+        "declaration": false,
+        "declarationMap": false,
+        // Inside outDir so turbo caches it alongside dist. Left at the package
+        // root, a stale tsbuildinfo without its dist made tsc emit nothing.
+        "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
+    },
+    "include": ["src/**/*.ts"],
+    // Tests are compiled by vitest, not shipped. Emitting them put `import
+    // 'vitest'` into the production image.
+    "exclude": ["node_modules", "dist", "src/__tests__"]
+}
