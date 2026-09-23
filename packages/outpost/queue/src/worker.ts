@@ -776,6 +776,11 @@ export class Worker {
             }
 
             if (!result.success) {
+                // A handler that reports `retryable: false` has told us the
+                // failure cannot succeed on a retry (malformed payload, missing
+                // referenced row, permanent API rejection). Retrying it burns
+                // every attempt and leaves a dead-letter trail that reads like a
+                // transient fault.
                 await this.handleFailure(
                     job.id,
                     job.type,
@@ -783,6 +788,7 @@ export class Worker {
                     attempt,
                     job.maxAttempts,
                     result.error ?? 'Unknown error',
+                    result.retryable === false,
                 );
                 return;
             }
@@ -869,8 +875,15 @@ export class Worker {
         attempt: number,
         maxAttempts: number,
         error: string,
+        /**
+         * The handler declared this failure permanent. Dead-letter it now, but
+         * record the TRUE attempt count — writing `maxAttempts` here would
+         * fabricate an exhausted-retry trail for a job that ran once, and an
+         * operator requeueing it could not tell the two cases apart.
+         */
+        permanent = false,
     ): Promise<void> {
-        if (attempt >= maxAttempts) {
+        if (permanent || attempt >= maxAttempts) {
             // Dead letter: job has exhausted all retries
             const result = await prisma.job.updateMany({
                 where: { id: jobId, status: 'PROCESSING', claimToken },
@@ -886,7 +899,9 @@ export class Worker {
             });
             if (result.count > 0) {
                 console.error(
-                    `[Queue Worker] Job ${jobId} (${jobType}) moved to dead letter queue after ${attempt} attempts: ${error}`,
+                    `[Queue Worker] Job ${jobId} (${jobType}) moved to dead letter queue ` +
+                        `after ${attempt} attempt(s)` +
+                        `${permanent ? ' (handler reported the failure as permanent)' : ''}: ${error}`,
                 );
             } else {
                 // Pre-fence this always logged. Staying silent here would lose both
