@@ -2,8 +2,8 @@
  * Deciding what to announce, given what a channel already shows.
  *
  * This lives apart from the entry point so it can be imported without starting
- * an announcement run: `index.ts` calls `main()` when it loads, and a test that
- * imported it for this function performed a real pass.
+ * an announcement run: `index.ts` used to call `main()` unconditionally when it
+ * loaded, and a test that imported it for this function performed a real pass.
  */
 
 import type { Announced } from './discord.js';
@@ -36,7 +36,7 @@ export function pending<T extends Item>(items: T[], seen: Announced): T[] {
         return true;
     });
 
-    const announced = dated.filter((item) => seen.urls.has(item.url));
+    const announced = dated.filter((item) => seen.urls.has(item.url.toLowerCase()));
 
     if (announced.length) {
         const watermark = Math.max(...announced.map((item) => Date.parse(item.publishedAt)));
@@ -45,7 +45,7 @@ export function pending<T extends Item>(items: T[], seen: Announced): T[] {
             // Ties count as pending unless already seen: AG-UI publishes several
             // releases within the same second, and a strict comparison dropped
             // whichever one was not announced first.
-            return at > watermark || (at === watermark && !seen.urls.has(item.url));
+            return at > watermark || (at === watermark && !seen.urls.has(item.url.toLowerCase()));
         });
     }
 
@@ -59,5 +59,12 @@ export function pending<T extends Item>(items: T[], seen: Announced): T[] {
     const floor = seen.searchedFrom ? Date.parse(seen.searchedFrom) : NaN;
     if (Number.isNaN(floor)) return dated.slice(-1);
 
-    return dated.filter((item) => Date.parse(item.publishedAt) > floor);
+    // Inclusive of the floor itself, for the same reason the watermark branch
+    // above is: AG-UI publishes several releases within one second, and
+    // `searchedFrom` is a real message timestamp. A release published in the
+    // same second as that message was not announced by it.
+    return dated.filter((item) => {
+        const at = Date.parse(item.publishedAt);
+        return at > floor || (at === floor && !seen.urls.has(item.url.toLowerCase()));
+    });
 }

@@ -67,14 +67,33 @@ describe('pending', () => {
     });
 
     it('ignores an item whose timestamp cannot be parsed', () => {
-        // One bad timestamp used to poison the watermark through Math.max and
-        // take the source silent with no explanation.
+        // The bad item has to be one of the *announced* ones. Math.max over the
+        // announced timestamps is what a NaN poisons, and a poisoned watermark
+        // compares false against everything, so the source goes silent with no
+        // explanation. With the bad timestamp on an unannounced item instead,
+        // the later comparison drops it on NaN anyway and the guard is never
+        // load-bearing - the test passed with the guard deleted outright.
         const items = [
-            item(1, '2026-09-01T00:00:00Z'),
             { url: 'https://x/bad', publishedAt: 'not a date' },
+            item(2, '2026-09-02T00:00:00Z'),
             item(3, '2026-09-03T00:00:00Z'),
         ];
-        expect(pending(items, seen(['https://x/1'])).map((i) => i.url)).toEqual(['https://x/3']);
+        const pendingUrls = pending(items, seen(['https://x/bad', 'https://x/2']));
+        expect(pendingUrls.map((i) => i.url)).toEqual(['https://x/3']);
+    });
+
+    it('announces an item published in the same second as the search floor', () => {
+        // Same tie problem as the watermark branch, on the floor branch. The
+        // floor is a real Discord message timestamp, so a release published in
+        // that same second was assumed announced by it and dropped for good.
+        const stamp = '2026-09-10T00:00:00Z';
+        const items = [item(1, stamp), item(2, '2026-09-11T00:00:00Z')];
+        const result = pending(items, {
+            urls: new Set(['https://other/thing']),
+            foundOwn: true,
+            searchedFrom: stamp,
+        });
+        expect(result.map((i) => i.url)).toEqual(['https://x/1', 'https://x/2']);
     });
 
     it('announces an item published in the same second as the watermark', () => {

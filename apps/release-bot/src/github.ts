@@ -3,19 +3,13 @@
  *
  * Release notes alone are not enough. CopilotKit's are often one sentence, and
  * AG-UI's are thousands of characters of package tables. So for every release we
- * also pull the commits since the previous release, which gives us the real PR
- * list and, more importantly, who wrote them.
+ * also pull the commits since the previous release, which is the real list of
+ * what shipped.
  */
 
-import { TIMEOUT_MS, parseJson } from './http.js';
+import { MAX_ATTEMPTS, TIMEOUT_MS, backoff, parseJson, pause, retryAfterMs } from './http.js';
 
 const API = 'https://api.github.com';
-
-/** Org listings this bot treats as "the team". */
-const ORGS = ['CopilotKit', 'ag-ui-protocol'];
-
-/** Pages of 100 members to read before giving up. */
-const MEMBER_PAGES = 20;
 
 /** Pages of 100 releases to walk back through while still inside the lookback window. */
 const RELEASE_PAGES = 5;
@@ -32,14 +26,28 @@ export type Release = {
     publishedAt: string;
 };
 
-export type Contributor = {
-    login: string;
-    external: boolean;
-};
-
 export type ReleaseContext = Release & {
+    /** Subjects worth showing a reader, noise removed. */
     commits: string[];
-    contributors: Contributor[];
+    /**
+     * True when the compare was answered completely: GitHub said the tags are
+     * identical, or every commit it reported was actually read.
+     *
+     * Distinguishes "there is nothing between these tags" and "here is all of
+     * it" from "we could not ask" and "we got part of it", all of which look
+     * alike in `commitsRead` alone. This is the only field a caller may use to
+     * decide the commit list is authoritative.
+     */
+    comparedCleanly?: boolean;
+    /**
+     * How many commits the compare returned before filtering.
+     *
+     * The difference matters: zero read means there was nothing to look at (no
+     * previous release), while zero kept out of many read
+     * means the whole release was dependency bumps and version chores. Only the
+     * second corroborates a decision to skip it.
+     */
+    commitsRead: number;
 };
 
 /** Only the fields this app reads, not the full GitHub payloads. */
@@ -55,21 +63,22 @@ type GhRelease = {
 
 type GhCommit = {
     commit: { message: string };
-    author: { login: string } | null;
 };
 
-type GhCompare = { commits?: GhCommit[]; total_commits?: number };
-
-type GhMember = { login: string };
+type GhCompare = {
+    status?: 'diverged' | 'ahead' | 'behind' | 'identical';
+    commits?: GhCommit[];
+    total_commits?: number;
+};
 
 function headers() {
     const token = process.env.GITHUB_TOKEN;
-    // Unauthenticated, GitHub allows 60 requests an hour and hides org members,
-    // so the run would die partway through with an opaque 403 and credit nobody.
+    // Unauthenticated, GitHub allows 60 requests an hour, so the run would die
+    // partway through with an opaque 403.
     // Failing here names the actual problem instead.
     if (!token) {
         throw new Error(
-            'GITHUB_TOKEN is not set. It needs read:org to tell the team from contributors.',
+            'GITHUB_TOKEN is not set. Unauthenticated requests are rate limited to 60 an hour.',
         );
     }
     return {
@@ -79,23 +88,19 @@ function headers() {
     };
 }
 
-const MAX_RETRIES = 3;
-
 /**
  * A GitHub read, with bounded retries.
  *
  * Reads are retried for the same reason Discord's are: a secondary rate limit
  * or a 502 on one of several calls per run would otherwise fail a whole source.
- * `tolerate` returns null instead of throwing, for the caller that needs to
- * degrade rather than abort.
  */
-async function gh<T>(path: string, options: { tolerate?: boolean } = {}): Promise<T> {
+async function gh<T>(path: string): Promise<T> {
     // Outside the loop, so a missing token throws rather than being tolerated
     // as though it were an HTTP failure. A config error is not a bad network.
     const requestHeaders = headers();
 
     for (let attempt = 1; ; attempt++) {
-        const last = attempt >= MAX_RETRIES;
+        const last = attempt >= MAX_ATTEMPTS;
 
         let res: Response;
         try {
@@ -104,27 +109,63 @@ async function gh<T>(path: string, options: { tolerate?: boolean } = {}): Promis
                 signal: AbortSignal.timeout(TIMEOUT_MS),
             });
         } catch (error) {
-            if (last) {
-                if (options.tolerate) return null as T;
-                throw error;
-            }
-            await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+            if (last) throw error;
+            await pause(backoff(attempt));
             continue;
         }
 
         if (res.ok) return parseJson<T>(res, 'GitHub');
 
-        const retryable = res.status === 429 || res.status === 403 || res.status >= 500;
-        if (retryable && !last) {
-            const after = Number(res.headers.get('retry-after'));
-            const wait =
-                Number.isFinite(after) && after > 0 ? after * 1000 : 1000 * 2 ** (attempt - 1);
-            await new Promise((r) => setTimeout(r, Math.min(wait, 60_000)));
+        // 403 only when the headers say it is a rate limit. GitHub uses the same
+        // status for a revoked token and a repo the token cannot see, and those
+        // cost three attempts and three seconds of sleep before surfacing an
+        // error no amount of retrying fixes.
+        //
+        // Both limits count. The primary one zeroes x-ratelimit-remaining; the
+        // secondary abuse-detection one leaves it above zero and sends
+        // retry-after instead, so keying on the counter alone stopped retrying
+        // the single 403 that tells us exactly how long to wait.
+        const rateLimited =
+            res.status === 429 ||
+            (res.status === 403 &&
+                (res.headers.get('x-ratelimit-remaining') === '0' ||
+                    res.headers.has('retry-after')));
+
+        if ((rateLimited || res.status >= 500) && !last) {
+            // Via the shared helper, which also reads x-ratelimit-reset. GitHub
+            // sends no retry-after on a primary rate limit, so the local version
+            // of this burned every attempt inside three seconds against a limit
+            // that resets minutes later.
+            const wait = retryAfterMs(res) ?? backoff(attempt);
+            await pause(wait);
             continue;
         }
+        throw new GhError(
+            res.status,
+            `GitHub ${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`,
+        );
+    }
+}
 
-        if (options.tolerate) return null as T;
-        throw new Error(`GitHub ${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`);
+/**
+ * A GitHub failure that carries its status as data.
+ *
+ * `contextFor` needs to recognise a 404 to degrade rather than fail the source.
+ * It used to do that with `error.message.includes('GitHub 404')` - against a
+ * message that embeds the first 200 characters of the response body. Any other
+ * failure whose body happened to contain that literal (a proxy error page, a
+ * gateway echoing an upstream error) was silently reclassified as a deleted tag,
+ * and the release was announced with no commit context while the log asserted a
+ * cause that was not true. The status is structured at the throw site; flattening
+ * it into prose and re-parsing it was the whole bug.
+ */
+export class GhError extends Error {
+    override readonly name = 'GhError';
+    constructor(
+        readonly status: number,
+        message: string,
+    ) {
+        super(message);
     }
 }
 
@@ -139,18 +180,56 @@ async function gh<T>(path: string, options: { tolerate?: boolean } = {}): Promis
  */
 export async function listReleases(repo: string, since: string): Promise<Release[]> {
     const collected: Release[] = [];
+    const seen = new Set<string>();
     const cutoff = Date.parse(since);
-    let exhausted = true;
+    // True only while every page read has been full and in-window, which is the
+    // one case where releases can still be hiding past the last page.
+    let hitPageLimit = true;
 
     for (let page = 1; page <= RELEASE_PAGES; page++) {
         const batch = await gh<GhRelease[]>(`/repos/${repo}/releases?per_page=100&page=${page}`);
-        if (!batch.length) break;
+        // gh() guarantees the body parsed as JSON, not that it is an array. A
+        // 200 carrying an object - a proxy or gateway envelope - gives
+        // `batch.length === undefined`, which read as an empty page: the loop
+        // broke on page 1 with nothing collected, no warning, and the run exited
+        // 0. That is the cron-reports-success failure this bot exists to avoid,
+        // so it throws the way youtube.ts throws on a feed with no entries.
+        if (!Array.isArray(batch)) {
+            throw new Error(
+                `${repo}: /releases page ${page} returned ${typeof batch}, not an array. ` +
+                    'The API response shape changed, or something is answering for it.',
+            );
+        }
+        // An empty page is the end of the list, not a truncated read: leaving
+        // the flag set here made a repo with no releases at all, or with
+        // exactly 100 of them, raise the "releases are being lost" alarm.
+        if (!batch.length) {
+            hitPageLimit = false;
+            break;
+        }
 
         for (const r of batch) {
             if (r.draft || r.prerelease || !r.published_at) continue;
+            // GitHub orders /releases by creation, so a release published between
+            // two page fetches shifts the window and the last entry of page N
+            // comes back as the first of page N+1. Undeduped, both reach
+            // pending() as distinct objects with the same url and both post.
+            if (seen.has(r.html_url)) continue;
+            seen.add(r.html_url);
             // By instant, not by string: `since` carries milliseconds and
             // GitHub's timestamps do not, so a lexicographic compare disagrees
             // inside the boundary second.
+            // Excluded outright, not compared: `NaN <= cutoff` is false, so an
+            // unreadable timestamp used to fall through into `collected`.
+            // pending() then drops it, but it stays in `releases`, where
+            // previousOnLine() can pick it as a compare baseline and the
+            // publish-order comparator returns NaN for every pair touching it.
+            if (!Number.isFinite(Date.parse(r.published_at))) {
+                console.warn(
+                    `${repo}: unreadable published_at "${r.published_at}" on ${r.tag_name}`,
+                );
+                continue;
+            }
             if (Date.parse(r.published_at) <= cutoff) continue;
             collected.push({
                 repo,
@@ -164,205 +243,185 @@ export async function listReleases(repo: string, since: string): Promise<Release
 
         // Ordering is by creation, so only stop once a whole page is older than
         // the window rather than on the first old entry.
-        const allOlder = batch.every(
-            (r) => !r.published_at || Date.parse(r.published_at) <= cutoff,
-        );
+        //
+        // Undated entries are ignored rather than counted as old. A draft has no
+        // published_at and GitHub clusters drafts at the top by creation date, so
+        // treating them as old let one full page of drafts end pagination on page
+        // 1 - and every in-window release behind it was lost, not deferred, since
+        // the watermark then moves past what was never read. A page with nothing
+        // dated on it says nothing about the window, so it does not stop the walk.
+        const published = batch
+            .map((r) => r.published_at)
+            .filter((at): at is string => Boolean(at));
+        const allOlder = published.length > 0 && published.every((at) => Date.parse(at) <= cutoff);
         if (allOlder || batch.length < 100) {
-            exhausted = false;
+            hitPageLimit = false;
             break;
         }
     }
 
     // Anything still inside the window but past this many pages is invisible,
     // and invisible means lost rather than deferred once the watermark moves.
-    if (exhausted) {
+    // This is the only signal of that, so it must not cry wolf.
+    if (hitPageLimit) {
         console.warn(`${repo}: more than ${RELEASE_PAGES} pages of releases inside the window`);
     }
 
-    return collected.sort((a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt));
+    // Ties need an explicit second key. GitHub returns releases newest-created
+    // first, so a stable sort leaves same-instant releases reversed relative to
+    // everything around them, and the caller takes the previous element as the
+    // compare baseline: for a tie that baseline is NEWER than the release, the
+    // compare comes back ahead_by 0, and the release is announced with no commits
+    // without anything failing. AG-UI really does publish
+    // several releases within the same second (see watermark.ts). Reversing
+    // arrival order within a tie restores creation order, oldest first.
+    return collected
+        .map((release, index) => ({ release, index }))
+        .sort(
+            (a, b) =>
+                Date.parse(a.release.publishedAt) - Date.parse(b.release.publishedAt) ||
+                b.index - a.index,
+        )
+        .map(({ release }) => release);
 }
 
 /**
- * Logins that belong to automation.
+ * Commit subjects that say nothing a reader of the announcement would care about.
  *
- * Anchored, because unanchored substrings dropped real people: a contributor
- * called `renovate-fan` is not Renovate.
+ * `fix(deps)` is deliberately absent, unlike `chore(deps)` and `build(deps)`. It
+ * is the one dependency scope that routinely carries CVE work, and filtering it
+ * emptied `commits` on a security-patch release - which is exactly the condition
+ * that rubber-stamps a model SKIP, so the release posted nothing and the
+ * watermark moved past it.
  */
-const BOT_LOGINS = [
-    /\[bot\]$/i,
-    /^renovate(-bot)?$/i,
-    /^dependabot$/i,
-    /^claude$/i,
-    /^copilot$/i,
-    /^cursoragent$/i,
-    /^coderabbitai$/i,
-    /^sweep-ai$/i,
-    /^[\w-]*devops-bot$/i,
-];
-
-const isBot = (login: string) => BOT_LOGINS.some((pattern) => pattern.test(login));
-
-/**
- * Who counts as the team.
- *
- * Read from the orgs rather than kept in a list here, because most of the team's
- * membership is private and the public endpoint reports colleagues as outsiders.
- *
- * A token without org visibility does not fail, it returns 200 and an empty
- * list, and a failure mid-pagination used to pass silently with a partial list.
- * Either outcome credits colleagues publicly as outside contributors, which is
- * worse than crediting nobody, so `resolved` is false unless at least one org
- * was read completely and returned members.
- *
- * It is not all-or-nothing across every org, because that made credit
- * impossible in practice: `ag-ui-protocol` returns an empty list for a token
- * scoped to `CopilotKit`, and the maintainers of both repos are in the
- * CopilotKit org anyway. An org that cannot be read is warned about loudly, and
- * `CORE_LOGINS` covers anyone it would otherwise have missed.
- */
-export type Team = { members: Set<string>; resolved: boolean };
-
-let teamPromise: Promise<Team> | undefined;
-
-export function team(): Promise<Team> {
-    teamPromise ??= readTeam().catch((error) => {
-        // Do not cache the rejection: one transient network error would
-        // otherwise poison every later call in the run.
-        teamPromise = undefined;
-        throw error;
-    });
-    return teamPromise;
-}
-
-async function readTeam(): Promise<Team> {
-    const members = new Set(
-        (process.env.CORE_LOGINS?.split(',') ?? [])
-            .map((l) => l.trim().toLowerCase())
-            .filter(Boolean),
-    );
-
-    const unreadable: string[] = [];
-
-    for (const org of ORGS) {
-        let complete = false;
-        let seen = 0;
-
-        for (let page = 1; page <= MEMBER_PAGES && !complete; page++) {
-            const res = await gh<GhMember[] | null>(
-                `/orgs/${org}/members?per_page=100&page=${page}`,
-                { tolerate: true },
-            );
-
-            if (!res) {
-                console.warn(
-                    `Could not read ${org} members (page ${page}). Anyone only in that org ` +
-                        'may be credited as an outside contributor; add them to CORE_LOGINS. ' +
-                        'GITHUB_TOKEN needs read:org.',
-                );
-                unreadable.push(org);
-                break;
-            }
-
-            for (const m of res) members.add(m.login.toLowerCase());
-            seen += res.length;
-            // `break` here, not `return`: returning meant the second org was
-            // never read at all, and its members were then thanked publicly as
-            // outside contributors.
-            if (res.length < 100) complete = true;
-        }
-
-        if (unreadable.includes(org)) continue;
-
-        if (!complete) {
-            console.warn(`${org} has more members than ${MEMBER_PAGES} pages; not crediting.`);
-            return { members, resolved: false };
-        }
-
-        // 200 with an empty list is what a token lacking visibility returns.
-        // Treating it as "this org has nobody" is what credits a whole team as
-        // outsiders, so it counts as unreadable rather than as an answer.
-        if (!seen) {
-            console.warn(
-                `${org} returned no members; GITHUB_TOKEN cannot see it. Anyone only in that ` +
-                    'org may be credited as an outside contributor; add them to CORE_LOGINS.',
-            );
-            unreadable.push(org);
-        }
-    }
-
-    // Credit needs at least one org actually read. With none, every contributor
-    // would look external and the whole team would be thanked publicly.
-    const resolved = unreadable.length < ORGS.length;
-    if (!resolved) console.warn('No org membership visible; contributors will not be credited.');
-
-    return { members, resolved };
-}
-
-/** Commit subjects that are noise in an announcement and in the credit line. */
 const NOISE =
-    /^((chore|build|fix|ci|test|docs)\((deps|deps-dev|release)\)|chore\(release\)|chore: bump|release:|(ci|test|docs)[(:]|Merge )/i;
+    /^((chore|build|ci|test|docs)\((deps|deps-dev|release)\)|chore\(release\)|chore:\s*(bump|release)\b|release:|(ci|test|docs|style)[(:])/i;
 
 /**
- * Commits between the previous release and this one, and who authored them.
+ * Git's own merge subjects, matched case-sensitively and by full shape.
  *
- * `previous` comes from the caller's release list rather than from `GET /tags`.
- * Tag adjacency looked right and was not: the tag list is ordered by refname,
- * carries junk tags (`vundefined` sorts above `v1.73.0`), and mixes per-package
- * tags in, so `tags[index + 1]` could pick a baseline from an unrelated line and
- * credit people for commits they had nothing to do with.
+ * A bare case-insensitive `Merge ` dropped real work: `merge sort: faster path`
+ * is a commit about sorting, and filtering it lost the change from the summary.
+ */
+const MERGE = /^Merge (branch|pull request|remote-tracking branch|tag|commit) /;
+
+/**
+ * The commits between the previous release and this one.
+ *
+ * `previous` is chosen by the caller, which is the only place that knows how a
+ * repo's tag lines are shaped. Not `GET /tags`: that list is ordered by refname,
+ * carries junk tags (`vundefined` sorts above `v1.73.0`) and mixes per-package
+ * tags together, so `tags[index + 1]` is routinely a baseline from an unrelated
+ * line. Comparing across lines is silent - GitHub answers 200 with a plausible
+ * commit set - and the summary then describes a different release.
  */
 export async function contextFor(release: Release, previous?: Release): Promise<ReleaseContext> {
     if (!previous) {
         console.warn(
             `${release.tag}: no previous release in the window, announcing without commit context`,
         );
-        return { ...release, commits: [], contributors: [] };
+        return { ...release, commits: [], commitsRead: 0 };
     }
 
     const range = `${encodeURIComponent(previous.tag)}...${encodeURIComponent(release.tag)}`;
-    const first = await gh<GhCompare>(`/repos/${release.repo}/compare/${range}?per_page=100`);
+
+    let first: GhCompare;
+    try {
+        first = await gh<GhCompare>(`/repos/${release.repo}/compare/${range}?per_page=100`);
+    } catch (error) {
+        // A deleted or re-pushed tag 404s here. Every other way of not getting a
+        // commit list degrades - no previous release, a non-ahead compare - so
+        // this one should too. Throwing failed the source on every run until the
+        // release aged out of the window and was lost rather than deferred.
+        if (!(error instanceof GhError) || error.status !== 404) throw error;
+
+        console.warn(
+            `${release.tag}: comparing against ${previous.tag} returned 404, ` +
+                'probably a deleted tag. Announcing without commit context.',
+        );
+        return { ...release, commits: [], commitsRead: 0 };
+    }
+
+    // A baseline that is not this release's predecessor answers 200 with
+    // `behind` or `diverged` and an empty commit set, which is indistinguishable
+    // from "first release on this line" once it reaches the caller. A backport
+    // does exactly this: v1.72.5 shipped after v1.73.0 compares backwards.
+    // `identical` is asked-and-answered: GitHub compared the two tags and there
+    // is genuinely nothing between them. That corroborates a skip, so it must
+    // not be conflated with `behind`/`diverged`, where the baseline was simply
+    // the wrong tag - those return commitsRead 0, which forces a second
+    // completion and then announces a release with no commits at all.
+    if (first.status === 'identical') {
+        return { ...release, commits: [], commitsRead: 0, comparedCleanly: true };
+    }
+
+    if (first.status && first.status !== 'ahead') {
+        console.warn(
+            `${release.tag}: compare against ${previous.tag} came back "${first.status}", ` +
+                'not "ahead". Announcing without commit context.',
+        );
+        return { ...release, commits: [], commitsRead: 0 };
+    }
 
     const all = [...(first.commits ?? [])];
+    if (first.total_commits === undefined) {
+        // Falling back to all.length makes the pagination condition false on
+        // entry and the truncation warning below false too, so a 600-commit
+        // release would be summarized from 100 with no diagnostic at all.
+        console.warn(
+            `${release.tag}: compare returned no total_commits; ` +
+                'the commit list may be truncated at one page.',
+        );
+    }
     const total = first.total_commits ?? all.length;
 
-    // The compare endpoint caps a page at 250 and returns oldest first, so
-    // without paging the newest work in a large release is simply absent, and
-    // any contributor who only appears there goes unthanked.
+    // The compare endpoint returns oldest first, so without paging the newest
+    // work in a large release is simply absent from the summary.
     for (let page = 2; all.length < total && page <= COMPARE_PAGES; page++) {
-        const next = await gh<GhCompare>(
-            `/repos/${release.repo}/compare/${range}?per_page=100&page=${page}`,
-        );
-        const batch = next.commits ?? [];
-        if (!batch.length) break;
+        // Degrade rather than fail, the same as a 404 on page 1. A tag deleted
+        // between two page fetches, a 502 on page 7, or a secondary limit that
+        // outlives MAX_ATTEMPTS used to throw out of contextFor and fail the
+        // whole source, discarding the commits already read - when the
+        // incomplete-list warning below is exactly the right response.
+        let batch: GhCompare['commits'];
+        try {
+            batch = (
+                await gh<GhCompare>(
+                    `/repos/${release.repo}/compare/${range}?per_page=100&page=${page}`,
+                )
+            ).commits;
+        } catch (error) {
+            // Carry on to the next page rather than stopping. A 502 on page 2
+            // says nothing about page 3, and breaking here threw away every page
+            // after it: on a 625-commit release one transient failure dropped
+            // 525 commits instead of 100, and the summary was then written from
+            // the OLDEST hundred while claiming to describe the newest work.
+            console.warn(`${release.tag}: compare page ${page} failed: ${error}`);
+            continue;
+        }
+        if (!batch?.length) break;
         all.push(...batch);
     }
 
-    if (all.length < total) {
+    // Whether the commit list is complete, which is not the same question as
+    // whether any commits were read. A partial read used to be indistinguishable
+    // from a complete one, and `summarize` treats "commits were read and none
+    // survived the noise filter" as corroboration for a SKIP - so a 16%-complete
+    // read whose visible commits happened to be all noise rubber-stamped a skip,
+    // and a skipped release leaves no trace in the channel for the next run to
+    // reconsider. Lost, not deferred.
+    const comparedCleanly = all.length >= total;
+
+    if (!comparedCleanly) {
         console.warn(
             `${release.tag}: read ${all.length} of ${total} commits; ` +
-                'the summary and credit line may be incomplete.',
+                'the summary is written from an incomplete list.',
         );
     }
 
-    const substantive = all.filter((c) => !NOISE.test(c.commit.message.split('\n')[0]));
-    const commits = substantive.map((c) => c.commit.message.split('\n')[0]);
+    const commits = all
+        .map((c) => c.commit.message.split('\n')[0])
+        .filter((subject) => !NOISE.test(subject) && !MERGE.test(subject));
 
-    // Authors come from the filtered commits: someone whose only commits in the
-    // range were dependency bumps should not be thanked for the release.
-    const logins = new Set<string>();
-    for (const c of substantive) {
-        const login = c.author?.login;
-        if (login && !isBot(login)) logins.add(login);
-    }
-
-    const { members, resolved } = await team();
-
-    const contributors = [...logins].map((login) => ({
-        login,
-        // Unknown team means unknown provenance, so nobody is marked external
-        // and the announcement carries no credit line at all.
-        external: resolved && !members.has(login.toLowerCase()),
-    }));
-
-    return { ...release, commits, contributors };
+    return { ...release, commits, commitsRead: all.length, comparedCleanly };
 }

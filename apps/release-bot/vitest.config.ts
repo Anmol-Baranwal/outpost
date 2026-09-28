@@ -9,5 +9,11 @@ export default defineConfig({
         include: ['src/**/*.test.ts'],
         clearMocks: true,
         restoreMocks: true,
+        // Neither of the above undoes vi.stubGlobal or vi.stubEnv, so a test
+        // file that forgets its own afterEach leaks a stubbed fetch into every
+        // later test in that file - and the failure surfaces as an unrelated
+        // test asserting against the wrong mock.
+        unstubGlobals: true,
+        unstubEnvs: true,
     },
 });

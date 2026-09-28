@@ -2,7 +2,9 @@
  * What this bot watches.
  *
  * This file is the whole configuration surface. To add a repository, add an
- * entry below and a channel id to the environment. Nothing else needs touching.
+ * entry below and a channel id to the environment. One other place needs the new
+ * variable's name: main()'s preflight error in index.ts lists them, so an
+ * operator who sets only the new one is told nothing is configured.
  *
  * Channel ids live in the environment because they differ per server and per
  * deployment. Tag filters live here because they are decisions about what is
@@ -33,6 +35,22 @@ export type Source = {
      */
     title: (release: Release) => string;
 };
+
+/**
+ * The release line a tag belongs to: `channels/v0.10.0` -> `channels`,
+ * `v1.73.0` -> `''`, `release/2026-09-17` -> `release`.
+ *
+ * One repo can publish several independent sequences. Asking GitHub what
+ * shipped in a release means comparing it against the previous tag *on its own
+ * line*; comparing across lines answers 200 with a plausible but unrelated
+ * commit set, so the summary describes a different release. `v1.72.0` against
+ * `channels/v0.10.0` reads 3 commits where the real answer is 46.
+ *
+ * This lives here because tag shapes are this file's business - `index.ts` uses
+ * it without knowing what any particular repo's tags look like.
+ */
+export const lineOf = (tag: string) =>
+    tag.includes('/') ? tag.slice(0, tag.lastIndexOf('/')) : '';
 
 /** `channels/v0.10.0` -> `0.10.0`, `v1.73.0` -> `1.73.0`. */
 const version = (tag: string) => tag.replace(/^.*\/v?|^v/, '');
@@ -85,8 +103,17 @@ export const SOURCES: Source[] = [
         repo: 'CopilotKit/OpenBot',
         // Shares the CopilotKit community's releases channel unless given one of
         // its own. Two sources in one channel can each post MAX_PER_RUN.
+        // The role follows the channel: it falls back only while
+        // OPENBOT_CHANNEL_ID is unset. Independently, giving OpenBot its own
+        // channel without its own role sent CPK_PING_ROLE_ID into that channel:
+        // the wrong role in the same guild, an id that does not resolve in
+        // another. Note this keys on OPENBOT_CHANNEL_ID being set, not on the
+        // two ids differing, so pinning the shared channel explicitly also
+        // turns the fallback off.
         channelId: process.env.OPENBOT_CHANNEL_ID || process.env.CPK_CHANNEL_ID,
-        pingRoleId: process.env.OPENBOT_PING_ROLE_ID || process.env.CPK_PING_ROLE_ID,
+        pingRoleId: process.env.OPENBOT_CHANNEL_ID
+            ? process.env.OPENBOT_PING_ROLE_ID
+            : process.env.OPENBOT_PING_ROLE_ID || process.env.CPK_PING_ROLE_ID,
         include: (tag) => MAIN_LINE.test(tag),
         title: (release) => `OpenBot ${version(release.tag)}`,
     },

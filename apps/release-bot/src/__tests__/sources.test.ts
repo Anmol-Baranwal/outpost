@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SOURCES } from '../sources.js';
+import { SOURCES, lineOf } from '../sources.js';
 import type { Release } from '../github.js';
 
 const sourceFor = (name: string) => {
@@ -78,5 +78,20 @@ describe('titles', () => {
         // Sources share a channel, so a bare version number would not say which
         // product shipped.
         expect(titleFor(source, tag)).toBe(expected);
+    });
+});
+
+describe('lineOf', () => {
+    it.each([
+        ['v1.73.0', ''],
+        ['channels/v0.10.0', 'channels'],
+        ['angular/v0.5.2', 'angular'],
+        ['release/2026-09-17', 'release'],
+        // lastIndexOf, not indexOf: a multi-segment tag belongs to its full
+        // prefix, and splitting on the first slash would compare it against an
+        // unrelated line.
+        ['a/b/v1.0.0', 'a/b'],
+    ])('reads %s as line %s', (tag, line) => {
+        expect(lineOf(tag)).toBe(line);
     });
 });

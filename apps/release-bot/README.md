@@ -9,12 +9,11 @@ exists rather than a GitHub webhook. CopilotKit's notes are often a single
 sentence (`v1.72.0` was 156 characters) and AG-UI's run to thousands of characters
 of package tables, well past Discord's 2000-character limit. Neither is something
 a reader can skim. So every release is paired with the commits since the previous
-release, rewritten into a few lines about what a developer can now do, and
-credited to whoever outside the team worked on it.
+release, turned into a few lines about what a developer can now do.
 
 ## How it works
 
-One pass over three sources, each independent of the others:
+One pass over each source, all independent of one another:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -25,13 +24,13 @@ One pass over three sources, each independent of the others:
 │                          -> drop drafts, prereleases, other tags     │
 │                          -> keep only what shipped after the mark    │
 ├──────────────────────────────────────────────────────────────────────┤
-│ 3. gather context        commits since the previous release, and     │
-│    (releases only)       their authors                               │
+│ 3. gather context        the commits since the previous release      │
+│    (releases only)       on the same tag line                        │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 4. write it up           OpenAI, with the notes and the commit list  │
 │    (releases only)       -> a few lines, or SKIP if nothing shipped  │
 ├──────────────────────────────────────────────────────────────────────┤
-│ 5. post                  plain text, source URL last, mentions off   │
+│ 5. post                  plain text, source URL last, @everyone off  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -42,7 +41,7 @@ src/
 ├── sources.ts     what is watched: repo, channel, which tags, how the title reads
 ├── index.ts       runs one pass over the sources and decides what to post
 ├── watermark.ts   given a channel's history, which items are still pending
-├── github.ts      releases, the commits between them, and who is on the team
+├── github.ts      releases and the commits between them
 ├── youtube.ts     the channel's RSS feed
 ├── summarize.ts   turns a release into a few lines, or says to skip it
 ├── discord.ts     reads the channel, builds the message, posts it
@@ -84,14 +83,29 @@ What follows from using the channel as the record:
 - Running twice in a row posts nothing the second time.
 - A crash halfway through a batch cannot cause a repeat, because what was posted
   is visibly in the channel and what was not is still absent.
-- A failed run needs no recovery. The next run picks up what was missed.
+- A failed run needs no recovery, as long as the outage is shorter than the
+  lookback window. At 2 items per source per run on a daily schedule the backlog
+  drains several times faster than these repos produce releases, so loss starts
+  only as an outage approaches the 30-day window.
 - A channel with no messages from this bot starts at the newest items rather than
   replaying history.
 
 Two costs. Deleting the bot's messages resets its memory of that channel. And the
-search is bounded at 300 messages: past that, the oldest message actually read
-becomes the floor, so anything published before it is assumed announced rather
-than posted again.
+search has to reach back far enough. It pages until channel history passes the
+lookback window, so the two windows always line up: anything the bot might
+announce is something it can check it has not already announced. That gives three
+outcomes rather than one:
+
+- something of this source's is found in range, so the newest of those is the
+  watermark and the backlog drains forward from it
+- nothing of this source's is found at all, so only the newest item is announced
+  and the channel is treated as new to it
+- something is found but nothing in range, so the oldest message actually read
+  becomes the floor and anything older is assumed announced
+
+A channel busy enough to need more than 3000 messages of history to cover 30 days
+hits the page ceiling instead. That is logged loudly, because past that point the
+bot cannot tell an unannounced release from one it simply could not see.
 
 ### Writing the announcement
 
@@ -103,45 +117,63 @@ more.
 
 Three behaviours are worth knowing before changing the prompt:
 
-**Nothing is ever posted unsummarized.** If the OpenAI call fails, the source
-stops there for this run rather than falling back to the raw notes. The raw notes
-are the failure case this step exists to avoid: the AG-UI release that shipped 1.0
-opens with four lines of "publish the declared MIT license".
+**Raw release notes are never posted.** They are the failure case this step
+exists to avoid: the AG-UI release that shipped 1.0 opens with four lines of
+"publish the declared MIT license".
 
-**A transient failure stops the source; a permanent one does not.** The watermark
+**A failure is handled by what it means, not by its status code.** The watermark
 is a high-water mark, so announcing a newer release would move it past a failed
-one and it would never be retried. But a release that can never be summarized
-(a rejected model id, a body the provider refuses) would then block everything
-behind it, so those are announced with the link and no summary instead.
+one and it would never be retried. Three dispositions:
+
+|         | Example                                                                 | What happens                                                                                      |
+| ------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Retry   | 429, 5xx, a timeout, or any status this code does not recognise         | The source stops here and holds its position. The next run picks it up                            |
+| Give up | A body the provider refuses, a completion truncated at the token budget | Announced with the link and no summary, so it cannot block everything behind it                   |
+| Abort   | A rejected model id, a revoked key, or a hard billing limit             | Nothing further is posted. The run stops without trying the remaining sources, and exits non-zero |
+
+The last row is the one that matters most. Treating a missing key as "give up"
+filled the channel with "Summary unavailable" posts and moved the watermark past
+every one of them, so fixing the key afterwards could not recover a release.
+
+An unrecognised status is a retry for the same reason: it comes from a proxy or
+CDN rather than the API, and "give up" is the only outcome that cannot be undone,
+so it is the last place to spend on a status nobody has classified.
+
+The line between the last two rows is drawn at "does this repeat for every
+release". A hard billing limit does, so it aborts
+even though it arrives as a 429, which on its status alone would be a retry. A
+truncated completion does not: reasoning spend scales with the input, and one
+release with unusually large notes can exhaust the budget while the rest are
+fine. Aborting on that stopped the run, silenced every source behind it, and
+left the watermark where it was, so the next run stopped in the same place.
 
 **`SKIP` is checked against the commits.** The model can answer `SKIP` when a
 release is only dependency bumps, CI or version metadata. It is not consistent
 about this, and in testing the same release was summarized on one run and skipped
-on the next. So a `SKIP` is only accepted when no commit subject looks like a
-feature, fix or perf change, docs scopes excluded; otherwise the model is asked
-again with `SKIP` ruled out.
+on the next. So a `SKIP` is only accepted when the compare came back
+complete and nothing in it survived the noise filter - dependency bumps, CI,
+release chores. Otherwise the model is asked again with `SKIP` ruled out, and if
+it answers `SKIP` a second time that answer is taken.
 
-### Crediting contributors
+Release notes that say in so many words that nothing shipped skip the release
+before the model is asked at all.
 
-Authors come from the commits between the two releases, with bots and noise
-commits filtered out, and contributors outside the org are thanked by name, up to
-six with the rest counted.
-
-Team membership is read from the GitHub orgs rather than a list in the code, which
-means `GITHUB_TOKEN` needs `read:org`. A token without it does not fail: it
-returns HTTP 200 and an empty member list. So the lookup is all or nothing across
-both orgs, and an empty org counts as unresolved. If any page of any org cannot
-be read, no credit line is added at all, because publicly thanking colleagues as
-though they were outside contributors is worse than saying nothing. `CORE_LOGINS`
-extends the team list but cannot assert that the lookup worked.
-
-GitHub logins cannot be resolved to Discord accounts, so credit is plain text.
-Tagging would mean either guessing or pinging people who never joined the server.
+"No commits" is four different situations and only two of them corroborate a
+skip. Nothing read at all means there was no tiebreaker to consult. Commits read
+but all filtered as noise means the release really was version chores, which is
+the case `SKIP` exists for. A compare that GitHub answered `identical` also
+counts: nothing shipped, definitively, which is the strongest corroboration there
+is. The fourth is a compare that was answered but only partly read, because a
+page failed. That one reads like the good case while missing most of the release,
+so it is excluded: only a complete compare can corroborate.
 
 ## Sources
 
 Configured in `src/sources.ts`, one entry per repository. Adding a source is an
-entry there plus a channel id in the environment; nothing else needs touching.
+entry there plus a channel id in the environment. One other place needs
+touching: `main()`'s preflight error message lists the channel variables by name,
+so a new one belongs there too, or an operator who sets only it is told nothing
+is configured.
 
 | Source                  | Announced                                       |
 | ----------------------- | ----------------------------------------------- |
@@ -188,26 +220,31 @@ The rest are skipped, with their share of the last 100 releases:
 The distinction that matters: a `channels/` release is the SDK shipping, while
 `channels-teams/` is one adapter's version moving.
 
-Each of those is one `include` predicate in `src/sources.ts`, with the reason
-written above it. The README table and that comment say the same thing on
-purpose: the comment is for whoever changes the regex, the table for whoever
-won't open the file.
+`include` is an allowlist, so skipping is what happens by default - there is no
+predicate per excluded line. The reasons live as a comment above that allowlist
+in `src/sources.ts`. This table and that comment say the same thing on purpose:
+the comment is for whoever changes the regex, the table for whoever won't open
+the file.
 
 ## Edge cases
 
-| Situation                             | Behaviour                                                       |
-| ------------------------------------- | --------------------------------------------------------------- |
-| Run twice in a row                    | Second run posts nothing                                        |
-| Bot switched off for a fortnight      | 2 items per source per run, oldest first, catching up over days |
-| OpenAI call fails                     | That source stops for the run, nothing posted raw, retried next |
-| `GITHUB_TOKEN` cannot see the org     | Announced with no credit line, never crediting the team         |
-| Release is only dependency bumps      | Skipped, unless the commits show real work                      |
-| Summary longer than Discord allows    | Body trimmed; the title and source URL always survive           |
-| A channel is not configured           | That source is skipped, the others still run                    |
-| A source fails outright               | Logged, the others still run, and the run exits non-zero        |
-| Discord rate limit or 5xx             | Up to 3 attempts honouring `retry-after`, reads included        |
-| Release has no previous release       | Announced from its notes alone, with no commit context          |
-| Upcoming premiere in the YouTube feed | Ignored until it has actually aired                             |
+| Situation                             | Behaviour                                                                                                             |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Run twice in a row                    | Second run posts nothing                                                                                              |
+| Bot switched off for a fortnight      | 2 items per source per run, oldest first, catching up over days                                                       |
+| OpenAI key or model is wrong          | Videos still post, then the run stops before any release, exits non-zero                                              |
+| OpenAI call fails transiently         | That source stops for the run, nothing posted raw, retried next                                                       |
+| Release is only dependency bumps      | Skipped, unless the commits show real work                                                                            |
+| Summary longer than Discord allows    | Body trimmed, then the title. The source URL always survives                                                          |
+| A channel is not configured           | That source is skipped, the others still run                                                                          |
+| A source fails outright               | Logged, the others still run, and the run exits non-zero                                                              |
+| No source is configured at all        | The run refuses to start, rather than logging four skips and exiting 0                                                |
+| A run exceeds its 20-minute budget    | Sources not yet reached are skipped with a warning, and picked up next run                                            |
+| A credential is missing or rejected   | The run stops without trying the rest, and exits non-zero. Videos run first, so they are unaffected by the OpenAI key |
+| A source's backlog exceeds the budget | Posts what it reached, defers the rest, logs a warning                                                                |
+| Discord rate limit or 5xx             | 429 retried on both; 5xx retried on reads only, never on posts                                                        |
+| Release has no previous release       | Announced from its notes alone, with no commit context                                                                |
+| Upcoming premiere in the YouTube feed | Ignored until it has actually aired                                                                                   |
 
 ## Setup
 
@@ -223,29 +260,32 @@ cp apps/release-bot/.env.example apps/release-bot/.env
 pnpm --filter @copilotkit/outpost-release-bot dry
 ```
 
-`dry` skips the POST and nothing else: it still reads the channel, so it needs a
-`DISCORD_BOT_TOKEN` with read access, and it still calls OpenAI for every pending
-release, so it still costs money. That is the point of it, since the summary is
-usually what you want to check.
+`dry` skips the POST and nothing else. It still reads the channel, so it needs a
+`DISCORD_BOT_TOKEN` with read access, and it still calls OpenAI for each release
+it would post, up to the per-run cap, so it still costs money. That is the point of it, since the summary is
+usually what you want to check. What it prints is the fully composed message - title, ping prefix, any truncation and the trailing URL - not just the summary.
+It does not post, so it cannot exercise the length guard in the posting path.
 
 ## Environment
 
-| Variable                     | Required   | Purpose                                                                                                    |
-| ---------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------- |
-| `DISCORD_BOT_TOKEN`          | yes        | Posting, and reading the channel to see what was already announced                                         |
-| `OPENAI_API_KEY`             | yes        | Writing the announcements. Without it nothing is announced                                                 |
-| `GITHUB_TOKEN`               | yes        | Needs `read:org`, to tell the team from outside contributors. Missing, the run fails rather than degrading |
-| `AGUI_CHANNEL_ID`            | per source | Channel for AG-UI releases                                                                                 |
-| `CPK_CHANNEL_ID`             | per source | Channel for CopilotKit releases                                                                            |
-| `YOUTUBE_CHANNEL_DISCORD_ID` | per source | Channel for video announcements                                                                            |
-| `YOUTUBE_CHANNEL_ID`         | per source | The YouTube channel to watch                                                                               |
-| `AGUI_PING_ROLE_ID`          | no         | Role to ping for AG-UI releases. Unset means silent                                                        |
-| `CPK_PING_ROLE_ID`           | no         | Role to ping for CopilotKit releases. Unset means silent                                                   |
-| `YOUTUBE_PING_ROLE_ID`       | no         | Role to ping for videos. Unset means silent                                                                |
-| `CORE_LOGINS`                | no         | Comma-separated logins treated as team, on top of org membership                                           |
-| `OPENAI_MODEL`               | no         | Defaults to `gpt-5.4`                                                                                      |
+| Variable                     | Required   | Purpose                                                                                                                                                         |
+| ---------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DISCORD_BOT_TOKEN`          | yes        | Posting, and reading the channel to see what was already announced                                                                                              |
+| `OPENAI_API_KEY`             | per source | Writing the release announcements. Required once any release source has a channel. Videos run first and need it not at all                                      |
+| `GITHUB_TOKEN`               | per source | Reading releases and commits. Required once any release source has a channel. Needs no scopes beyond public read; unauthenticated is rate limited to 60 an hour |
+| `AGUI_CHANNEL_ID`            | per source | Channel for AG-UI releases                                                                                                                                      |
+| `CPK_CHANNEL_ID`             | per source | Channel for CopilotKit releases, and for OpenBot unless given its own                                                                                           |
+| `OPENBOT_CHANNEL_ID`         | no         | Gives OpenBot its own channel instead of sharing CopilotKit's. Setting it also turns the ping fallback off                                                      |
+| `OPENBOT_PING_ROLE_ID`       | no         | Role to ping for OpenBot. Unset inherits `CPK_PING_ROLE_ID`, unless `OPENBOT_CHANNEL_ID` is set                                                                 |
+| `YOUTUBE_CHANNEL_DISCORD_ID` | per source | Channel for video announcements                                                                                                                                 |
+| `YOUTUBE_CHANNEL_ID`         | per source | The YouTube channel to watch                                                                                                                                    |
+| `AGUI_PING_ROLE_ID`          | no         | Role to ping for AG-UI releases. Unset means silent                                                                                                             |
+| `CPK_PING_ROLE_ID`           | no         | Role to ping for CopilotKit releases. Unset means silent                                                                                                        |
+| `YOUTUBE_PING_ROLE_ID`       | no         | Role to ping for videos. Unset means silent                                                                                                                     |
+| `OPENAI_MODEL`               | no         | Defaults to `gpt-5.4`                                                                                                                                           |
 
-Announcements are silent by default. At roughly eight a week across the three
+Announcements are silent by default, except that OpenBot inherits CopilotKit's
+ping role while it shares CopilotKit's channel. At roughly eight a week across the three
 repositories, a ping on every one is how a channel gets muted.
 
 `DISCORD_BOT_TOKEN` is a separate bot identity from
@@ -255,14 +295,19 @@ permissions or the MCP reader's intents.
 
 ## Discord permissions
 
-**Send Messages**, **View Channel** and **Read Message History**. The last two are
-not optional: reading the channel is how the bot knows what it has already
-announced, and without them the run fails before posting anything.
+**Send Messages**, **View Channel** and **Read Message History**. Neither of the
+last two is optional, and they fail differently. Without **View Channel** the
+channel read 403s, the source fails before posting anything, and the run exits
+non-zero. Without **Read Message History** nothing fails at all: Discord answers
+the read with an empty list rather than an error, so the bot never sees its own
+posts, treats the channel as new on every run, and re-announces the newest
+release every time. A log line naming a zero-message read is the only sign.
 
-**Embed Links** is not needed to post, since announcements are plain text, but
-without it Discord will not unfurl the trailing link into a preview. The bot
-never reads those preview embeds back: it unfurls every link in a message,
-including any the model wrote into the summary, which is not a safe identity.
+**Embed Links** only affects YouTube announcements. Those post a bare link so
+Discord renders the player, which is a better preview than anything the bot could
+assemble. Release announcements bracket their URL as `<...>` to suppress the
+preview deliberately: the card showed the raw release notes, directly beneath the
+summary written to replace them.
 
 ## Deployment
 
@@ -274,3 +319,11 @@ push elsewhere in the monorepo does not trigger an extra run.
 `restartPolicyType` is `NEVER`, unlike the long-running services in this repo. A
 completed run exits, and an `ALWAYS` policy would read that as a crash and restart
 it in a loop.
+
+The image is built from `apps/release-bot/Dockerfile` and pins `node:22.20-alpine`.
+That floor matters: corepack in Node 22.12 and 22.13 predates npm's registry key
+rotation and cannot activate pnpm, so the build fails outright. 22.14 is the
+first version that works, which is also what `engines.node` declares.
+
+The container runs `node dist/index.js` directly and does not read a `.env` file,
+unlike `pnpm start` locally. Every variable has to be set in Railway.
