@@ -35,6 +35,9 @@ describe('dispositionFor, via a failing completion', () => {
 
     const saved = process.env.OPENAI_API_KEY;
     afterEach(() => {
+        // Restored here rather than inline, so a failing assertion cannot leave
+        // fake timers running for the rest of the file.
+        vi.useRealTimers();
         vi.stubGlobal('fetch', ORIGINAL_FETCH);
         if (saved === undefined) delete process.env.OPENAI_API_KEY;
         else process.env.OPENAI_API_KEY = saved;
@@ -92,7 +95,7 @@ describe('dispositionFor, via a failing completion', () => {
         const result = await pending;
         vi.useRealTimers();
         // Before the retry loop existed, one 429 threw, failed the source, and
-        // cost a full day of announcements on a daily cron.
+        // cost every announcement until the next run.
         expect(result).toEqual({ kind: 'text', text: 'It shipped.' });
         expect(calls).toBe(2);
     });
@@ -167,14 +170,47 @@ describe('SKIP corroboration', () => {
         return calls;
     }
 
-    it('accepts SKIP when commits were read and every one was noise', async () => {
+    it('still asks the model when a complete compare kept real commits', async () => {
+        process.env.OPENAI_API_KEY = 'sk-test';
+        let calls = 0;
+        vi.stubGlobal('fetch', () => {
+            calls++;
+            return Promise.resolve(
+                Response.json({ choices: [{ message: { content: '- it shipped' } }] }),
+            );
+        });
+        // The early skip must need BOTH a complete compare and nothing left
+        // after the noise filter. Keyed on completeness alone it would drop
+        // every fully compared release, which is most of them.
+        const result = await summarize({
+            ...base,
+            commits: ['feat: something real'],
+            commitsRead: 3,
+            comparedCleanly: true,
+        });
+        expect(result).toEqual({ kind: 'text', text: '- it shipped' });
+        expect(calls).toBe(1);
+    });
+
+    it('rules SKIP out when it asks a second time', async () => {
+        process.env.OPENAI_API_KEY = 'sk-test';
+        const calls = replyingSkip() as { messages: { content: string }[] }[];
+        // Real commits, model says SKIP: the second ask has to actually forbid
+        // it, or asking again is the same question twice.
+        await summarize({ ...base, commits: ['feat: something real'], commitsRead: 1 });
+        expect(calls).toHaveLength(2);
+        expect(calls[1]!.messages[0]!.content).toContain('SKIP is not an option');
+        expect(calls[0]!.messages[0]!.content).not.toContain('SKIP is not an option');
+    });
+
+    it('skips a release whose commits are all noise without asking the model', async () => {
         process.env.OPENAI_API_KEY = 'sk-test';
         const calls = replyingSkip();
-        // commitsRead > 0 with nothing kept is a dependency-bump release, which
-        // is exactly what SKIP is for. This used to fall through and re-ask with
-        // "SKIP is not an option", force-announcing a release of version chores.
-        // comparedCleanly, because that is now what corroborates: a complete
-        // compare that read 12 commits and kept none of them.
+        // A complete compare that read 12 commits and kept none of them is a
+        // dependency-bump release, which is what SKIP is for. Decided before the
+        // model is asked: a skip leaves nothing in the channel, so the release is
+        // reconsidered every run, and on an hourly schedule asking each time cost
+        // up to 720 completions and eventually drew a summary that got posted.
         const result = await summarize({
             ...base,
             commits: [],
@@ -182,7 +218,7 @@ describe('SKIP corroboration', () => {
             comparedCleanly: true,
         });
         expect(result).toEqual({ kind: 'skip' });
-        expect(calls).toHaveLength(1);
+        expect(calls).toHaveLength(0);
     });
 
     it('does not let a truncated commit list corroborate a SKIP', async () => {
@@ -201,8 +237,8 @@ describe('SKIP corroboration', () => {
         });
         // Re-asked with SKIP ruled out, rather than taken at face value. What is
         // pinned is the second ask: if the model still says SKIP after being
-        // told it is not an option, that answer is accepted, which is a separate
-        // decision made elsewhere.
+        // told it is not an option, that answer is accepted - a separate
+        // decision, pinned by the call count rather than this result.
         expect(calls).toHaveLength(2);
         expect(result).toEqual({ kind: 'skip' });
     });
@@ -366,16 +402,17 @@ describe('NOTHING_SHIPPED', () => {
     });
 
     it('skips such a release without paying for a completion', async () => {
-        const saved = process.env.OPENAI_API_KEY;
-        process.env.OPENAI_API_KEY = 'sk-test';
+        // stubEnv, so vitest restores it even if an assertion below fails.
+        vi.stubEnv('OPENAI_API_KEY', 'sk-test');
         let calls = 0;
         vi.stubGlobal('fetch', () => {
             calls++;
             return Promise.resolve(Response.json({ choices: [{ message: { content: 'x' } }] }));
         });
 
-        // v1.73.2 carried 18 commits, all scoped to the internal docs-deploy
-        // app, so the commit list looked substantive and it was announced.
+        // v1.73.2 carried 18 commits, 8 surviving the noise filter and all of
+        // those scoped to the internal docs-deploy app, so the commit list
+        // looked substantive and it was announced.
         const result = await summarize({
             repo: 'CopilotKit/CopilotKit',
             tag: 'v1.73.2',
@@ -389,9 +426,6 @@ describe('NOTHING_SHIPPED', () => {
 
         expect(result).toEqual({ kind: 'skip' });
         expect(calls).toBe(0);
-        vi.unstubAllGlobals();
-        if (saved === undefined) delete process.env.OPENAI_API_KEY;
-        else process.env.OPENAI_API_KEY = saved;
     });
 });
 
@@ -461,7 +495,7 @@ describe('a 400 whose body has no machine-readable code', () => {
                 ),
             ),
         );
-        // The real payload is 220 characters and puts `code` last, which a
+        // The real payload is over 200 characters and puts `code` last, which a
         // 200-character slice used to cut off.
         const result = await summarize(context);
         if (result.kind === 'failed') expect(result.disposition).toBe('abort');
@@ -628,6 +662,24 @@ describe('failures the status code alone cannot classify', () => {
         else expect.unreachable('expected a failure');
     });
 
+    it('aborts on a billing stop carried only in error.type', async () => {
+        // Azure OpenAI and OpenAI-compatible gateways often fill `type` and
+        // leave `code` empty.
+        failing(JSON.stringify({ error: { type: 'insufficient_quota', code: null } }), 429);
+        const result = await settle();
+        if (result.kind === 'failed') expect(result.disposition).toBe('abort');
+        else expect.unreachable('expected a failure');
+    });
+
+    it('aborts on a hard billing limit reported as 400', async () => {
+        // That one arrives as a 400, not a 429. As content it would give up,
+        // posting a bodyless announcement and moving past the release for good.
+        failing(JSON.stringify({ error: { code: 'billing_hard_limit_reached' } }), 400);
+        const result = await settle();
+        if (result.kind === 'failed') expect(result.disposition).toBe('abort');
+        else expect.unreachable('expected a failure');
+    });
+
     it('aborts on a mistyped model reported as 400 rather than 404', async () => {
         // OPENAI_MODEL is operator-configurable, and a gateway or Azure-style
         // endpoint answers a bad model id with 400. Classified from the status
@@ -647,6 +699,25 @@ describe('failures the status code alone cannot classify', () => {
         const result = await settle();
         if (result.kind === 'failed') expect(result.disposition).toBe('give-up');
         else expect.unreachable('expected a failure');
+    });
+
+    it('retries a 400 whose body cannot be read, rather than giving up', async () => {
+        process.env.OPENAI_API_KEY = 'sk-test';
+        // Unread, a 400 could be a bad model or a billing stop as easily as a
+        // problem with this release. Giving up posts a bodyless announcement and
+        // moves past the release for good, so an unknown is retried instead.
+        vi.stubGlobal('fetch', () =>
+            Promise.resolve({
+                ok: false,
+                status: 400,
+                text: () => Promise.reject(new Error('socket hang up')),
+            }),
+        );
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const result = await settle();
+        if (result.kind === 'failed') expect(result.disposition).toBe('retry');
+        else expect.unreachable('expected a failure');
+        error.mockRestore();
     });
 
     it('still classifies from the status when the error body cannot be read', async () => {
@@ -686,7 +757,7 @@ describe('what the model is actually shown and told', () => {
 
         // 70 commits, oldest first as GitHub returns them. Only 60 are sent, and
         // they must be the last 60 reversed. Taking the first 60 instead shows
-        // the model work that shipped several releases ago while the prompt
+        // the model the oldest work in the release while the prompt
         // label still claims "newest first", so the announcement is confidently
         // about the wrong end of the release.
         await summarize({
@@ -739,7 +810,7 @@ describe('SKIP corroborated by a clean compare', () => {
         else process.env.OPENAI_API_KEY = saved;
     });
 
-    it('trusts SKIP when GitHub called the two tags identical', async () => {
+    it('skips when GitHub called the two tags identical, without asking the model', async () => {
         process.env.OPENAI_API_KEY = 'sk-test';
         let calls = 0;
         vi.stubGlobal('fetch', () => {
@@ -748,9 +819,9 @@ describe('SKIP corroborated by a clean compare', () => {
         });
 
         // github.ts sets comparedCleanly on an `identical` compare: nothing
-        // shipped, definitively. Without it this looks like "no tiebreaker to
-        // consult", so the release is re-asked with "SKIP is not an option" and
-        // force-announced with no commits behind it.
+        // shipped, definitively, so it is skipped without asking the model.
+        // Without the flag it looks like "no tiebreaker to consult", and the
+        // model would be asked and then re-asked with SKIP ruled out.
         const result = await summarize({
             repo: 'CopilotKit/CopilotKit',
             tag: 'v1.73.1',
@@ -764,6 +835,6 @@ describe('SKIP corroborated by a clean compare', () => {
         });
 
         expect(result).toEqual({ kind: 'skip' });
-        expect(calls).toBe(1);
+        expect(calls).toBe(0);
     });
 });

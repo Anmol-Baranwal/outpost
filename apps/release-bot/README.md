@@ -42,7 +42,7 @@ src/
 ├── index.ts       runs one pass over the sources and decides what to post
 ├── watermark.ts   given a channel's history, which items are still pending
 ├── github.ts      releases and the commits between them
-├── youtube.ts     the channel's RSS feed
+├── youtube.ts     the channel's RSS feed, plus one API call for stream status
 ├── summarize.ts   turns a release into a few lines, or says to skip it
 ├── discord.ts     reads the channel, builds the message, posts it
 └── http.ts        timeouts and JSON parsing shared by the above
@@ -61,7 +61,7 @@ bot reads back its own recent messages, collects those URLs, and treats the newe
 as a watermark. Only items published after the watermark are announced, oldest
 first, so the watermark advances one step at a time.
 
-Two details carry most of the correctness:
+Three details carry most of the correctness:
 
 **Announce forward, never backwards.** "Newer than the last announcement" is not
 the same as "anything the channel does not mention". The second walks backwards
@@ -84,11 +84,14 @@ What follows from using the channel as the record:
 - A crash halfway through a batch cannot cause a repeat, because what was posted
   is visibly in the channel and what was not is still absent.
 - A failed run needs no recovery, as long as the outage is shorter than the
-  lookback window. At 2 items per source per run on a daily schedule the backlog
-  drains several times faster than these repos produce releases, so loss starts
+  lookback window. At 2 items per source per run on an hourly schedule the
+  backlog drains far faster than these repos produce releases, so loss starts
   only as an outage approaches the 30-day window.
-- A channel with no messages from this bot starts at the newest items rather than
-  replaying history.
+- A channel with no messages from this bot gets the current version of each
+  product, not a replay of the last 30 days. For CopilotKit that is three posts,
+  the latest CopilotKit, Channels SDK and Angular SDK releases, over the first two
+  runs because of the per run cap. AG-UI, OpenBot and YouTube get one each. After
+  that it is caught up and quiet until something new ships.
 
 Two costs. Deleting the bot's messages resets its memory of that channel. And the
 search has to reach back far enough. It pages until channel history passes the
@@ -141,31 +144,36 @@ so it is the last place to spend on a status nobody has classified.
 
 The line between the last two rows is drawn at "does this repeat for every
 release". A hard billing limit does, so it aborts
-even though it arrives as a 429, which on its status alone would be a retry. A
+whether it arrives as a 429, which on its status alone would be a retry, or as a
+400, which would otherwise give up. A
 truncated completion does not: reasoning spend scales with the input, and one
 release with unusually large notes can exhaust the budget while the rest are
 fine. Aborting on that stopped the run, silenced every source behind it, and
 left the watermark where it was, so the next run stopped in the same place.
 
-**`SKIP` is checked against the commits.** The model can answer `SKIP` when a
-release is only dependency bumps, CI or version metadata. It is not consistent
-about this, and in testing the same release was summarized on one run and skipped
-on the next. So a `SKIP` is only accepted when the compare came back
-complete and nothing in it survived the noise filter - dependency bumps, CI,
-release chores. Otherwise the model is asked again with `SKIP` ruled out, and if
-it answers `SKIP` a second time that answer is taken.
+**The commits decide a skip.** A release that is only dependency bumps, CI or
+version metadata should not be announced. The model can say so by answering
+`SKIP`, but it is not consistent about it: in testing the same release was
+summarized on one run and skipped on the next. So the commits decide first. When
+the compare came back complete and nothing in it survived the noise filter, the
+release is skipped without asking the model at all. That also keeps it cheap,
+because a skip leaves nothing in the channel and the release is reconsidered on
+every run.
+
+If the commits show real work and the model still answers `SKIP`, it is asked
+again with `SKIP` ruled out. If it answers `SKIP` a second time, that is taken.
 
 Release notes that say in so many words that nothing shipped skip the release
 before the model is asked at all.
 
-"No commits" is four different situations and only two of them corroborate a
-skip. Nothing read at all means there was no tiebreaker to consult. Commits read
+"No commits" is four different situations and only two of them decide a skip. Nothing read at all means there was no tiebreaker to consult. Commits read
 but all filtered as noise means the release really was version chores, which is
 the case `SKIP` exists for. A compare that GitHub answered `identical` also
 counts: nothing shipped, definitively, which is the strongest corroboration there
 is. The fourth is a compare that was answered but only partly read, because a
-page failed. That one reads like the good case while missing most of the release,
-so it is excluded: only a complete compare can corroborate.
+page failed or the range was longer than the bot reads. That one reads like the
+good case while missing part of the release, so it is excluded: only a complete
+compare can decide.
 
 ## Sources
 
@@ -231,7 +239,7 @@ the file.
 | Situation                             | Behaviour                                                                                                             |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Run twice in a row                    | Second run posts nothing                                                                                              |
-| Bot switched off for a fortnight      | 2 items per source per run, oldest first, catching up over days                                                       |
+| Bot switched off for a fortnight      | 2 items per source per run, oldest first, so it catches up over a few hours                                           |
 | OpenAI key or model is wrong          | Videos still post, then the run stops before any release, exits non-zero                                              |
 | OpenAI call fails transiently         | That source stops for the run, nothing posted raw, retried next                                                       |
 | Release is only dependency bumps      | Skipped, unless the commits show real work                                                                            |
@@ -240,11 +248,12 @@ the file.
 | A source fails outright               | Logged, the others still run, and the run exits non-zero                                                              |
 | No source is configured at all        | The run refuses to start, rather than logging four skips and exiting 0                                                |
 | A run exceeds its 20-minute budget    | Sources not yet reached are skipped with a warning, and picked up next run                                            |
-| A credential is missing or rejected   | The run stops without trying the rest, and exits non-zero. Videos run first, so they are unaffected by the OpenAI key |
+| A credential is missing               | The run stops without trying the rest, and exits non-zero. Videos run first, so they are unaffected by the OpenAI key |
+| A token is set but rejected           | GitHub or Discord: that source fails, the others still run. OpenAI: the run stops. Either way it exits non-zero       |
 | A source's backlog exceeds the budget | Posts what it reached, defers the rest, logs a warning                                                                |
 | Discord rate limit or 5xx             | 429 retried on both; 5xx retried on reads only, never on posts                                                        |
-| Release has no previous release       | Announced from its notes alone, with no commit context                                                                |
-| Upcoming premiere in the YouTube feed | Ignored until it has actually aired                                                                                   |
+| Release has no previous release       | Looked up past the 30 day window, up to 500 releases back. Announced from its notes alone only if none is found       |
+| Scheduled live stream                 | With `YOUTUBE_API_KEY`, skipped until it goes live, then dated by when it started. Without, posted when scheduled     |
 
 ## Setup
 
@@ -279,6 +288,7 @@ It does not post, so it cannot exercise the length guard in the posting path.
 | `OPENBOT_PING_ROLE_ID`       | no         | Role to ping for OpenBot. Unset inherits `CPK_PING_ROLE_ID`, unless `OPENBOT_CHANNEL_ID` is set                                                                 |
 | `YOUTUBE_CHANNEL_DISCORD_ID` | per source | Channel for video announcements                                                                                                                                 |
 | `YOUTUBE_CHANNEL_ID`         | per source | The YouTube channel to watch                                                                                                                                    |
+| `YOUTUBE_API_KEY`            | no         | Holds scheduled live streams until they actually start. Without it uploads are unaffected, but a stream posts when it is scheduled. See below                   |
 | `AGUI_PING_ROLE_ID`          | no         | Role to ping for AG-UI releases. Unset means silent                                                                                                             |
 | `CPK_PING_ROLE_ID`           | no         | Role to ping for CopilotKit releases. Unset means silent                                                                                                        |
 | `YOUTUBE_PING_ROLE_ID`       | no         | Role to ping for videos. Unset means silent                                                                                                                     |
@@ -325,5 +335,83 @@ That floor matters: corepack in Node 22.12 and 22.13 predates npm's registry key
 rotation and cannot activate pnpm, so the build fails outright. 22.14 is the
 first version that works, which is also what `engines.node` declares.
 
-The container runs `node dist/index.js` directly and does not read a `.env` file,
+The container runs `node apps/release-bot/dist/index.js` directly and does not read a `.env` file,
 unlike `pnpm start` locally. Every variable has to be set in Railway.
+
+### Schedule
+
+Hourly (`0 * * * *`), so a release or video is posted within the hour of going
+out rather than up to a day late. It was daily at first, and a busy CopilotKit
+day of 3 to 5 releases then took 2 or 3 days to clear at 2 per run. Hourly clears
+the same day in a few hours.
+
+Running that often costs little. A run with nothing new to post almost never
+calls OpenAI: releases already posted are recognised from the channel, and
+releases whose commits show nothing shipped are skipped without asking the model.
+The exception is a release the model insists on skipping against the commits,
+which is asked about again each run, and is rare. A run reads channel history back
+30 days, which on a releases channel is usually one page, plus the latest releases
+per source and one YouTube API request when the key is set.
+
+Runs normally take seconds. `RUN_BUDGET_MS` stops new work from starting after 20
+minutes, but does not cut off the release in flight, so a run where every
+dependency is failing at once can take longer than that.
+
+Runs cannot overlap. Railway's cron docs: "If a previous execution of your Cron
+service has a status of `Active`, the execution is still running and any new
+executions will not be run." That matters, because two runs reading the same
+channel at once could both decide the same release is unannounced and both post
+it. It also means the interval is not a safety limit: Railway allows anything
+down to 5 minutes, and hourly is a choice about cost and channel noise.
+
+To change it, edit `cronSchedule` in `railway.toml` and redeploy. Railway only
+applies the schedule from that file on a deploy.
+
+### YouTube API key
+
+Optional. The video list comes from the channel's public RSS feed, which needs no
+key, and regular uploads are posted the same with or without one.
+
+The key exists for scheduled live streams. The feed lists a stream from the moment
+it is scheduled, dated by when it was scheduled, with nothing saying it has not
+started. So without a key, a stream scheduled on Monday for Friday is announced on
+Monday. With a key, the bot asks the YouTube Data API whether each video is
+upcoming, live or done, skips the upcoming ones, and posts a stream once it has
+started.
+
+It also dates a stream by when it actually started. That fixes a second problem:
+a stream scheduled on the 1st for the 8th, with a regular upload announced on the
+5th in between, would otherwise look older than something already posted and be
+treated as handled.
+
+Without the key every run logs a warning. With a key that is set but wrong or
+revoked, the API call fails and the YouTube source fails for that run with the
+error, so a bad key is noticed rather than ignored. Releases are unaffected.
+
+To get one: in the Google Cloud console, enable the YouTube Data API v3, then go
+to APIs & Services -> Credentials -> Create API key. Restricting it to the YouTube
+Data API is worth doing. One request per run costs one quota unit, against a free
+allowance of 10,000 a day.
+
+### Setting it up on Railway
+
+1. In the Outpost Railway project, add a service from the `CopilotKit/outpost`
+   repo, named `outpost-release-bot`.
+2. Under Settings -> Config-as-code, set the config file path to
+   `apps/release-bot/railway.toml`. Leave Root Directory empty: the build context
+   has to be the repo root, because the Dockerfile runs `turbo prune` across the
+   monorepo. The file sets the Dockerfile build, the hourly schedule, the restart
+   policy and the watch patterns, so none of those need setting in the dashboard.
+3. Set the variables from the table above under Variables. At minimum
+   `DISCORD_BOT_TOKEN`, plus a channel id per source you want running. Release
+   sources also need `OPENAI_API_KEY` and `GITHUB_TOKEN`.
+4. Invite the bot to each Discord server with the permissions in the section
+   above. Check Read Message History in particular: without it nothing fails,
+   the bot just re-posts the newest release every run.
+5. Deploy. The first posts go out on the first run, at the latest at the top of
+   the next hour: the current version of each product, as described under
+   "Knowing what has already been announced", then quiet.
+
+Before step 5 it is worth a dry run locally against the real channel ids, from
+`apps/release-bot` with its `.env` filled in: `pnpm dry`.
+It reads everything and prints what it would post, without posting.

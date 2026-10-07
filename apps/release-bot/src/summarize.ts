@@ -53,8 +53,8 @@ export type Disposition = 'retry' | 'give-up' | 'abort';
 
 /**
  * Three outcomes, kept distinct because they need different handling: a skip
- * means move on, a failure must not let the run's watermark advance past this
- * release, and a summary gets posted. Collapsing them into `string | null` made
+ * means move on, a failure decides by its disposition whether the release is
+ * held, posted link-only, or the run stops, and a summary gets posted. Collapsing them into `string | null` made
  * an outage look like a quiet week in the logs.
  */
 export type Summary =
@@ -105,9 +105,9 @@ export const NOTHING_SHIPPED = /^no changes since (the )?last release\.?$/i;
  * GitHub listing and three OpenAI attempts before failing the same way, on every
  * run, for ever.
  *
- * `billing_hard_limit_reached` is kept although it arrives with HTTP 400 rather
- * than 429: the 400 branch below tests CONFIG_ERROR, not this, so without it a
- * hard limit reported that way takes the irreversible `give-up` path.
+ * `billing_hard_limit_reached` arrives with HTTP 400 rather than 429, so the 400
+ * branch in dispositionFor tests this pattern as well as CONFIG_ERROR. Without
+ * it a hard limit reported that way would take the irreversible `give-up` path.
  */
 const QUOTA_ERROR =
     /insufficient_quota|billing_hard_limit_reached|credit_balance_exhausted|(organization|project)_spend_limit_exceeded|organization_usage_limit_exceeded/i;
@@ -132,43 +132,44 @@ export async function summarize(release: ReleaseContext): Promise<Summary> {
     // The release tooling's own verdict, and it outranks both the model and the
     // commit list. A changesets release whose notes are exactly this shipped no
     // user-facing package: v1.73.2 carried 18 commits, 8 of them surviving the
-    // noise filter and every one scoped to the internal docs-deploy app, and got
-    // announced as a release because those commits were not noise-shaped. They were real work; they were not a
-    // release anyone installs.
+    // noise filter and every one scoped to the internal docs-deploy app, and was
+    // announced because those commits were not noise-shaped. They were real
+    // work; they were not a release anyone installs.
     if (NOTHING_SHIPPED.test(release.body.trim())) {
+        return { kind: 'skip' };
+    }
+
+    // The commits decide a skip on their own, before the model is asked. A
+    // complete compare in which every commit is noise - dependency bumps, CI,
+    // release chores - is the case SKIP exists for, and so is a compare GitHub
+    // answered `identical`.
+    //
+    // Deciding it here rather than after a model SKIP matters because a skip
+    // leaves nothing in the channel, so every run reconsiders the release until
+    // it ages out of the window. Running hourly, that was up to 720 completions
+    // per skipped release, and the model is not consistent about SKIP: given
+    // that many tries a dependency-bump release eventually got a summary and was
+    // posted. This answer is the same on every run and costs no call.
+    //
+    // `comparedCleanly`, not `commitsRead > 0`: a truncated compare whose visible
+    // part happened to be all noise says nothing about the rest of the release.
+    if (release.comparedCleanly && release.commits.length === 0) {
         return { kind: 'skip' };
     }
 
     const first = await ask(release, key, VOICE);
     if (first.kind !== 'skip') return first;
 
-    // Commits are the tiebreaker on SKIP. The same release came back summarized
-    // on one run and skipped on the next, so the model's word alone is not
-    // enough to drop a release that visibly shipped something.
+    // A model SKIP that reaches here is not backed by the commits: either they
+    // show real work, or there was nothing complete to check against (the very
+    // first release of a line, a compare that failed or came back partial).
+    // The same release came back summarized on one run and skipped on the next,
+    // so the model's word alone is not enough to drop it.
     //
-    // Three different things look like "no commits" and only one corroborates a
-    // skip. Nothing read at all means there was no tiebreaker to consult - the
-    // oldest release in the window, or a compare that failed. A compare that was
-    // answered but only partly read is the third, and it reads like the good
-    // case while missing most of the release. Commits read but
-    // all filtered as noise means the release really was dependency bumps and
-    // version chores, which is precisely the case SKIP exists for; that one
-    // used to fall through and get force-announced with `SKIP is not an option`.
-    //
-    // The test is "commits were read and none survived the noise filter", not
-    // "none looks like a feature". A conventional-commit pattern was tried first
-    // and was inert where it mattered: OpenBot squash-merges prose PR titles, so
-    // 24 of its last 25 subjects matched nothing and every SKIP there was
-    // rubber-stamped by the guard meant to question it.
-    // `comparedCleanly` alone, not `commitsRead > 0`. Both used to count, and a
-    // truncated compare satisfies the second: if the part that was read happened
-    // to be all noise, an unsupported SKIP was accepted on a list that was
-    // missing most of the release. A skip leaves nothing in the channel, so the
-    // next run's watermark moves past it and the release is gone.
-    if (release.comparedCleanly && release.commits.length === 0) {
-        return { kind: 'skip' };
-    }
-
+    // The check is "commits survived the noise filter", not "a commit looks like
+    // a feature". A conventional-commit pattern was tried first and was inert
+    // where it mattered: OpenBot squash-merges prose PR titles, so 24 of its last
+    // 25 subjects matched nothing and every SKIP there was rubber-stamped.
     console.warn(`${release.tag}: SKIP not corroborated by commits, asking again`);
     const retry = await ask(release, key, `${VOICE}\n\nSKIP is not an option for this release.`);
     return retry.kind === 'skip' ? { kind: 'skip' } : retry;
@@ -244,15 +245,20 @@ async function ask(release: ReleaseContext, key: string, system: string): Promis
             body = await res.text();
         } catch (cause) {
             console.error(`OpenAI ${res.status}: could not read the error body`, cause);
-            // Classified from the status alone rather than hardcoded `retry`.
-            // The status is available and sufficient: 401, 403 and 404 are all
-            // `abort`, and hardcoding `retry` made a revoked key fail the source
-            // identically on every run for ever, logging "error body unreadable"
-            // and never the one thing an operator could act on.
+            // Classified from the status where the status is enough: 401, 403
+            // and 404 are `abort`, and hardcoding `retry` made a revoked key fail
+            // the source identically on every run for ever, logging "error body
+            // unreadable" and never the one thing an operator could act on.
+            //
+            // But a 400 or 422 is only `give-up` once its body has been read and
+            // found to be about this release. Unread, it could as well be a bad
+            // model or a hard billing limit, and `give-up` is the one outcome
+            // that cannot be undone, so it is retried like any other unknown.
+            const disposition = dispositionFor(res.status, '');
             return {
                 kind: 'failed',
                 reason: `OpenAI ${res.status}, error body unreadable`,
-                disposition: dispositionFor(res.status, ''),
+                disposition: disposition === 'give-up' ? 'retry' : disposition,
             };
         }
         const detail = body.slice(0, 200);
@@ -360,7 +366,9 @@ async function ask(release: ReleaseContext, key: string, system: string): Promis
 /**
  * 429 and 5xx are the provider having a bad minute. 401/403 are the key, and 404
  * is the model id - both are our configuration, and neither improves by being
- * asked again with the next release. Everything else is about this request.
+ * asked again with the next release. A 400 or 422 is about this request, unless
+ * its code says configuration or billing. Any other status is unknown and is
+ * retried, because `give-up` is the one outcome that cannot be undone.
  */
 function dispositionFor(status: number, body: string): Disposition {
     // A 429 is two different things. Too-fast is the transient one. Out of
@@ -409,7 +417,7 @@ function errorCode(body: string): string {
         // A body that parses but carries no `error` object - a proxy or gateway
         // shape - returns nothing, not the raw text. Returning the text put the
         // loose prose matching back that this function exists to avoid, just
-        // through a different door than the `code: null` case below.
+        // through a different door than the `code: null` case.
         if (!parsed?.error) return '';
 
         // `type` as well as `code`, because they are not redundant across
@@ -440,8 +448,8 @@ function fence(text: string): string {
  * One OpenAI call, retried on the failures that pass.
  *
  * Every other client in this app retries bounded reads; this one did not, so a
- * single 429 threw, failed the source, and cost a full day of announcements on
- * a daily cron - from a blip the others absorb in under two seconds.
+ * single 429 threw, failed the source, and cost every announcement until the
+ * next run - from a blip the others absorb in under two seconds.
  *
  * Retrying a completion is safe because it has no side effect: an accepted
  * request that fails on the way back has only spent tokens.

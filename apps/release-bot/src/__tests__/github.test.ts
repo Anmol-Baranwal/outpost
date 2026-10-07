@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { contextFor, listReleases } from '../github.js';
+import { contextFor, listReleases, previousRelease } from '../github.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -201,10 +201,10 @@ describe('contextFor', () => {
     });
 
     it('counts every commit read, not only the ones kept', async () => {
-        // commitsRead is the raw count and commits.length the filtered one, and
-        // summarize() keys its SKIP corroboration on exactly that difference.
-        // Collapsing the two makes every dependency-bump release rubber-stamp a
-        // model SKIP and post nothing.
+        // commitsRead is the raw count and commits.length the filtered one.
+        // Collapsing the two hides the difference between "nothing to look at"
+        // and "everything was noise", which is what a dependency-bump release
+        // looks like.
         respondWith(() => ({
             body: compare(['chore(deps): bump x', 'ci: retry the runner', 'chore: bump y']),
         }));
@@ -243,12 +243,15 @@ describe('contextFor', () => {
 
     it('refuses a baseline the compare says is not behind this release', async () => {
         // A backport compares backwards: v1.72.5 shipping after v1.73.0 answers
-        // 200 with `behind` and a commit set belonging to the wrong direction.
+        // 200 with `behind`. Whatever commits come with it describe nothing that
+        // shipped in this release, so none are used - and the read is not
+        // complete, so it can never back up a skip.
         respondWith(() => ({ body: compare(['feat: something'], { status: 'behind' }) }));
 
         const context = await contextFor(rel('v2.0.0'), rel('v3.0.0'));
         expect(context.commits).toEqual([]);
         expect(context.commitsRead).toBe(0);
+        expect(context.comparedCleanly).toBeFalsy();
     });
 
     it('treats an identical compare as asked-and-answered', async () => {
@@ -281,6 +284,8 @@ describe('contextFor', () => {
     it('announces without commit context when there is no previous release', async () => {
         const context = await contextFor(rel('v1.0.0'), undefined);
         expect(context).toMatchObject({ commits: [], commitsRead: 0 });
+        // Nothing was compared, so nothing can back up a skip.
+        expect(context.comparedCleanly).toBeFalsy();
     });
 });
 
@@ -316,6 +321,7 @@ describe('contextFor degrading rather than failing', () => {
         // while every other missing-commits path degrades.
         const context = await contextFor(rel('v2.0.0'), rel('v1.0.0'));
         expect(context).toMatchObject({ commits: [], commitsRead: 0 });
+        expect(context.comparedCleanly).toBeFalsy();
     });
 });
 
@@ -325,6 +331,7 @@ describe('responses the API is not supposed to send', () => {
         process.env.GITHUB_TOKEN = 'test';
     });
     afterEach(() => {
+        vi.useRealTimers();
         if (saved === undefined) delete process.env.GITHUB_TOKEN;
         else process.env.GITHUB_TOKEN = saved;
     });
@@ -357,28 +364,29 @@ describe('responses the API is not supposed to send', () => {
         // and the publish-order comparator returns NaN for every pair touching
         // it - which is not a total order, so valid releases move too.
         respondWith((url) => ({
-            body: url.includes('page=1')
-                ? [
-                      {
-                          draft: false,
-                          prerelease: false,
-                          tag_name: 'v1.0.0',
-                          name: 'v1.0.0',
-                          html_url: 'https://github.com/acme/repo/releases/tag/v1.0.0',
-                          body: '',
-                          published_at: 'not a date',
-                      },
-                      {
-                          draft: false,
-                          prerelease: false,
-                          tag_name: 'v1.1.0',
-                          name: 'v1.1.0',
-                          html_url: 'https://github.com/acme/repo/releases/tag/v1.1.0',
-                          body: '',
-                          published_at: '2026-09-12T00:00:00Z',
-                      },
-                  ]
-                : [],
+            body:
+                Number(new URL(url).searchParams.get('page')) === 1
+                    ? [
+                          {
+                              draft: false,
+                              prerelease: false,
+                              tag_name: 'v1.0.0',
+                              name: 'v1.0.0',
+                              html_url: 'https://github.com/acme/repo/releases/tag/v1.0.0',
+                              body: '',
+                              published_at: 'not a date',
+                          },
+                          {
+                              draft: false,
+                              prerelease: false,
+                              tag_name: 'v1.1.0',
+                              name: 'v1.1.0',
+                              html_url: 'https://github.com/acme/repo/releases/tag/v1.1.0',
+                              body: '',
+                              published_at: '2026-09-12T00:00:00Z',
+                          },
+                      ]
+                    : [],
         }));
 
         const releases = await listReleases('acme/repo', '2026-09-01T00:00:00Z');
@@ -390,7 +398,7 @@ describe('responses the API is not supposed to send', () => {
     it('keeps reading the pages after one that failed, and marks the read incomplete', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         // GitHub says there are 300 commits. Page 1 and page 3 answer with 100
-        // each, page 2 fails outright, page 4 is empty.
+        // each, page 2 fails outright. Page 3 is the last page for 300.
         respondWith((url) => {
             const page = Number(new URL(url).searchParams.get('page')) || 1;
             if (page === 2) return { status: 404, body: { message: 'Not Found' } };
@@ -467,12 +475,15 @@ describe('the input filters nothing else enforces', () => {
     });
 
     const onePage = (releases: object[]) =>
-        respondWith((url) => ({ body: url.includes('page=1') ? releases : [] }));
+        respondWith((url) => ({
+            body: Number(new URL(url).searchParams.get('page')) === 1 ? releases : [],
+        }));
 
     it('excludes prereleases and drafts that carry a publish date', async () => {
-        // This is the app's only prerelease filter. Both repos publish -next and
-        // -alpha tags, so a regression posts one to a live channel AND moves the
-        // watermark past the real release behind it. The existing draft test
+        // The listing's own prerelease filter, the one every source relies on
+        // before its tag pattern. Both repos publish -next and -alpha tags, so a
+        // regression posts one to a live channel AND moves the watermark past
+        // the real release behind it. The existing draft test
         // gives its drafts `published_at: null`, so `!r.published_at` already
         // excludes them and neither term is exercised on its own.
         onePage([
@@ -485,23 +496,23 @@ describe('the input filters nothing else enforces', () => {
         expect(releases.map((r) => r.tag)).toEqual(['v1.74.0']);
     });
 
-    it('compares the cutoff by instant, inclusively, not as a string', async () => {
-        // `since` carries milliseconds and GitHub's timestamps do not, so a
-        // lexicographic compare disagrees inside the boundary second. With a
-        // strict `<` the last-announced release re-posts every run; with a
-        // string compare a release in the boundary second is dropped for good.
+    it('compares the cutoff by instant, not as a string', async () => {
+        // `since` is the lookback floor, 30 days back. It carries milliseconds
+        // and GitHub's timestamps do not, so a lexicographic compare disagrees
+        // with the real order inside the boundary second.
         onePage([entry('v1.72.0', { published_at: '2026-09-10T12:00:00Z' })]);
 
         // Sub-second: by instant this is older than the cutoff and excluded. A
         // string compare puts 'Z' (90) above '.' (46) at index 19 and includes
-        // it, re-announcing a release that is already in the channel.
+        // it, putting a release outside the window back into play.
         expect(await listReleases('acme/repo', '2026-09-10T12:00:00.500Z')).toEqual([]);
     });
 
     it('excludes a release published exactly at the cutoff', async () => {
-        // `since` is the last announcement's own timestamp, so equality is the
-        // ordinary case, not an edge one. A strict `<` re-posts that release on
-        // every single run for as long as it stays in the window.
+        // `since` is the lookback floor, 30 days back. A release exactly on it is
+        // outside the window, and the comparison is by instant like the one
+        // above. Low stakes either way, since pending() dedupes by URL, but the
+        // two comparisons should agree on which side the boundary sits.
         onePage([entry('v1.72.0', { published_at: '2026-09-10T12:00:00Z' })]);
 
         expect(await listReleases('acme/repo', '2026-09-10T12:00:00Z')).toEqual([]);
@@ -513,7 +524,7 @@ describe('the input filters nothing else enforces', () => {
         // sends retry-after instead. Classified as fatal, that fails the source
         // on a limit that clears in seconds.
         let calls = 0;
-        vi.stubGlobal('fetch', (input: string | URL) => {
+        vi.stubGlobal('fetch', () => {
             calls++;
             if (calls === 1) {
                 return Promise.resolve(
@@ -524,7 +535,7 @@ describe('the input filters nothing else enforces', () => {
                 );
             }
             return Promise.resolve(
-                new Response(JSON.stringify(String(input).includes('page=1') ? [] : []), {
+                new Response(JSON.stringify([]), {
                     status: 200,
                     headers: { 'content-type': 'application/json' },
                 }),
@@ -540,10 +551,10 @@ describe('the input filters nothing else enforces', () => {
 
     it('builds the compare range from both tags, in order, oldest first', async () => {
         // Real tags carry a slash: `channels/v0.11.0`, `release/2026-09-23`.
-        // The encodeURIComponent here is belt and braces, not a fix: verified
+        // Encoding the slash is belt and braces rather than a fix: verified
         // against the live API, `channels/v0.10.0...channels/v0.11.0` and the
-        // %2F form both return the same 625 commits. What this pins is the part
-        // that would be silently wrong, the ORDER: reversed, GitHub answers
+        // %2F form both return the same 625 commits. The %2F below pins the
+        // shape as written; what matters is the ORDER: reversed, GitHub answers
         // `behind` with no commits and the release ships with no context.
         const seen: string[] = [];
         vi.stubGlobal('fetch', (input: string | URL) => {
@@ -568,5 +579,251 @@ describe('the input filters nothing else enforces', () => {
         await contextFor(rel('channels/v0.11.0'), rel('channels/v0.10.0'));
         const compareCall = seen.find((u) => u.includes('/compare/'));
         expect(compareCall).toContain('channels%2Fv0.10.0...channels%2Fv0.11.0');
+    });
+});
+
+describe('previousRelease, the baseline lookup past the window', () => {
+    const saved = process.env.GITHUB_TOKEN;
+    beforeEach(() => {
+        process.env.GITHUB_TOKEN = 'test';
+    });
+    afterEach(() => {
+        if (saved === undefined) delete process.env.GITHUB_TOKEN;
+        else process.env.GITHUB_TOKEN = saved;
+    });
+
+    const gh = (tag: string, published_at: string | null, extra: object = {}) => ({
+        draft: false,
+        prerelease: false,
+        tag_name: tag,
+        name: tag,
+        html_url: `https://github.com/o/r/releases/tag/${tag}`,
+        body: '',
+        published_at,
+        ...extra,
+    });
+    const target = {
+        repo: 'o/r',
+        tag: 'angular/v0.6.0',
+        name: 'angular/v0.6.0',
+        url: 'https://github.com/o/r/releases/tag/angular/v0.6.0',
+        body: '',
+        publishedAt: '2026-09-10T00:00:00Z',
+    };
+    const angular = (tag: string) => tag.startsWith('angular/');
+
+    it('returns the most recent earlier release on the same line', async () => {
+        respondWith((url) => ({
+            body:
+                Number(new URL(url).searchParams.get('page')) === 1
+                    ? [
+                          gh('angular/v0.6.0', '2026-09-10T00:00:00Z'),
+                          gh('channels/v0.9.0', '2026-08-20T00:00:00Z'),
+                          gh('angular/v0.5.2', '2026-08-01T00:00:00Z'),
+                          gh('angular/v0.5.1', '2026-07-01T00:00:00Z'),
+                      ]
+                    : [],
+        }));
+        const found = await previousRelease(target, angular);
+        expect(found?.tag).toBe('angular/v0.5.2');
+    });
+
+    it('skips drafts, prereleases and anything published after the release', async () => {
+        respondWith((url) => ({
+            body:
+                Number(new URL(url).searchParams.get('page')) === 1
+                    ? [
+                          gh('angular/v0.7.0', '2026-09-20T00:00:00Z'),
+                          gh('angular/v0.6.0-next.1', '2026-09-05T00:00:00Z', { prerelease: true }),
+                          gh('angular/v0.5.9', '2026-09-04T00:00:00Z', { draft: true }),
+                          gh('angular/v0.5.2', '2026-08-01T00:00:00Z'),
+                      ]
+                    : [],
+        }));
+        const found = await previousRelease(target, angular);
+        expect(found?.tag).toBe('angular/v0.5.2');
+    });
+
+    it('keeps reading past the first match, since the list is ordered by creation', async () => {
+        // Page 1 holds an older match; page 2 holds a match published more
+        // recently that was created earlier. Taking the first match would pick
+        // the wrong baseline, and GitHub answers that compare without complaint.
+        const full = (n: number, from: string) =>
+            Array.from({ length: n }, (_, i) => gh(`v9.${from}.${i}`, '2026-09-30T00:00:00Z'));
+        respondWith((url) => {
+            const page = Number(new URL(url).searchParams.get('page'));
+            if (page === 1)
+                return { body: [...full(99, 'a'), gh('angular/v0.5.0', '2026-07-01T00:00:00Z')] };
+            if (page === 2) return { body: [gh('angular/v0.5.2', '2026-08-01T00:00:00Z')] };
+            return { body: [] };
+        });
+        const found = await previousRelease(target, angular);
+        expect(found?.tag).toBe('angular/v0.5.2');
+    });
+
+    it('stops reading once a page holds nothing newer than its match', async () => {
+        // A full page with the match on it, then a full page entirely older:
+        // that is enough to know nothing more recent is further down.
+        const full = (n: number, prefix: string, at: string) =>
+            Array.from({ length: n }, (_, i) => gh(`${prefix}${i}`, at));
+        const calls = respondWith((url) => {
+            const page = Number(new URL(url).searchParams.get('page'));
+            if (page === 1)
+                return {
+                    body: [
+                        ...full(99, 'v9.0.', '2026-09-20T00:00:00Z'),
+                        gh('angular/v0.5.2', '2026-08-01T00:00:00Z'),
+                    ],
+                };
+            return { body: full(100, `v0.${page}.`, '2026-01-01T00:00:00Z') };
+        });
+        const found = await previousRelease(target, angular);
+        expect(found?.tag).toBe('angular/v0.5.2');
+        expect(calls).toHaveLength(2);
+    });
+
+    it('says so when it runs out of pages without a match', async () => {
+        // Every page full, so the list goes on past what was read: "none" here
+        // means "none in the last 500", which is worth a line in the log.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        respondWith((url) => {
+            const page = Number(new URL(url).searchParams.get('page'));
+            return {
+                body: Array.from({ length: 100 }, (_, i) =>
+                    gh(`v1.${page}.${i}`, '2026-09-01T00:00:00Z'),
+                ),
+            };
+        });
+        expect(await previousRelease(target, angular)).toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('no earlier release on its line'),
+        );
+        warn.mockRestore();
+    });
+
+    it('does not warn when the list simply ends', async () => {
+        // A repo with exactly 100 releases reaches an empty page 2. That is the
+        // end of the list, and "none in the last 500" would be false.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        respondWith((url) => ({
+            body:
+                Number(new URL(url).searchParams.get('page')) === 1
+                    ? Array.from({ length: 100 }, (_, i) => gh(`v1.0.${i}`, '2026-09-01T00:00:00Z'))
+                    : [],
+        }));
+        expect(await previousRelease(target, angular)).toBeUndefined();
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
+    it('fails on a reply that is not a list, rather than reading it as empty', async () => {
+        respondWith(() => ({ body: { message: 'upstream unavailable' } }));
+        await expect(previousRelease(target, angular)).rejects.toThrow(/not an array/);
+    });
+
+    it('returns undefined when the line has no earlier release', async () => {
+        respondWith(() => ({ body: [gh('angular/v0.6.0', '2026-09-10T00:00:00Z')] }));
+        expect(await previousRelease(target, angular)).toBeUndefined();
+    });
+});
+
+describe('a compare that does not say how many commits it has', () => {
+    const saved = process.env.GITHUB_TOKEN;
+    beforeEach(() => {
+        process.env.GITHUB_TOKEN = 'test';
+    });
+    afterEach(() => {
+        if (saved === undefined) delete process.env.GITHUB_TOKEN;
+        else process.env.GITHUB_TOKEN = saved;
+    });
+
+    const rel = (tag: string) => ({
+        repo: 'o/r',
+        tag,
+        name: tag,
+        url: `https://github.com/o/r/releases/tag/${tag}`,
+        body: '',
+        publishedAt: '2026-09-12T00:00:00Z',
+    });
+
+    it('is never reported as complete', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // No total_commits, and one page of pure noise. Treated as complete,
+        // that read corroborates a SKIP and a real release is never announced.
+        respondWith(() => ({
+            body: {
+                status: 'ahead',
+                commits: Array.from({ length: 100 }, (_, i) => ({
+                    commit: { message: `chore(deps): bump thing ${i}` },
+                })),
+            },
+        }));
+        const context = await contextFor(rel('v1.1.0'), rel('v1.0.0'));
+        expect(context.comparedCleanly).toBe(false);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('no total_commits'));
+        warn.mockRestore();
+    });
+});
+
+describe('a compare longer than the pages it may read', () => {
+    const saved = process.env.GITHUB_TOKEN;
+    beforeEach(() => {
+        process.env.GITHUB_TOKEN = 'test';
+    });
+    afterEach(() => {
+        if (saved === undefined) delete process.env.GITHUB_TOKEN;
+        else process.env.GITHUB_TOKEN = saved;
+    });
+
+    const rel = (tag: string) => ({
+        repo: 'o/r',
+        tag,
+        name: tag,
+        url: `https://github.com/o/r/releases/tag/${tag}`,
+        body: '',
+        publishedAt: '2026-09-12T00:00:00Z',
+    });
+
+    it('reads the newest pages, not the next ones', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // 2500 commits, oldest first. This is a monorepo, so a few weeks between
+        // two releases on one line is thousands of commits. Paging forward read
+        // only the oldest thousand, and the "newest 60" shown to the model were
+        // weeks older than the release.
+        const calls = respondWith((url) => {
+            const page = Number(new URL(url).searchParams.get('page')) || 1;
+            return {
+                body: {
+                    status: 'ahead',
+                    total_commits: 2500,
+                    commits: Array.from({ length: 100 }, (_, i) => ({
+                        commit: { message: `feat: change ${(page - 1) * 100 + i}` },
+                    })),
+                },
+            };
+        });
+
+        const context = await contextFor(rel('v2.0.0'), rel('v1.0.0'));
+        const pages = calls
+            .filter((u) => u.includes('/compare/'))
+            .map((u) => Number(new URL(u).searchParams.get('page')) || 1);
+        expect(pages).toEqual([1, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
+        expect(context.commits.at(-1)).toBe('feat: change 2499');
+        expect(context.comparedCleanly).toBe(false);
+        warn.mockRestore();
+    });
+
+    it('is reported complete when every commit was read', async () => {
+        // The other side of the flag: a whole, short compare must count, or no
+        // dependency-bump release could ever be skipped.
+        respondWith(() => ({
+            body: {
+                status: 'ahead',
+                total_commits: 2,
+                commits: [{ commit: { message: 'feat: a' } }, { commit: { message: 'fix: b' } }],
+            },
+        }));
+        const context = await contextFor(rel('v2.0.0'), rel('v1.0.0'));
+        expect(context.comparedCleanly).toBe(true);
     });
 });

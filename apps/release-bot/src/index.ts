@@ -12,7 +12,7 @@
 
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { listReleases, contextFor, type Release } from './github.js';
+import { listReleases, contextFor, previousRelease, type Release } from './github.js';
 import { listVideos, type Video } from './youtube.js';
 import { summarize } from './summarize.js';
 import { announce, announced, compose, postText, withPing, type Announced } from './discord.js';
@@ -56,8 +56,11 @@ const MAX_PER_RUN = 2;
  * out rather than deferred. That is the same stall MAX_PER_RUN was moved off
  * candidates to fix, reintroduced one level up.
  *
- * The cost of the high ceiling is real: skipped releases are re-summarized
- * every run until they age out of the window.
+ * Skipped releases are reconsidered every run until they age out of the window,
+ * since a skip leaves nothing in the channel. That is free when the commits
+ * decide it, which is the common case: summarize() skips those before calling
+ * the model. It costs completions only for a release the model insists on
+ * skipping against the commits, which is rare.
  */
 const MAX_CONSIDERED = 100;
 
@@ -73,8 +76,15 @@ const MAX_CONSIDERED = 100;
  * release is unannounced, which is the hazard `http.ts` opens by explaining.
  *
  * The deadline is computed once in `main()` and passed down, so it bounds the
- * whole run. Held per source it bounded nothing: each of the three got its own
- * fresh budget and the real ceiling was three times this.
+ * whole run. Held per source it bounded nothing: each source got its own fresh
+ * budget and the real ceiling was a multiple of this.
+ *
+ * It is checked between releases, not inside one, so it stops new work from
+ * starting rather than cutting a run off. The release in flight when it passes
+ * keeps going: the completions above, plus its GitHub pages, each with retries
+ * and waits, so a run where every dependency is failing at once can take longer.
+ * Railway does not start a scheduled run while the previous one is active, so
+ * that delays the next run rather than overlapping it.
  *
  * Deferring is free here: the watermark does not move for work not done, so the
  * next run picks up exactly where this one stopped.
@@ -169,8 +179,8 @@ export function planBacklog(releases: Release[], seen: Announced, ours: string):
     // negative-index trap `previousOnLine` above has a comment for.
     //
     // `decodeURIComponent` also throws `URIError` on a malformed escape, and
-    // inside `.some()` that failed the whole source on one odd URL out of 300
-    // messages of channel history. A URL we cannot read cannot vouch for a
+    // inside `.some()` that failed the whole source on one odd URL in the
+    // channel history. A URL we cannot read cannot vouch for a
     // line, which leaves `foundOwn` false - the branch that under-announces
     // rather than the one that loses items.
     const lineOfUrl = (url: string): string | undefined => {
@@ -209,7 +219,8 @@ export async function announceReleases(source: Source, deadline: number) {
 
     // Before the reads, not only between candidates. Checked only inside the
     // loop, a source whose turn began after the budget was spent still paid for
-    // a full channel read and five GitHub pages to discover it had no time.
+    // a full channel read and up to RELEASE_PAGES of GitHub releases to discover
+    // it had no time.
     if (Date.now() > deadline) {
         console.warn(`${source.name}: run budget already spent, deferred to the next run.`);
         return;
@@ -281,7 +292,27 @@ export async function announceReleases(source: Source, deadline: number) {
         // whatever shipped most recently, and once a repo publishes several
         // lines that is usually a different product: v1.72.0 was compared
         // against channels/v0.10.0 and summarized from 3 commits instead of 46.
-        const previous = previousOnLine(releases, release);
+        //
+        // `releases` stops at the lookback window, so the first release of a
+        // line in that window has no baseline in it. That is most releases on a
+        // line that ships less than monthly, and they were summarized from the
+        // notes alone. Those fall back to a lookup with no time limit.
+        const line = lineOf(release.tag);
+        let previous = previousOnLine(releases, release);
+        if (!previous) {
+            // Degrades like contextFor does when its compare fails: a release with
+            // no baseline is announced without commit context, which is worse
+            // but not wrong. Throwing here failed the whole source for the run
+            // over a lookup that only ever improves the summary.
+            try {
+                previous = await previousRelease(
+                    release,
+                    (tag) => lineOf(tag) === line && source.include(tag),
+                );
+            } catch (error) {
+                console.warn(`${release.tag}: could not look up the previous release: ${error}`);
+            }
+        }
         const context = await contextFor(release, previous);
         const summary = await summarize(context);
 
@@ -297,7 +328,6 @@ export async function announceReleases(source: Source, deadline: number) {
             // Stop this source here, holding its position. Announcing a newer
             // release would move the watermark past this one and it would never
             // be retried, even though asking again would have worked.
-            //
             throw new Error(`${release.tag}: ${summary.reason}`);
         }
 
@@ -484,7 +514,7 @@ export async function main() {
     // Conditioned on a release source, because videos need no OpenAI and a
     // YouTube-only deployment is a legitimate configuration.
     //
-    // Checked here rather than beside the channel check above, and that position
+    // Computed here and thrown only after the video run below, and that order
     // is the whole point: throwing before the video run silenced YouTube for a
     // missing key, which is exactly the failure the video-first ordering below
     // exists to prevent. It fixed the revoked-key path and reintroduced the same
@@ -502,10 +532,13 @@ export async function main() {
     await run('youtube', () => announceVideos(deadline));
 
     if (needsModel) {
+        // Names any video failure from the run above too, rather than letting
+        // this error replace it.
         throw new Error(
             'OPENAI_API_KEY is not set, and a release source has a channel configured. ' +
-                'Release notes are never posted unsummarized, so no release could be ' +
-                'announced. Video announcements, which need no model, have already run.',
+                'Release notes are never posted unsummarized, so no release was announced. ' +
+                'Video announcements do not need it and were not affected.' +
+                (failures.length ? ` Sources failed: ${failures.join(', ')}.` : ''),
         );
     }
 

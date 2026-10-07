@@ -10,17 +10,17 @@
 # again, with no error anywhere to say so.
 #
 # restartPolicyType = "NEVER" because a completed run exiting 0 is success, not a
-# crash. ALWAYS would restart it in a loop and re-announce on every boot.
+# crash. ALWAYS would restart it in a loop, running the job back to back.
 
 # watchPatterns keeps unrelated pushes from redeploying this service. A deploy
-# runs the job once immediately, so without it every merge anywhere in the
-# monorepo fires an extra announcement run outside the schedule.
+# can start a run outside the schedule (Railway's docs do not say either way),
+# so without it every merge anywhere in the monorepo could fire an extra run.
 #
 # Every entry is anchored with a leading slash. These are gitignore-style
 # patterns, so an unanchored `package.json` matches all 12 in the repo and an
 # unanchored `tsconfig.json` matches all 15 - a Renovate bump on apps/web would
-# have redeployed this service, and a deploy runs the cron once immediately, so
-# the list was causing the off-schedule runs it exists to prevent.
+# have redeployed this service, so the list was causing the redeploys it exists
+# to prevent.
 #
 # It narrows the problem rather than removing it. /pnpm-lock.yaml is watched
 # unconditionally, and every dependency bump anywhere in the monorepo rewrites
@@ -69,4 +69,13 @@ watchPatterns = [
 
 [deploy]
 restartPolicyType = "NEVER"
-cronSchedule = "0 8 * * *"
+# Hourly, so a release or video is posted within the hour rather than up to a
+# day late. A run with nothing new to post almost never calls OpenAI; it reads
+# channel history back 30 days (usually one page), the latest releases per
+# source, and one YouTube API request when the key is set.
+#
+# Runs normally take seconds. Railway does not start a scheduled run while the
+# previous one is still active, so scheduled runs never overlap. Railway's
+# minimum interval is 5 minutes; hourly is a choice about cost and noise, not a
+# safety limit. See the README's Schedule section.
+cronSchedule = "0 * * * *"

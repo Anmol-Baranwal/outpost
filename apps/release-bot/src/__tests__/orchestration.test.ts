@@ -4,9 +4,10 @@ import type { Source } from '../sources.js';
 /**
  * The announce loop, with its collaborators stubbed.
  *
- * These branches decide whether a release is announced, held, or lost. Every one
- * of them could be deleted with the rest of the suite still green: replacing
- * either disposition `throw` with a `continue` passed 159 tests.
+ * These branches decide whether a release is announced, held, or lost. Before
+ * this file existed, every one of them could be deleted with the rest of the
+ * suite still green: replacing either disposition `throw` with a `continue`
+ * passed the whole suite.
  */
 // Mixed case on purpose, like the real `CopilotKit/CopilotKit`. GitHub returns
 // the canonical spelling in html_url, `announced()` lowercases it on the way into
@@ -41,23 +42,32 @@ const FAR_FUTURE = Date.now() + 60 * 60_000;
 
 type Plan = { tag: string; publishedAt: string; summary: unknown };
 
-async function harness(plan: Plan[], opts: { seedInReleases?: boolean } = {}) {
+async function harness(
+    plan: Plan[],
+    opts: {
+        seedInReleases?: boolean;
+        older?: ReturnType<typeof release>[];
+        lookupFails?: boolean;
+    } = {},
+) {
     const { seedInReleases = true } = opts;
     const summaries = new Map(plan.map((p) => [p.tag, p.summary]));
 
     // Honours belongsHere and lowercases, exactly as the real announced() does.
-    // A mock that ignored the predicate made the `ours` prefix and the whole
-    // source-scoping branch untestable from here.
-    const announced = vi.fn(async (_channelId: string, belongsHere: (u: string) => boolean) => {
-        const urls = new Set<string>();
-        let foundOwn = false;
-        for (const url of [SEED.url]) {
-            urls.add(url.toLowerCase());
-            if (belongsHere(url)) foundOwn = true;
-        }
-        return { urls, foundOwn, searchedFrom: '2026-01-01T00:00:00Z' };
-    });
-    const listReleases = vi.fn(async () => [
+    // planBacklog() recomputes foundOwn per line from these URLs, so the real
+    // coverage of the `ours` prefix comes from that, through the lowercased set.
+    const announced = vi.fn(
+        async (_channelId: string, belongsHere: (u: string) => boolean, _since?: string) => {
+            const urls = new Set<string>();
+            let foundOwn = false;
+            for (const url of [SEED.url]) {
+                urls.add(url.toLowerCase());
+                if (belongsHere(url)) foundOwn = true;
+            }
+            return { urls, foundOwn, searchedFrom: '2026-01-01T00:00:00Z' };
+        },
+    );
+    const listReleases = vi.fn(async (_repo: string, _since: string) => [
         ...(seedInReleases ? [SEED] : []),
         ...plan.map((p) => release(p.tag, p.publishedAt)),
     ]);
@@ -79,7 +89,23 @@ async function harness(plan: Plan[], opts: { seedInReleases?: boolean } = {}) {
         async (_announcement: { title: string; body: string; url: string }) => {},
     );
 
-    vi.doMock('../github.js', () => ({ listReleases, contextFor }));
+    // The lookup past the window. Undefined unless a test supplies an older
+    // release, and every call's tag is recorded; the predicate it was given
+    // is applied to `older`, so a wrong predicate picks a wrong baseline.
+    const older = opts.older ?? [];
+    const lookups: string[] = [];
+    const previousRelease = vi.fn(
+        async (r: { tag: string; publishedAt: string }, matches: (tag: string) => boolean) => {
+            lookups.push(r.tag);
+            if (opts.lookupFails) throw new Error('GitHub 502 on /repos/o/r/releases');
+            return older
+                .filter(
+                    (o) => matches(o.tag) && Date.parse(o.publishedAt) < Date.parse(r.publishedAt),
+                )
+                .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))[0];
+        },
+    );
+    vi.doMock('../github.js', () => ({ listReleases, contextFor, previousRelease }));
     vi.doMock('../summarize.js', () => ({ summarize }));
     vi.doMock('../youtube.js', () => ({ listVideos: vi.fn(async () => []) }));
     vi.doMock('../discord.js', () => ({
@@ -93,7 +119,16 @@ async function harness(plan: Plan[], opts: { seedInReleases?: boolean } = {}) {
     const { announceReleases } = await import('../index.js');
     const titles = () => announce.mock.calls.map(([a]) => a.title);
 
-    return { announceReleases, announce, summarize, titles, baselines, announced };
+    return {
+        announceReleases,
+        announce,
+        summarize,
+        titles,
+        baselines,
+        announced,
+        listReleases,
+        lookups,
+    };
 }
 
 const text = (t: string) => ({ kind: 'text', text: t });
@@ -120,7 +155,13 @@ describe('the announce loop', () => {
 
         // Announcing v1.1.0 would move the watermark past v1.0.0, and it would
         // never be retried. Holding position is the entire point of `retry`.
-        await expect(announceReleases(SOURCE, FAR_FUTURE)).rejects.toThrow();
+        // A plain Error, not Misconfigured: that type is rethrown past main()'s
+        // per-source handler and would stop every remaining source over one
+        // rate limit.
+        const error = await announceReleases(SOURCE, FAR_FUTURE).catch((e: Error) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toMatch(/v1\.0\.0: rate limited/);
+        expect((error as Error).name).not.toBe('Misconfigured');
         expect(announce).not.toHaveBeenCalled();
     });
 
@@ -139,7 +180,13 @@ describe('the announce loop', () => {
 
         // As `give-up` this filled the channel with "Summary unavailable" posts
         // and advanced the watermark past every one of them.
-        await expect(announceReleases(SOURCE, FAR_FUTURE)).rejects.toThrow(/OPENAI_API_KEY/);
+        // Misconfigured specifically: main() rethrows that past its per-source
+        // handler to stop the run. A plain Error would let every other source
+        // repeat the same failure.
+        await expect(announceReleases(SOURCE, FAR_FUTURE)).rejects.toMatchObject({
+            name: 'Misconfigured',
+            message: expect.stringMatching(/OPENAI_API_KEY/),
+        });
         expect(announce).not.toHaveBeenCalled();
     });
 
@@ -224,6 +271,92 @@ describe('the announce loop', () => {
         expect(baselines).toEqual([undefined, 'v0.9.0']);
     });
 
+    it('finds a baseline older than the window for the first release on a line', async () => {
+        // angular/v0.6.0 is the only Angular release in the window, so the
+        // in-window search finds nothing. Its real predecessor shipped 40 days
+        // earlier. Without the fallback it is summarized from the notes alone,
+        // and as a dependency-bump release it could never be skipped, since a
+        // SKIP is only trusted when commits back it up.
+        const { announceReleases, baselines, lookups } = await harness(
+            [{ tag: 'angular/v0.6.0', publishedAt: '2026-09-10T00:00:00Z', summary: text('a') }],
+            {
+                older: [
+                    release('angular/v0.5.2', '2026-08-01T00:00:00Z'),
+                    // Newer, but a different line. Must not be chosen.
+                    release('channels/v0.9.0', '2026-08-20T00:00:00Z'),
+                ],
+            },
+        );
+
+        await announceReleases(SOURCE, FAR_FUTURE);
+        expect(lookups).toEqual(['angular/v0.6.0']);
+        expect(baselines).toEqual(['angular/v0.5.2']);
+    });
+
+    it('reads the channel back as far as it lists releases', async () => {
+        // The two windows have to match. A channel read shallower than the
+        // release listing lets an already-announced release fall out of view
+        // while still being a candidate, and it is posted again every run.
+        const { announceReleases, announced, listReleases } = await harness([
+            { tag: 'v1.0.0', publishedAt: '2026-09-10T00:00:00Z', summary: text('a') },
+        ]);
+        await announceReleases(SOURCE, FAR_FUTURE);
+        const readBack = announced.mock.calls[0]?.[2];
+        const listedSince = listReleases.mock.calls[0]?.[1];
+        expect(readBack).toBeTruthy();
+        expect(readBack).toBe(listedSince);
+    });
+
+    it('only takes a baseline the source would itself announce', async () => {
+        // angular/v0.5.3-hotfix is on the right line and more recent, but the
+        // source's tag filter rejects it, so it is not a release this bot
+        // compares against. The lookup is handed both conditions, not one.
+        const { announceReleases, baselines } = await harness(
+            [{ tag: 'angular/v0.6.0', publishedAt: '2026-09-10T00:00:00Z', summary: text('a') }],
+            {
+                older: [
+                    release('angular/v0.5.2', '2026-08-01T00:00:00Z'),
+                    release('angular/v0.5.3-hotfix', '2026-08-15T00:00:00Z'),
+                ],
+            },
+        );
+
+        await announceReleases(
+            { ...SOURCE, include: (tag) => /^(angular\/)?v\d+\.\d+\.\d+$/.test(tag) },
+            FAR_FUTURE,
+        );
+        expect(baselines).toEqual(['angular/v0.5.2']);
+    });
+
+    it('announces without commits when the lookup itself fails', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // The lookup only ever improves a summary. A failure in it is treated
+        // like a failed compare: announce without commit context, rather than
+        // failing the whole source for the run.
+        const { announceReleases, titles, baselines } = await harness(
+            [{ tag: 'angular/v0.6.0', publishedAt: '2026-09-10T00:00:00Z', summary: text('a') }],
+            { lookupFails: true },
+        );
+
+        await announceReleases(SOURCE, FAR_FUTURE);
+        expect(titles()).toEqual(['angular/v0.6.0']);
+        expect(baselines).toEqual([undefined]);
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('could not look up the previous release'),
+        );
+        warn.mockRestore();
+    });
+
+    it('does not look past the window when the baseline is already in it', async () => {
+        // The extra read costs a GitHub call, so it only happens when needed.
+        const { announceReleases, lookups } = await harness([
+            { tag: 'v1.0.0', publishedAt: '2026-09-10T00:00:00Z', summary: text('a') },
+        ]);
+
+        await announceReleases(SOURCE, FAR_FUTURE);
+        expect(lookups).toEqual([]);
+    });
+
     it('announces only the tags the source admits', async () => {
         const { announceReleases, titles } = await harness([
             { tag: 'vundefined', publishedAt: '2026-09-09T00:00:00Z', summary: text('junk') },
@@ -266,8 +399,8 @@ describe('the announce loop', () => {
 });
 
 /**
- * The video loop, which had neither of the two guards the release loop has.
- * Both were promised by the README and neither existed.
+ * The video loop: the deferral warning and the in-loop deadline check the
+ * release loop has, which it once lacked.
  */
 async function videoHarness(count: number) {
     const videos = Array.from({ length: count }, (_, i) => ({
@@ -282,6 +415,7 @@ async function videoHarness(count: number) {
     vi.doMock('../github.js', () => ({
         listReleases: vi.fn(async () => []),
         contextFor: vi.fn(),
+        previousRelease: vi.fn(),
     }));
     vi.doMock('../summarize.js', () => ({ summarize: vi.fn() }));
     vi.doMock('../discord.js', () => ({
@@ -303,11 +437,12 @@ async function videoHarness(count: number) {
 }
 
 describe('the video loop', () => {
-    const saved = { ...process.env };
+    // stubEnv rather than reassigning process.env: vitest restores these after
+    // each test (unstubEnvs), and a replaced process.env is a plain object.
     beforeEach(() => {
         vi.resetModules();
-        process.env.YOUTUBE_CHANNEL_DISCORD_ID = 'chan';
-        process.env.YOUTUBE_CHANNEL_ID = 'yt';
+        vi.stubEnv('YOUTUBE_CHANNEL_DISCORD_ID', 'chan');
+        vi.stubEnv('YOUTUBE_CHANNEL_ID', 'yt');
     });
     afterEach(() => {
         vi.doUnmock('../github.js');
@@ -315,14 +450,13 @@ describe('the video loop', () => {
         vi.doUnmock('../youtube.js');
         vi.doUnmock('../discord.js');
         vi.resetModules();
-        process.env = { ...saved };
     });
 
     it('still posts videos when OPENAI_API_KEY is missing', async () => {
-        // Both set before the harness imports index.js: SOURCES reads the
-        // environment at module load, so setting them afterwards is too late.
-        delete process.env.OPENAI_API_KEY;
-        process.env.CPK_CHANNEL_ID = 'releases';
+        // Set before the harness imports index.js: SOURCES reads the channel
+        // ids at module load, so setting them afterwards is too late.
+        vi.stubEnv('OPENAI_API_KEY', '');
+        vi.stubEnv('CPK_CHANNEL_ID', 'releases');
         // Two, because the harness seeds the first as already announced.
         const { postText } = await videoHarness(2);
         const { main } = await import('../index.js');
@@ -355,16 +489,18 @@ describe('the video loop', () => {
         // Checked only on the way in, a source that started inside the budget
         // could still run past it: each postText carries up to MAX_ATTEMPTS
         // retries plus honoured retry-after waits.
-        let now = Date.now();
+        // The clock is pinned before the deadline is taken, so the first check
+        // cannot fail on a slow machine; each post then moves it 10 seconds on.
+        let now = Date.parse('2026-10-01T00:00:00Z');
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
         const deadline = now + 1;
         postText.mockImplementation(async () => {
             now += 10_000;
-            vi.spyOn(Date, 'now').mockReturnValue(now);
         });
 
         await announceVideos(deadline);
         expect(postText).toHaveBeenCalledTimes(1);
         expect(warn).toHaveBeenCalledWith(expect.stringContaining('run budget spent'));
-        vi.restoreAllMocks();
+        clock.mockRestore();
     });
 });

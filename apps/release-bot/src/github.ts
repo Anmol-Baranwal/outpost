@@ -11,7 +11,10 @@ import { MAX_ATTEMPTS, TIMEOUT_MS, backoff, parseJson, pause, retryAfterMs } fro
 
 const API = 'https://api.github.com';
 
-/** Pages of 100 releases to walk back through while still inside the lookback window. */
+/**
+ * Pages of 100 releases to walk back through: within the lookback window for
+ * listReleases, and in total for previousRelease, which has no window.
+ */
 const RELEASE_PAGES = 5;
 
 /** Pages of 100 commits to read from a compare range. */
@@ -42,10 +45,10 @@ export type ReleaseContext = Release & {
     /**
      * How many commits the compare returned before filtering.
      *
-     * The difference matters: zero read means there was nothing to look at (no
-     * previous release), while zero kept out of many read
-     * means the whole release was dependency bumps and version chores. Only the
-     * second corroborates a decision to skip it.
+     * Zero read means there was nothing to look at (no previous release, or a
+     * compare that failed), while zero kept out of many read means the release
+     * was dependency bumps and version chores. This alone does not license a
+     * skip: a partial read also has commits read. `comparedCleanly` does.
      */
     commitsRead: number;
 };
@@ -193,7 +196,8 @@ export async function listReleases(repo: string, since: string): Promise<Release
         // `batch.length === undefined`, which read as an empty page: the loop
         // broke on page 1 with nothing collected, no warning, and the run exited
         // 0. That is the cron-reports-success failure this bot exists to avoid,
-        // so it throws the way youtube.ts throws on a feed with no entries.
+        // so it throws, the way youtube.ts throws on a feed whose entries
+        // will not parse.
         if (!Array.isArray(batch)) {
             throw new Error(
                 `${repo}: /releases page ${page} returned ${typeof batch}, not an array. ` +
@@ -286,6 +290,82 @@ export async function listReleases(repo: string, since: string): Promise<Release
 }
 
 /**
+ * The release published most recently before `release` whose tag `matches`,
+ * with no time limit. Undefined when there is none in the pages read.
+ *
+ * The caller first looks for a baseline among the releases it already fetched,
+ * and those stop at the lookback window. A line that ships less often than that
+ * - the Angular SDK after a quiet month - then found no previous release, so its
+ * next release was summarized from the notes alone, with no commits. That also
+ * made a dependency-bump release on such a line impossible to skip, because a
+ * SKIP is only trusted when the commits back it up. This is the lookup for that
+ * case, and only that case.
+ *
+ * Every page is scanned, not just until the first match. /releases is ordered by
+ * creation rather than publication, so the first match is not reliably the most
+ * recent one. The walk stops on the page after the one where a match turns up,
+ * once that page holds nothing published after it - usually two or three reads.
+ * A line with no earlier release at all reads every page up to RELEASE_PAGES,
+ * and says so.
+ */
+export async function previousRelease(
+    release: Release,
+    matches: (tag: string) => boolean,
+): Promise<Release | undefined> {
+    const before = Date.parse(release.publishedAt);
+    let best: Release | undefined;
+
+    for (let page = 1; page <= RELEASE_PAGES; page++) {
+        const batch = await gh<GhRelease[]>(
+            `/repos/${release.repo}/releases?per_page=100&page=${page}`,
+        );
+        if (!Array.isArray(batch)) {
+            throw new Error(
+                `${release.repo}: /releases page ${page} returned ${typeof batch}, not an array.`,
+            );
+        }
+        // The end of the list, so "none found" here is true, not a guess.
+        if (!batch.length) return best;
+
+        for (const r of batch) {
+            if (r.draft || r.prerelease || !r.published_at) continue;
+            if (r.tag_name === release.tag || !matches(r.tag_name)) continue;
+            const at = Date.parse(r.published_at);
+            if (!Number.isFinite(at) || at >= before) continue;
+            if (!best || at > Date.parse(best.publishedAt)) {
+                best = {
+                    repo: release.repo,
+                    tag: r.tag_name,
+                    name: r.name || r.tag_name,
+                    url: r.html_url,
+                    body: r.body || '',
+                    publishedAt: r.published_at,
+                };
+            }
+        }
+
+        if (best) {
+            const floor = Date.parse(best.publishedAt);
+            const anyNewer = batch.some(
+                (r) => r.published_at && Date.parse(r.published_at) > floor,
+            );
+            if (!anyNewer) break;
+        }
+        if (batch.length < 100) return best;
+    }
+
+    if (!best) {
+        // Only reached when every page was full: the list goes on past what was
+        // read, so "none" here means "none in the last 500", not "none at all".
+        console.warn(
+            `${release.tag}: no earlier release on its line in the last ${RELEASE_PAGES * 100} ` +
+                'releases; announcing without commit context.',
+        );
+    }
+    return best;
+}
+
+/**
  * Commit subjects that say nothing a reader of the announcement would care about.
  *
  * `fix(deps)` is deliberately absent, unlike `chore(deps)` and `build(deps)`. It
@@ -318,7 +398,7 @@ const MERGE = /^Merge (branch|pull request|remote-tracking branch|tag|commit) /;
 export async function contextFor(release: Release, previous?: Release): Promise<ReleaseContext> {
     if (!previous) {
         console.warn(
-            `${release.tag}: no previous release in the window, announcing without commit context`,
+            `${release.tag}: no previous release found on its line, announcing without commit context`,
         );
         return { ...release, commits: [], commitsRead: 0 };
     }
@@ -364,10 +444,12 @@ export async function contextFor(release: Release, previous?: Release): Promise<
     }
 
     const all = [...(first.commits ?? [])];
-    if (first.total_commits === undefined) {
-        // Falling back to all.length makes the pagination condition false on
-        // entry and the truncation warning below false too, so a 600-commit
-        // release would be summarized from 100 with no diagnostic at all.
+    // Without a total there is no way to know the list is whole, so the read is
+    // never reported as complete below. Falling back to all.length on its own
+    // made `comparedCleanly` true here: a first page that happened to be all
+    // noise then corroborated a SKIP, and a real release went unannounced.
+    const knowsTotal = first.total_commits !== undefined;
+    if (!knowsTotal) {
         console.warn(
             `${release.tag}: compare returned no total_commits; ` +
                 'the commit list may be truncated at one page.',
@@ -377,7 +459,19 @@ export async function contextFor(release: Release, previous?: Release): Promise<
 
     // The compare endpoint returns oldest first, so without paging the newest
     // work in a large release is simply absent from the summary.
-    for (let page = 2; all.length < total && page <= COMPARE_PAGES; page++) {
+    //
+    // When the range is longer than COMPARE_PAGES can hold, the pages read are
+    // the LAST ones, not the next ones. This is a monorepo: channels/v0.10.0 to
+    // v0.11.0 was 625 commits in a week, so a gap of a few weeks is thousands.
+    // Paging forward from page 2 then read only the oldest thousand, and the
+    // summary's "newest 60" were really the newest of the oldest - work from
+    // weeks before the release, presented as what it shipped. The API serves
+    // any page directly (verified: page 13 of a 1248-commit range), so jumping
+    // to the end costs nothing extra. Page 1 stays in `all` as the oldest
+    // slice, which the summary never reaches because it takes from the end.
+    const lastPage = Math.ceil(total / 100);
+    const firstTailPage = Math.max(2, lastPage - (COMPARE_PAGES - 1) + 1);
+    for (let page = firstTailPage; page <= lastPage; page++) {
         // Degrade rather than fail, the same as a 404 on page 1. A tag deleted
         // between two page fetches, a 502 on page 7, or a secondary limit that
         // outlives MAX_ATTEMPTS used to throw out of contextFor and fail the
@@ -410,7 +504,7 @@ export async function contextFor(release: Release, previous?: Release): Promise<
     // read whose visible commits happened to be all noise rubber-stamped a skip,
     // and a skipped release leaves no trace in the channel for the next run to
     // reconsider. Lost, not deferred.
-    const comparedCleanly = all.length >= total;
+    const comparedCleanly = knowsTotal && all.length >= total;
 
     if (!comparedCleanly) {
         console.warn(
