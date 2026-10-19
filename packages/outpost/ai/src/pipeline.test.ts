@@ -35,6 +35,7 @@ import { AI_DISCLAIMER, AI_DISCLAIMER_ESCALATED, AI_DISCLAIMER_REVIEWED } from '
 import { ConfidenceLevel, TicketPriority, TicketType } from './types.js';
 import type { SearchResult, GeneratedResponse } from './types.js';
 import type { ConfidenceAssessment } from './confidence.js';
+import { LONE_SURROGATE } from './test-utils/surrogates.js';
 
 // Create mock instances
 const mockSearchDocs = vi.fn();
@@ -698,9 +699,7 @@ describe('AIPipeline', () => {
                     expect(handoffReason).toContain('asserts own verification');
                     expect(handoffReason.length).toBeLessThanOrEqual(2000);
                     expect(handoffReason.length).toBeGreaterThanOrEqual(1999);
-                    expect(handoffReason).not.toMatch(
-                        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
-                    );
+                    expect(handoffReason).not.toMatch(LONE_SURROGATE);
                 },
             );
 

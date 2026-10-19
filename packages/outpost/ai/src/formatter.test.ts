@@ -9,6 +9,7 @@ import {
     publishableText,
     sliceWithoutSplittingSurrogates,
 } from './formatter.js';
+import { LONE_SURROGATE } from './test-utils/surrogates.js';
 
 describe('disclaimer copy', () => {
     it('opens every variant with the plain AI-generated sentence', () => {
@@ -121,13 +122,6 @@ describe('ResponseFormatter', () => {
         // tracks the real footer instead of asserting against a second copy of it:
         // an empty body formats to the footer and nothing else.
         const FOOTER = formatter.format('', 'discord').text;
-
-        // A high surrogate not followed by a low one, or a low surrogate not preceded
-        // by a high one. Either is an unpaired code unit — not a rendering nit but an
-        // ill-formed string, which is what slicing at an arbitrary index produces when
-        // the index lands in the middle of an astral character such as 👍.
-        const LONE_SURROGATE =
-            /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
         /** The exact message sequence the Discord adapter will post, in order. */
         function messagesFor(result: FormattedResponse): string[] {
@@ -729,7 +723,6 @@ describe('sliceWithoutSplittingSurrogates', () => {
     // unit is its leading half keeps that half and drops the other: a lone high
     // surrogate, which Postgres refuses in the escalation job's jsonb payload.
     const EMOJI = '😀';
-    const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
     it('drops an emoji that straddles the cut instead of keeping half of it', () => {
         const text = 'x'.repeat(1999) + EMOJI + 'tail';
