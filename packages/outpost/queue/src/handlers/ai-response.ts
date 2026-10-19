@@ -41,11 +41,7 @@
  */
 
 import { prisma } from '@copilotkit/outpost/db';
-import {
-    AIPipeline,
-    publishableText,
-    sliceWithoutSplittingSurrogates,
-} from '@copilotkit/outpost/ai';
+import { AIPipeline, boundForStorage, publishableText } from '@copilotkit/outpost/ai';
 import { AI_CONFIDENCE, MAX_JOB_ATTEMPTS } from '@copilotkit/outpost/shared';
 import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
 import {
@@ -78,12 +74,14 @@ export const RESPONSE_RECOVERY_AFTER_MS = 5 * 60 * 1000;
  * Upper bound on the pipeline's own reason when this handler repeats it into an
  * escalation.
  *
- * The pipeline already slices `handoffReason` to the same length, so this only
+ * The pipeline already bounds `handoffReason` to the same length, so this only
  * binds if that bound ever moves or a future producer skips it. It is restated
  * here because the value crosses a trust boundary at this seam: past it the
  * reason lives in a durable column and in a queued job payload, neither of
- * which should be able to grow without a decision made right here. The payload
- * is jsonb, which rejects an unpaired surrogate, so the cut never splits one.
+ * which should be able to grow without a decision made right here. The bound
+ * also keeps the reason storable: Prisma's query engine refuses an ill-formed
+ * string at the `Message.create` below, and Postgres refuses U+0000 and
+ * unpaired surrogates in text and jsonb.
  */
 const MAX_REPEATED_HANDOFF_REASON = 2000;
 
@@ -926,7 +924,7 @@ export async function handleAiResponse(
             : pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE
               ? `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation` +
                 (knownHandoffReason
-                    ? ` (${sliceWithoutSplittingSurrogates(knownHandoffReason, MAX_REPEATED_HANDOFF_REASON)})`
+                    ? ` (${boundForStorage(knownHandoffReason, MAX_REPEATED_HANDOFF_REASON)})`
                     : '')
               : null;
 

@@ -6,8 +6,8 @@ import {
     AI_DISCLAIMER_ESCALATED,
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
+    boundForStorage,
     publishableText,
-    sliceWithoutSplittingSurrogates,
 } from './formatter.js';
 import { LONE_SURROGATE } from './test-utils/surrogates.js';
 
@@ -718,10 +718,11 @@ describe('publishableText', () => {
     });
 });
 
-describe('sliceWithoutSplittingSurrogates', () => {
+describe('boundForStorage', () => {
     // 😀 is two UTF-16 code units, so `.slice(0, 2000)` on a string whose 2000th
     // unit is its leading half keeps that half and drops the other: a lone high
-    // surrogate, which Postgres refuses in the escalation job's jsonb payload.
+    // surrogate, which Prisma refuses at `Message.create` and Postgres refuses in
+    // text and jsonb.
     const EMOJI = '😀';
 
     it('drops an emoji that straddles the cut instead of keeping half of it', () => {
@@ -729,7 +730,7 @@ describe('sliceWithoutSplittingSurrogates', () => {
         // The failure being fixed, so the test cannot pass vacuously.
         expect(text.slice(0, 2000)).toMatch(LONE_SURROGATE);
 
-        const cut = sliceWithoutSplittingSurrogates(text, 2000);
+        const cut = boundForStorage(text, 2000);
 
         expect(cut).toBe('x'.repeat(1999));
         expect(cut).not.toMatch(LONE_SURROGATE);
@@ -738,13 +739,13 @@ describe('sliceWithoutSplittingSurrogates', () => {
     it('keeps an emoji that ends exactly on the cut', () => {
         const text = 'x'.repeat(1998) + EMOJI + 'tail';
 
-        expect(sliceWithoutSplittingSurrogates(text, 2000)).toBe('x'.repeat(1998) + EMOJI);
+        expect(boundForStorage(text, 2000)).toBe('x'.repeat(1998) + EMOJI);
     });
 
     it('never splits a pair or overruns the bound, whatever the alignment', () => {
         for (const pad of ['', 'x']) {
             const text = pad + EMOJI.repeat(1500);
-            const cut = sliceWithoutSplittingSurrogates(text, 2000);
+            const cut = boundForStorage(text, 2000);
 
             expect(cut).not.toMatch(LONE_SURROGATE);
             expect(cut.length).toBeLessThanOrEqual(2000);
@@ -753,7 +754,64 @@ describe('sliceWithoutSplittingSurrogates', () => {
     });
 
     it('returns a string already within the bound unchanged', () => {
-        expect(sliceWithoutSplittingSurrogates(`short ${EMOJI}`, 2000)).toBe(`short ${EMOJI}`);
-        expect(sliceWithoutSplittingSurrogates('', 2000)).toBe('');
+        expect(boundForStorage(`short ${EMOJI}`, 2000)).toBe(`short ${EMOJI}`);
+        expect(boundForStorage('', 2000)).toBe('');
+    });
+
+    // A clean cut is not enough: the input can already be ill-formed. V8 quotes the
+    // leading half of an emoji when JSON.parse rejects a reply that opens with one,
+    // and that message is the pipeline's reasoning on the failure path. Each unit
+    // below stops `Message.create` before the reply posts, on every retry.
+    describe.each([
+        ['a lone high surrogate', '\uD83D', '\uFFFD', LONE_SURROGATE],
+        ['a lone low surrogate', '\uDE00', '\uFFFD', LONE_SURROGATE],
+        ['a reversed pair', '\uDE00\uD83D', '\uFFFD\uFFFD', LONE_SURROGATE],
+        ['U+0000', '\u0000', '\uFFFD', '\u0000'],
+    ])('given %s already in the input', (_label, unit, replacement, detector) => {
+        const expectStorable = (bounded: string) => {
+            expect(bounded).not.toMatch(LONE_SURROGATE);
+            expect(bounded).not.toContain('\u0000');
+        };
+
+        it('replaces it in place under the bound, keeping the length', () => {
+            const text = `before ${unit} after ${EMOJI}`;
+            // The input really is unstorable, so the test cannot pass vacuously.
+            expect(text).toMatch(detector);
+
+            const bounded = boundForStorage(text, 2000);
+
+            expect(bounded).toBe(`before ${replacement} after ${EMOJI}`);
+            expect(bounded).toHaveLength(text.length);
+            expectStorable(bounded);
+        });
+
+        it('replaces it inside the kept text over the bound', () => {
+            const text = unit + 'x'.repeat(3000);
+
+            const bounded = boundForStorage(text, 2000);
+
+            expect(bounded).toBe(replacement + 'x'.repeat(2000 - replacement.length));
+            expectStorable(bounded);
+        });
+
+        it('replaces it when it is the last thing the bound keeps', () => {
+            const text = 'x'.repeat(2000 - unit.length) + unit + 'tail';
+
+            const bounded = boundForStorage(text, 2000);
+
+            expect(bounded).toBe('x'.repeat(2000 - unit.length) + replacement);
+            expectStorable(bounded);
+        });
+    });
+
+    // `.slice(0, -1)` keeps all but the last unit, which here is the trailing half
+    // of the emoji: a negative bound returned nearly the whole string, ending in a
+    // lone high surrogate.
+    it.each([
+        ['negative', -1],
+        ['zero', 0],
+        ['NaN', Number.NaN],
+    ])('returns an empty string for a %s bound', (_label, maxLength) => {
+        expect(boundForStorage(`x${EMOJI}`, maxLength)).toBe('');
     });
 });

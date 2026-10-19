@@ -28,8 +28,8 @@ import {
     AI_DISCLAIMER_ESCALATED,
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
+    boundForStorage,
     publishableText,
-    sliceWithoutSplittingSurrogates,
 } from './formatter.js';
 import { config, validateConfig } from './config.js';
 
@@ -422,12 +422,15 @@ export class AIPipeline {
         // locally verifiable, and it is what survives the bound below when a
         // diagnosis runs long.
         //
-        // The bound never cuts an emoji in half. This string lands in the
-        // escalation job's jsonb payload, and Postgres rejects the lone surrogate
-        // a plain `.slice()` can leave, on every retry and every sweep.
+        // The bound also makes the string storable. It is written through Prisma to
+        // `Message.escalationRequiredReason`, then into the escalation job's jsonb
+        // payload. Prisma's query engine refuses an ill-formed string at that first
+        // write, and Postgres refuses U+0000 and unpaired surrogates in text and
+        // jsonb. The reasoning can carry either before any cut, and either one
+        // fails the job before it posts, on every retry.
         const handoffReason =
             suppressed || groundedness.forcesEscalation
-                ? sliceWithoutSplittingSurrogates(
+                ? boundForStorage(
                       [...deterministicReasons, generatedResponse.reasoning]
                           .filter(Boolean)
                           .join('; ') ||

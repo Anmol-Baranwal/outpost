@@ -74,19 +74,37 @@ function splitsSurrogatePair(text: string, index: number): boolean {
 }
 
 /**
- * `text.slice(0, maxLength)`, except that it never cuts between the two code units
- * of an astral character such as 👍: when the cut would land there, the whole
- * character is dropped instead, so the result is still at most `maxLength` long.
- *
- * `.slice()` counts UTF-16 code units, so a plain cut on that boundary leaves a
- * lone high surrogate. That is an ill-formed string, and Postgres refuses it in a
- * jsonb column outright — a bounded value bound for a job payload has to be cut
- * here, with the same guard the Discord splitter uses.
+ * Every code unit the store refuses: a high surrogate not followed by a low one, a
+ * low surrogate not preceded by a high one, and U+0000. A reversed pair is two
+ * matches, one of each kind.
  */
-export function sliceWithoutSplittingSurrogates(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
-    const cutsAnAstralCharacter = maxLength > 0 && splitsSurrogatePair(text, maxLength - 1);
-    return text.slice(0, cutsAnAstralCharacter ? maxLength - 1 : maxLength);
+const UNSTORABLE_CODE_UNIT =
+    // eslint-disable-next-line no-control-regex -- U+0000 is one of the units it matches.
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|\u0000/g;
+
+/**
+ * `text` made storable and bounded to at most `maxLength` UTF-16 code units.
+ *
+ * Every unpaired surrogate and every U+0000 becomes U+FFFD first. Prisma's query
+ * engine refuses an ill-formed string at the first write, `Message.create`, and
+ * Postgres refuses U+0000 and unpaired surrogates in both text and jsonb. Either
+ * refusal throws before the reply posts, and every retry throws the same way. A
+ * clean cut is not enough on its own, because the input can already be
+ * ill-formed: V8's JSON.parse error quotes the leading half of an emoji a reply
+ * opens with, and that message becomes the reasoning on the failure path. The
+ * replacement is one code unit for one, so the length does not change.
+ *
+ * The cut then never lands between the two halves of an astral character such as
+ * 👍; that character is dropped whole instead, with the same guard the Discord
+ * splitter uses. A bound that is not positive, NaN included, yields `''` rather
+ * than reaching `.slice()`, which reads a negative end as "all but that many".
+ */
+export function boundForStorage(text: string, maxLength: number): string {
+    const bound = Math.floor(maxLength);
+    if (!(bound > 0)) return '';
+    const storable = text.replace(UNSTORABLE_CODE_UNIT, '\uFFFD');
+    if (storable.length <= bound) return storable;
+    return storable.slice(0, splitsSurrogatePair(storable, bound - 1) ? bound - 1 : bound);
 }
 
 /**

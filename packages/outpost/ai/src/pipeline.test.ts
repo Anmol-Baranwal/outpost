@@ -35,6 +35,7 @@ import { AI_DISCLAIMER, AI_DISCLAIMER_ESCALATED, AI_DISCLAIMER_REVIEWED } from '
 import { ConfidenceLevel, TicketPriority, TicketType } from './types.js';
 import type { SearchResult, GeneratedResponse } from './types.js';
 import type { ConfidenceAssessment } from './confidence.js';
+import { InvalidSupportReplyError, type SupportAgent } from './support-agent.js';
 import { LONE_SURROGATE } from './test-utils/surrogates.js';
 
 // Create mock instances
@@ -49,8 +50,10 @@ const mockClassify = vi.fn();
 const mockHeuristicClassify = vi.fn();
 const mockFormat = vi.fn();
 
-function createPipeline() {
+/** Without `supportAgent` the pipeline takes the legacy generator path. */
+function createPipeline(supportAgent?: Pick<SupportAgent, 'investigate'>) {
     return new AIPipeline({
+        supportAgent,
         pathfinder: {
             searchDocs: mockSearchDocs,
             searchCode: mockSearchCode,
@@ -674,8 +677,8 @@ describe('AIPipeline', () => {
                 expect(result.handoffReason ?? '').toContain('asserts own verification');
             });
 
-            // The reason is bounded at 2000 UTF-16 code units and lands in the
-            // escalation job's jsonb payload, which rejects a lone surrogate. The
+            // The reason is bounded at 2000 UTF-16 code units and written through
+            // Prisma, which refuses a lone surrogate at `Message.create`. The
             // deterministic reasons lead, so where the model's text starts depends
             // on their length; running both parities puts an emoji's leading half
             // on the 2000th unit in exactly one of them, whatever that length is.
@@ -932,6 +935,55 @@ describe('AIPipeline', () => {
                 expect.any(Array),
                 history,
             );
+        });
+
+        // The handoff reason is written through Prisma to `escalationRequiredReason`.
+        // Prisma refuses an ill-formed string at that first write and Postgres refuses
+        // U+0000, so either one stops the reply before it posts, on every retry.
+        describe('storable handoff reason', () => {
+            const expectStorable = (handoffReason: string | undefined) => {
+                expect(handoffReason).toEqual(expect.any(String));
+                expect(handoffReason).not.toMatch(LONE_SURROGATE);
+                expect(handoffReason).not.toContain('\u0000');
+                expect((handoffReason ?? '').length).toBeLessThanOrEqual(2000);
+            };
+
+            it.each([
+                // What V8's JSON.parse reports for a reply that opens with 😀: it
+                // quotes the first code unit, which is the emoji's leading half alone.
+                [
+                    'a JSON.parse error quoting half an emoji',
+                    `Unexpected token '\uD83D', "😀 not json" is not valid JSON`,
+                ],
+                ['a lone low surrogate and U+0000', 'Evidence quote \uDE00 does not match\u0000'],
+                ['a lone surrogate past the bound', '\uD83D' + 'x'.repeat(2500)],
+            ])("makes a failed investigation's diagnosis storable: %s", async (_label, message) => {
+                expect(message).toMatch(LONE_SURROGATE);
+                const failing = createPipeline({
+                    investigate: async () => {
+                        throw new InvalidSupportReplyError(message);
+                    },
+                });
+
+                const result = await failing.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(true);
+                expectStorable(result.handoffReason);
+            });
+
+            it('makes the model reasoning storable on a forced escalation', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                    reasoning: 'Diagnosis \uDE00\uD83D cut short\u0000',
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.groundedness.forcesEscalation).toBe(true);
+                expect(result.handoffReason ?? '').toContain('asserts own verification');
+                expectStorable(result.handoffReason);
+            });
         });
     });
 
