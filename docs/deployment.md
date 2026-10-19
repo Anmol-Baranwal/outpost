@@ -87,6 +87,15 @@ Copy `.env.example` and fill in all values. Key groups:
 
 All default AI stages use `gpt-5.6-luna`: support investigation, independent confidence verification, ticket classification, and sentiment analysis. Anthropic is needed only for the explicit rollback or direct legacy-generator use. See [Support reply agent](support-agent.md) for model overrides and verification behavior.
 
+### Before the OpenAI default reaches an environment
+
+`AI_RESPONSE_PROVIDER` defaults to `openai`. A deployment that was running on Anthropic has to be prepared **before** a release with this default deploys to it, in **both** Railway environments (staging and production):
+
+1. Set `OPENAI_API_KEY` on `outpost-worker` and on `outpost-web`. These are the two services that make model calls. The other services only format and post replies.
+2. Clear any `claude-*` value from `AI_RESPONSE_MODEL`, `AI_CONFIDENCE_MODEL`, `AI_CLASSIFIER_MODEL` and `AI_SENTIMENT_MODEL`. `validateConfig` rejects a Claude model under the OpenAI provider. `AI_LEGACY_RESPONSE_MODEL` only applies to the legacy generator and can stay.
+
+Missing either step does not fail at boot. `validateConfig` runs only when a pipeline is built, so every `AI_RESPONSE` job fails before its pending response row exists, then retries and dead-letters. The reporter gets no reply, and no human gets a handoff. Sentiment analysis meanwhile drops to a degraded neutral score without anyone being told. To stay on Anthropic instead, set `AI_RESPONSE_PROVIDER=anthropic` (the rollback above) before the release lands.
+
 ## GitHub App Setup
 
 Outpost's GitHub integration (`apps/github-app`) responds to issues and discussions the same way the Discord bot responds in threads. Creating the App is a one-time setup per GitHub org/repo.
@@ -94,8 +103,10 @@ Outpost's GitHub integration (`apps/github-app`) responds to issues and discussi
 1. **Create the App.** GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
     - Webhook URL: `https://<your-github-app-deployment>/api/webhooks/github` — needs a public URL (the deployed `outpost-github-app` Railway service, or a tunnel like ngrok for local dev on port 3200).
     - Webhook secret: generate a random string and save it — this becomes `GITHUB_WEBHOOK_SECRET`.
-    - Permissions: **Issues: Read & write**, **Discussions: Read & write**.
+    - Permissions: **Issues: Read & write**, **Discussions: Read & write**, **Contents: Read-only**. (**Metadata: Read-only** is granted to every App automatically.)
     - Subscribe to events: **Issues**, **Issue comment**, **Discussions**.
+
+    Contents is for the support agent's evidence reads. `read_source` and `read_release` ask GitHub for an installation token narrowed to `contents: read` (`packages/outpost/ai/src/github-evidence-auth.ts`). If the App does not have Contents, GitHub refuses that token request, and every evidence read comes back as `auth_unavailable`, even though the same public reads would succeed without a token. To add it to an App that already exists, an org owner sets **Contents: Read-only** under the App's **Permissions & events**, and the installation then has to accept the updated permissions. GitHub issues no narrowed token until it does.
 
     GitHub has no webhook event for comment reactions, so 👍/👎 feedback is picked up by a 24-hour poll job instead (`GITHUB_REACTION_POLL`) — no extra event subscription is needed for that.
 
