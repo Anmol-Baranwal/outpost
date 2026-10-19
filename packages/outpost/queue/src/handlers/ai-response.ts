@@ -41,7 +41,11 @@
  */
 
 import { prisma } from '@copilotkit/outpost/db';
-import { AIPipeline, publishableText } from '@copilotkit/outpost/ai';
+import {
+    AIPipeline,
+    publishableText,
+    sliceWithoutSplittingSurrogates,
+} from '@copilotkit/outpost/ai';
 import { AI_CONFIDENCE, MAX_JOB_ATTEMPTS } from '@copilotkit/outpost/shared';
 import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
 import {
@@ -78,7 +82,8 @@ export const RESPONSE_RECOVERY_AFTER_MS = 5 * 60 * 1000;
  * binds if that bound ever moves or a future producer skips it. It is restated
  * here because the value crosses a trust boundary at this seam: past it the
  * reason lives in a durable column and in a queued job payload, neither of
- * which should be able to grow without a decision made right here.
+ * which should be able to grow without a decision made right here. The payload
+ * is jsonb, which rejects an unpaired surrogate, so the cut never splits one.
  */
 const MAX_REPEATED_HANDOFF_REASON = 2000;
 
@@ -921,7 +926,7 @@ export async function handleAiResponse(
             : pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE
               ? `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation` +
                 (knownHandoffReason
-                    ? ` (${knownHandoffReason.slice(0, MAX_REPEATED_HANDOFF_REASON)})`
+                    ? ` (${sliceWithoutSplittingSurrogates(knownHandoffReason, MAX_REPEATED_HANDOFF_REASON)})`
                     : '')
               : null;
 

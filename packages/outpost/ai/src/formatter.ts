@@ -74,6 +74,22 @@ function splitsSurrogatePair(text: string, index: number): boolean {
 }
 
 /**
+ * `text.slice(0, maxLength)`, except that it never cuts between the two code units
+ * of an astral character such as 👍: when the cut would land there, the whole
+ * character is dropped instead, so the result is still at most `maxLength` long.
+ *
+ * `.slice()` counts UTF-16 code units, so a plain cut on that boundary leaves a
+ * lone high surrogate. That is an ill-formed string, and Postgres refuses it in a
+ * jsonb column outright — a bounded value bound for a job payload has to be cut
+ * here, with the same guard the Discord splitter uses.
+ */
+export function sliceWithoutSplittingSurrogates(text: string, maxLength: number): string {
+    if (text.length <= maxLength) return text;
+    const cutsAnAstralCharacter = maxLength > 0 && splitsSurrogatePair(text, maxLength - 1);
+    return text.slice(0, cutsAnAstralCharacter ? maxLength - 1 : maxLength);
+}
+
+/**
  * Formats AI-generated responses for different platform targets.
  *
  * - Discord: markdown with 2000-char limit, splits into multiple messages, adds action buttons

@@ -7,6 +7,7 @@ import {
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
     publishableText,
+    sliceWithoutSplittingSurrogates,
 } from './formatter.js';
 
 describe('disclaimer copy', () => {
@@ -720,5 +721,46 @@ describe('publishableText', () => {
         expect(publishableText({ text: 'Summary', details: 'Details' })).toBe('Summary\n\nDetails');
         expect(publishableText({ text: 'Summary' })).toBe('Summary');
         expect(publishableText({ text: 'Summary', parts: [] })).toBe('Summary');
+    });
+});
+
+describe('sliceWithoutSplittingSurrogates', () => {
+    // 😀 is two UTF-16 code units, so `.slice(0, 2000)` on a string whose 2000th
+    // unit is its leading half keeps that half and drops the other: a lone high
+    // surrogate, which Postgres refuses in the escalation job's jsonb payload.
+    const EMOJI = '😀';
+    const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+    it('drops an emoji that straddles the cut instead of keeping half of it', () => {
+        const text = 'x'.repeat(1999) + EMOJI + 'tail';
+        // The failure being fixed, so the test cannot pass vacuously.
+        expect(text.slice(0, 2000)).toMatch(LONE_SURROGATE);
+
+        const cut = sliceWithoutSplittingSurrogates(text, 2000);
+
+        expect(cut).toBe('x'.repeat(1999));
+        expect(cut).not.toMatch(LONE_SURROGATE);
+    });
+
+    it('keeps an emoji that ends exactly on the cut', () => {
+        const text = 'x'.repeat(1998) + EMOJI + 'tail';
+
+        expect(sliceWithoutSplittingSurrogates(text, 2000)).toBe('x'.repeat(1998) + EMOJI);
+    });
+
+    it('never splits a pair or overruns the bound, whatever the alignment', () => {
+        for (const pad of ['', 'x']) {
+            const text = pad + EMOJI.repeat(1500);
+            const cut = sliceWithoutSplittingSurrogates(text, 2000);
+
+            expect(cut).not.toMatch(LONE_SURROGATE);
+            expect(cut.length).toBeLessThanOrEqual(2000);
+            expect(cut.length).toBeGreaterThanOrEqual(1999);
+        }
+    });
+
+    it('returns a string already within the bound unchanged', () => {
+        expect(sliceWithoutSplittingSurrogates(`short ${EMOJI}`, 2000)).toBe(`short ${EMOJI}`);
+        expect(sliceWithoutSplittingSurrogates('', 2000)).toBe('');
     });
 });

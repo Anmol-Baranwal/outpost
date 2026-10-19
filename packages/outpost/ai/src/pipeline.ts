@@ -29,6 +29,7 @@ import {
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
     publishableText,
+    sliceWithoutSplittingSurrogates,
 } from './formatter.js';
 import { config, validateConfig } from './config.js';
 
@@ -420,16 +421,21 @@ export class AIPipeline {
         // one stands in for the other and both travel. Deterministic leads: it is
         // locally verifiable, and it is what survives the bound below when a
         // diagnosis runs long.
+        //
+        // The bound never cuts an emoji in half. This string lands in the
+        // escalation job's jsonb payload, and Postgres rejects the lone surrogate
+        // a plain `.slice()` can leave, on every retry and every sweep.
         const handoffReason =
             suppressed || groundedness.forcesEscalation
-                ? (
+                ? sliceWithoutSplittingSurrogates(
                       [...deterministicReasons, generatedResponse.reasoning]
                           .filter(Boolean)
                           .join('; ') ||
-                      (confidenceAssessment.degraded
-                          ? 'Independent verification was unavailable or malformed'
-                          : 'Independent verification found insufficient support')
-                  ).slice(0, 2000)
+                          (confidenceAssessment.degraded
+                              ? 'Independent verification was unavailable or malformed'
+                              : 'Independent verification found insufficient support'),
+                      2000,
+                  )
                 : undefined;
 
         return {

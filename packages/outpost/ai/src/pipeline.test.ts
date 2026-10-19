@@ -673,6 +673,37 @@ describe('AIPipeline', () => {
                 expect(result.handoffReason ?? '').toContain('asserts own verification');
             });
 
+            // The reason is bounded at 2000 UTF-16 code units and lands in the
+            // escalation job's jsonb payload, which rejects a lone surrogate. The
+            // deterministic reasons lead, so where the model's text starts depends
+            // on their length; running both parities puts an emoji's leading half
+            // on the 2000th unit in exactly one of them, whatever that length is.
+            it.each([
+                ['even', ''],
+                ['odd', 'x'],
+            ])(
+                'never cuts an emoji in half when bounding a long reason (%s alignment)',
+                async (_label, pad) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                        reasoning: pad + '😀'.repeat(1500),
+                    });
+
+                    const result = await pipeline.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    const handoffReason = result.handoffReason ?? '';
+                    expect(handoffReason).toContain('asserts own verification');
+                    expect(handoffReason.length).toBeLessThanOrEqual(2000);
+                    expect(handoffReason.length).toBeGreaterThanOrEqual(1999);
+                    expect(handoffReason).not.toMatch(
+                        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+                    );
+                },
+            );
+
             // The complement of the test above, and the bound on it: a score under
             // the gate is not by itself something a reviewer can act on, so a
             // published answer that merely scored low must stay reason-free rather

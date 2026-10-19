@@ -1332,6 +1332,26 @@ describe('handleAiResponse', () => {
             );
         });
 
+        // The bound counts UTF-16 code units, so an emoji whose leading half is the
+        // 2000th unit would be cut in two by a plain `.slice()`. The lone surrogate
+        // left behind goes into the ESCALATION job's jsonb payload, which Postgres
+        // rejects on every retry and every sweep, so nobody would ever be summoned.
+        it('never leaves half an emoji at the end of a bounded handoff reason', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...forcedEscalationResult,
+                handoffReason: 'x'.repeat(1999) + '😀' + ' and more after the cut',
+            });
+
+            await handleAiResponse(payload, makeContext());
+
+            const expectedReason = `Low AI confidence (39%) — automated escalation (${'x'.repeat(1999)})`;
+            expect(escalationReasons()).toEqual([expectedReason]);
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+            });
+        });
+
         it('keeps the reason through a failed enqueue and recovers it on retry', async () => {
             const storedResponse = trackResponsePersistence();
             mockGenerateSupportResponse.mockResolvedValue(forcedEscalationResult);
