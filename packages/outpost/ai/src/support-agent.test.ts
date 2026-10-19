@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import {
     afterEach,
     beforeEach,
@@ -1471,102 +1472,175 @@ describe('OpenAI support agent', () => {
 
         // The resolver is shared by every investigation in the worker, so a token GitHub has
         // stopped accepting would otherwise be served to all of them until the SDK cache expired.
+        // Only a 401 to a request that carried a credential is a refusal of that credential, and
+        // the report carries the refused value so the resolver can judge whether to act on it.
         it.each([
-            {
-                name: 'an authenticated read drops the credential',
-                authorization: SYNTHETIC_HEADER,
-                invalidations: 1,
-            },
-            {
-                name: 'an anonymous read leaves the resolver alone',
-                authorization: undefined,
-                invalidations: 0,
-            },
-        ])('on a 401, $name', async ({ authorization, invalidations }) => {
-            const githubRequests = stubGitHub(
-                () => new Response('{"message":"Bad credentials"}', { status: 401 }),
-            );
-            scriptTurns([{ tool: 'read_release', tag: 'v2.0.0' }, { output: routeReply }]);
-            const invalidate = vi.fn();
-            const agent = new SupportAgent({
-                apiKey: 'test-key',
-                baseURL: mock().url,
-                tracingDisabled: true,
-                pathfinder: { searchEvidence: vi.fn<PathfinderClient['searchEvidence']>() },
-                githubAuth: { authorization: async () => authorization, invalidate },
-            });
-
-            const result = await agent.investigate({ question: 'Shipped?', source: 'github' });
-
-            expect(result.reply.decision).toBe('route');
-            expect(githubRequests).toHaveLength(1);
-            expect(invalidate).toHaveBeenCalledTimes(invalidations);
-            // One line per rejected credential, carrying neither the bearer nor GitHub's body.
-            expect(operatorLog).toHaveBeenCalledTimes(invalidations);
-            expect(operatorSaw()).not.toContain('ghs_syntheticplaceholdertoken');
-            expect(operatorSaw()).not.toContain('Bad credentials');
-            const failure = toolResultSentToModel(0);
-            expect(failure).toContain('upstream_error');
-            expect(failure).not.toContain('Bad credentials');
-        });
-
-        it('sends the next read a freshly minted token after GitHub rejects the shared one', async () => {
-            const realFetch = globalThis.fetch;
-            const sent: (string | null)[] = [];
-            vi.stubGlobal(
-                'fetch',
-                vi.fn<typeof fetch>(async (input, init) => {
-                    const url = input instanceof Request ? input.url : String(input);
-                    if (!url.startsWith('https://api.github.com/')) return realFetch(input, init);
-                    sent.push(new Headers(init?.headers).get('authorization'));
-                    return sent.length === 1
-                        ? new Response('{"message":"Bad credentials"}', { status: 401 })
-                        : new Response(
-                              JSON.stringify({
-                                  tag_name: 'v2.0.0',
-                                  html_url: releaseUrl,
-                                  body: source.content,
-                                  published_at: '2026-01-01',
-                                  draft: false,
-                                  prerelease: false,
-                              }),
-                          );
-                }),
-            );
-            // Each strategy exchanges once and then serves its cached token, as `createAppAuth`
-            // does, and every exchange mints a distinct one.
-            let exchanges = 0;
-            const cachingExchange: InstallationTokenFactory = () => {
-                let cached: Promise<{ token: string }> | undefined;
-                return () =>
-                    (cached ??= Promise.resolve({ token: `ghs_syntheticexchange${++exchanges}` }));
-            };
-            scriptTurns([
-                { tool: 'read_release', tag: 'v2.0.0' },
-                { tool: 'read_release', tag: 'v2.0.0' },
-                { output: routeReply },
-            ]);
-            const agent = new SupportAgent({
-                apiKey: 'test-key',
-                baseURL: mock().url,
-                tracingDisabled: true,
-                pathfinder: { searchEvidence: vi.fn<PathfinderClient['searchEvidence']>() },
-                githubAuth: githubEvidenceAuthFromEnv(
-                    {
-                        GITHUB_APP_ID: '123456',
-                        GITHUB_PRIVATE_KEY: PEM,
-                        GITHUB_INSTALLATION_ID: '7890',
+            { tool: 'read_source', status: 401, read: 'authenticated', reported: true },
+            { tool: 'read_release', status: 401, read: 'authenticated', reported: true },
+            { tool: 'read_source', status: 401, read: 'anonymous', reported: false },
+            { tool: 'read_release', status: 401, read: 'anonymous', reported: false },
+            { tool: 'read_source', status: 403, read: 'authenticated', reported: false },
+            { tool: 'read_release', status: 403, read: 'authenticated', reported: false },
+            { tool: 'read_source', status: 404, read: 'authenticated', reported: false },
+            { tool: 'read_release', status: 404, read: 'authenticated', reported: false },
+            { tool: 'read_source', status: 500, read: 'authenticated', reported: false },
+        ] as const)(
+            '$tool answered $status to an $read read; refusal reported: $reported',
+            async ({ tool, status, read, reported }) => {
+                const githubRequests = stubGitHub(
+                    () => new Response('{"message":"Bad credentials"}', { status }),
+                );
+                scriptTurns([
+                    tool === 'read_source'
+                        ? { tool, path: SOURCE_PATH }
+                        : { tool: 'read_release', tag: 'v2.0.0' },
+                    { output: routeReply },
+                ]);
+                const invalidate = vi.fn<(refusedAuthorization: string) => void>();
+                const agent = new SupportAgent({
+                    apiKey: 'test-key',
+                    baseURL: mock().url,
+                    tracingDisabled: true,
+                    pathfinder: { searchEvidence: vi.fn<PathfinderClient['searchEvidence']>() },
+                    githubAuth: {
+                        authorization: async () =>
+                            read === 'authenticated' ? SYNTHETIC_HEADER : undefined,
+                        invalidate,
                     },
-                    cachingExchange,
-                ),
+                });
+
+                const result = await agent.investigate({ question: 'Shipped?', source: 'github' });
+
+                expect(result.reply.decision).toBe('route');
+                expect(githubRequests).toHaveLength(1);
+                expect(invalidate.mock.calls).toEqual(reported ? [[SYNTHETIC_HEADER]] : []);
+                // One line per refused credential, carrying neither the bearer nor GitHub's body.
+                expect(operatorLog).toHaveBeenCalledTimes(reported ? 1 : 0);
+                expect(operatorSaw()).not.toContain('ghs_syntheticplaceholdertoken');
+                expect(operatorSaw()).not.toContain('Bad credentials');
+                expect(toolResultSentToModel(0)).not.toContain('Bad credentials');
+            },
+        );
+
+        /**
+         * The resolver as production builds it — `githubEvidenceAuthFromEnv` over the real
+         * `createAppAuth` from `@octokit/auth-app@7.2.2` — with GitHub itself the only stand-in.
+         */
+        describe('over the real @octokit/auth-app', () => {
+            // Generated for this run and registered with no App anywhere: auth-app signs a
+            // genuine JWT with it, and nothing ever checks that signature.
+            const { privateKey } = generateKeyPairSync('rsa', {
+                modulusLength: 2048,
+                publicKeyEncoding: { type: 'spki', format: 'pem' },
+                privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
             });
+            const TOKEN_ENDPOINT = 'https://api.github.com/app/installations/7890/access_tokens';
+            /** A distinct App per test, so none inherits another's shared resolver or its cache. */
+            let nextAppId = 800_000;
 
-            await agent.investigate({ question: 'Shipped?', source: 'github' });
+            // auth-app stamps a token's creation time from the clock (`dist-node/index.js:246`),
+            // so the clock is the test's to move.
+            beforeEach(() => {
+                vi.useFakeTimers({ toFake: ['Date'] });
+                vi.setSystemTime(new Date('2026-10-19T12:00:00.000Z'));
+            });
+            afterEach(() => vi.useRealTimers());
 
-            expect(sent).toEqual([
-                'Bearer ghs_syntheticexchange1',
-                'Bearer ghs_syntheticexchange2',
-            ]);
+            /**
+             * GitHub as both the token exchange and the evidence reads reach it, through the global
+             * `fetch` the production factory and `githubJson` both call. Each exchange mints
+             * `ghs_syntheticexchange<n>`, numbered on arrival; `answerRead` answers the reads.
+             */
+            function githubWithTokenEndpoint(answerRead: (read: number) => Response) {
+                const realFetch = globalThis.fetch;
+                const reads: (string | null)[] = [];
+                const exchanges: string[] = [];
+                vi.stubGlobal(
+                    'fetch',
+                    vi.fn<typeof fetch>(async (input, init) => {
+                        const url = input instanceof Request ? input.url : String(input);
+                        if (!url.startsWith('https://api.github.com/'))
+                            return realFetch(input, init);
+                        if (url === TOKEN_ENDPOINT && init?.method === 'POST') {
+                            const token = `ghs_syntheticexchange${exchanges.push(url)}`;
+                            return new Response(
+                                JSON.stringify({
+                                    token,
+                                    expires_at: '2026-10-19T13:00:00Z',
+                                    permissions: { contents: 'read', metadata: 'read' },
+                                    repository_selection: 'all',
+                                }),
+                                {
+                                    status: 201,
+                                    headers: { 'content-type': 'application/json; charset=utf-8' },
+                                },
+                            );
+                        }
+                        reads.push(new Headers(init?.headers).get('authorization'));
+                        return answerRead(reads.length);
+                    }),
+                );
+                return { reads, exchanges };
+            }
+
+            // auth-app retries a 401 on a token younger than five seconds and gives up once it is
+            // that old (`dist-node/index.js:337`, `:399-412`); the resolver draws the same line.
+            it.each([
+                {
+                    when: 'once past the replication lag, the next read carries a freshly minted one',
+                    age: 5_000,
+                    next: 'Bearer ghs_syntheticexchange2',
+                    exchanged: 2,
+                },
+                {
+                    when: 'inside the replication lag, the next read reuses it as auth-app would',
+                    age: 4_999,
+                    next: 'Bearer ghs_syntheticexchange1',
+                    exchanged: 1,
+                },
+            ])('when GitHub refuses the shared token $when', async ({ age, next, exchanged }) => {
+                const github = githubWithTokenEndpoint((read) => {
+                    if (read > 1)
+                        return new Response(
+                            JSON.stringify({
+                                tag_name: 'v2.0.0',
+                                html_url: releaseUrl,
+                                body: source.content,
+                                published_at: '2026-01-01',
+                                draft: false,
+                                prerelease: false,
+                            }),
+                        );
+                    // GitHub's refusal lands `age` after the token was minted.
+                    vi.setSystemTime(Date.now() + age);
+                    return new Response('{"message":"Bad credentials"}', { status: 401 });
+                });
+                scriptTurns([
+                    { tool: 'read_release', tag: 'v2.0.0' },
+                    { tool: 'read_release', tag: 'v2.0.0' },
+                    { output: routeReply },
+                ]);
+                nextAppId += 1;
+                const agent = new SupportAgent({
+                    apiKey: 'test-key',
+                    baseURL: mock().url,
+                    tracingDisabled: true,
+                    pathfinder: {
+                        searchEvidence: vi.fn<PathfinderClient['searchEvidence']>(),
+                    },
+                    githubAuth: githubEvidenceAuthFromEnv({
+                        GITHUB_APP_ID: String(nextAppId),
+                        GITHUB_PRIVATE_KEY: privateKey,
+                        GITHUB_INSTALLATION_ID: '7890',
+                    }),
+                });
+
+                await agent.investigate({ question: 'Shipped?', source: 'github' });
+
+                expect(github.reads).toEqual(['Bearer ghs_syntheticexchange1', next]);
+                expect(github.exchanges).toHaveLength(exchanged);
+                expect(operatorSaw()).not.toContain('ghs_synthetic');
+            });
         });
     });
 });

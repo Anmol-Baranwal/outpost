@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { generateKeyPairSync } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     GitHubEvidenceAuthError,
     anonymousGitHubEvidenceAuth,
@@ -576,40 +577,26 @@ describe('GitHub evidence authentication', () => {
 });
 
 describe('GitHub evidence authentication: tokens GitHub will not accept', () => {
-    /** A planned exchange result, or one the test settles later to hold the exchange in flight. */
-    type PlannedExchange = { token: unknown } | Promise<{ token: unknown }>;
+    const rendered = (error: unknown) =>
+        `${(error as Error).message} ${(error as Error).stack ?? ''} ${JSON.stringify(error)}`;
 
-    /**
-     * Stands in for `createAppAuth` as it actually behaves: each strategy exchanges once and then
-     * serves that same result from its own cache, malformed or not. Every exchange mints a
-     * distinct token, so a resolver that kept a strategy past a bad result, or past an
-     * invalidation, hands back the earlier bearer instead of a fresh one.
-     */
-    function cachingAppAuth(planned: PlannedExchange[] = []) {
-        let exchanges = 0;
-        const exchange = vi.fn(async (): Promise<{ token: unknown }> => {
-            exchanges += 1;
-            return (await planned.shift()) ?? { token: `ghs_syntheticexchange${exchanges}` };
-        });
-        const create = vi.fn<InstallationTokenFactory>(() => {
-            let cached: Promise<{ token: string }> | undefined;
-            return () => (cached ??= exchange() as Promise<{ token: string }>);
-        });
-        return { create, exchange };
-    }
-    const bearer = (exchange: number) => `Bearer ghs_syntheticexchange${exchange}`;
-
-    // `@octokit/request` hands back `""` as the data of a 2xx whose body it could not read, and
-    // `@octokit/auth-app` destructures that into `token: undefined`, returns it as a success and
-    // caches it — after which every cache hit reads back `""`.
+    // Shapes a token source can resolve with that no request can carry. What is asserted here is
+    // this module's reading of a result, whichever source produced it, so a plain fake will do;
+    // the same shapes arriving through the real SDK are covered further down.
     const MALFORMED = [
         { name: 'no token at all', token: undefined },
         { name: 'an empty token', token: '' },
+        { name: 'a token of only whitespace', token: ' \t ' },
+        { name: 'a token with a space in it', token: 'ghs_synthetic exchange1' },
         { name: 'a token no header can carry', token: 'ghs_syntheticexchange1\r\nX-Injected: 1' },
+        { name: 'a token the SDK cache would cut at its |', token: 'ghs_synthetic|exchange1' },
+        { name: 'a token with a control character in it', token: 'ghs_synthetic\u0000exchange1' },
+        // `RegExp.test` stringifies what it is given, so only a `typeof` check stops this one.
+        { name: 'a token that is not a string', token: ['ghs_syntheticexchange1'] },
     ];
 
     it.each(MALFORMED)('rejects a 2xx exchange that yielded $name', async ({ token }) => {
-        const { create } = cachingAppAuth([{ token }]);
+        const { create } = fakeAppAuth(async () => ({ token: token as string | undefined }));
         const error = await githubEvidenceAuthFromEnv(CREDENTIALS, create)
             .authorization()
             .catch((caught: unknown) => caught);
@@ -618,82 +605,91 @@ describe('GitHub evidence authentication: tokens GitHub will not accept', () => 
             code: 'token_exchange_failed',
         });
         expect(githubEvidenceAuthDiagnostic(error)).toEqual({ code: 'token_exchange_failed' });
-        const rendered = `${(error as Error).message} ${(error as Error).stack ?? ''} ${JSON.stringify(error)}`;
-        expect(rendered).not.toContain('ghs_synthetic');
-        expect(rendered).not.toContain('placeholder');
+        expect(rendered(error)).not.toContain('ghs_synthetic');
+        expect(rendered(error)).not.toContain('placeholder');
     });
 
-    it.each(MALFORMED)(
-        'rebuilds the strategy after an exchange that yielded $name and serves the next healthy token',
-        async ({ token }) => {
-            const { create, exchange } = cachingAppAuth([{ token }]);
-            const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
-            await expect(resolver.authorization()).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
-            // The next investigation is handed this same resolver, and it must exchange again
-            // rather than read the bad result back out of the strategy's cache.
-            expect(await githubEvidenceAuthFromEnv(CREDENTIALS, create).authorization()).toBe(
-                bearer(2),
-            );
-            expect(create).toHaveBeenCalledTimes(2);
-            expect(exchange).toHaveBeenCalledTimes(2);
-            // A usable token is kept: recovering must not cost an exchange per request.
-            expect(await resolver.authorization()).toBe(bearer(2));
-            expect(create).toHaveBeenCalledTimes(2);
-            expect(exchange).toHaveBeenCalledTimes(2);
+    // The result is read inside the no-leak boundary. Read outside it, a source that resolves to
+    // nothing raises a bare TypeError the agent treats as a programmer error, and a field that
+    // throws carries its own message — here, the key and the token — straight past it.
+    it.each([
+        { name: 'resolves to nothing', result: () => null },
+        {
+            name: 'throws from its token field',
+            result: () => ({
+                get token(): string {
+                    throw new Error(`minted ${TOKEN} with ${CREDENTIALS.GITHUB_PRIVATE_KEY}`);
+                },
+            }),
         },
-    );
-
-    it('drops the strategy on invalidate, so the next call exchanges for a fresh token', async () => {
-        const { create, exchange } = cachingAppAuth();
-        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
-        expect(await resolver.authorization()).toBe(bearer(1));
-        expect(await resolver.authorization()).toBe(bearer(1));
-        expect(resolver.invalidate).toBeTypeOf('function');
-        resolver.invalidate?.();
-        expect(await resolver.authorization()).toBe(bearer(2));
-        expect(create).toHaveBeenCalledTimes(2);
-        expect(exchange).toHaveBeenCalledTimes(2);
+        {
+            name: 'throws from its creation time',
+            result: () => ({
+                token: TOKEN,
+                get createdAt(): string {
+                    throw new Error(`minted ${TOKEN} with ${CREDENTIALS.GITHUB_PRIVATE_KEY}`);
+                },
+            }),
+        },
+    ])('keeps a source result that $name inside the boundary', async ({ result }) => {
+        const { create } = fakeAppAuth(async () => result() as never);
+        const error = await githubEvidenceAuthFromEnv(CREDENTIALS, create)
+            .authorization()
+            .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(GitHubEvidenceAuthError);
+        expect(githubEvidenceAuthDiagnostic(error)).toEqual({ code: 'token_exchange_failed' });
+        expect(rendered(error)).not.toContain('ghs_synthetic');
+        expect(rendered(error)).not.toContain('placeholder');
     });
 
-    it('still settles a caller that was awaiting its token when another investigation invalidated', async () => {
-        let settle: (value: { token: unknown }) => void = () => {};
-        const { create, exchange } = cachingAppAuth([
-            new Promise<{ token: unknown }>((resolve) => (settle = resolve)),
-        ]);
-        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
-        const waiting = resolver.authorization();
-        resolver.invalidate?.();
-        const replacement = resolver.authorization();
-        settle({ token: 'ghs_syntheticexchange1' });
-        expect(await waiting).toBe(bearer(1));
-        expect(await replacement).toBe(bearer(2));
-        // The strategy built after the invalidation is the one every later caller shares.
-        expect(await resolver.authorization()).toBe(bearer(2));
-        expect(create).toHaveBeenCalledTimes(2);
-        expect(exchange).toHaveBeenCalledTimes(2);
+    // What a cache hit on a `|`-bearing token looks like from `@octokit/auth-app@7.2.2`: the
+    // entry is split on `|` (`dist-node/index.js:57-64`), so the token comes back cut short —
+    // still a plausible bearer — and the creation time is whatever followed the cut.
+    it('rejects a token whose creation time is not a time, the mark of a cache entry split inside it', async () => {
+        const { create } = fakeAppAuth(async () => ({
+            token: 'ghs_synthetic',
+            createdAt: 'exchange1',
+        }));
+        const error = await githubEvidenceAuthFromEnv(CREDENTIALS, create)
+            .authorization()
+            .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(GitHubEvidenceAuthError);
+        expect(githubEvidenceAuthDiagnostic(error)).toEqual({ code: 'token_exchange_failed' });
     });
 
-    it('does not let a bad exchange that was already in flight discard the strategy that replaced it', async () => {
-        let settle: (value: { token: unknown }) => void = () => {};
-        const { create } = cachingAppAuth([
-            new Promise<{ token: unknown }>((resolve) => (settle = resolve)),
-        ]);
+    // A source that ignores `refresh` — or a refresh that keeps landing on someone else's read of
+    // the old token — must cost a failed read, never the refused bearer.
+    it('fails rather than hand back a refused bearer when the source keeps returning it', async () => {
+        const createdAt = new Date(Date.now() - 60_000).toISOString();
+        const { create, auth } = fakeAppAuth(async () => ({ token: TOKEN, createdAt }));
         const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
-        const stale = resolver.authorization();
-        resolver.invalidate?.();
-        const replacement = resolver.authorization();
-        settle({ token: undefined });
-        await expect(stale).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
-        expect(await replacement).toBe(bearer(2));
-        expect(await resolver.authorization()).toBe(bearer(2));
-        expect(create).toHaveBeenCalledTimes(2);
+        expect(await resolver.authorization()).toBe(`Bearer ${TOKEN}`);
+        resolver.invalidate?.(`Bearer ${TOKEN}`);
+        const error = await resolver.authorization().catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(GitHubEvidenceAuthError);
+        expect(githubEvidenceAuthDiagnostic(error)).toEqual({ code: 'token_exchange_failed' });
+        expect(rendered(error)).not.toContain(TOKEN);
+        // It asked for a refresh, then asked once more when the answer was still the refused one.
+        expect(auth.mock.calls.slice(1).map(([options]) => options.refresh)).toEqual([true, true]);
     });
 
     // `undefined` is the only value that means "read anonymously". Anything else a resolver hands
-    // back is a credential it failed to produce, and must not quietly become an anonymous read.
+    // back that is not a scheme and a credential is one it failed to produce, and must not
+    // quietly become an anonymous read — nor ride out as a header GitHub can only refuse.
     it.each([
         { name: 'an empty string', value: '' },
         { name: 'null', value: null },
+        { name: 'whitespace alone', value: '  \t ' },
+        { name: 'a scheme with no credential', value: 'Bearer ' },
+        { name: 'a bare scheme', value: 'Bearer' },
+        { name: 'a credential with no scheme', value: TOKEN },
+        { name: 'a credential split by a line break', value: `Bearer ${TOKEN}\r\nX-Injected: 1` },
+        // `RegExp.test` stringifies what it is given, so only a `typeof` check stops these.
+        { name: 'an array that reads as a header', value: [`Bearer ${TOKEN}`] },
+        {
+            name: 'an object that reads as a header',
+            value: { toString: (): string => `Bearer ${TOKEN}` },
+        },
     ])(
         'refuses a resolver that resolves to $name instead of reading anonymously',
         async ({ value }) => {
@@ -702,4 +698,258 @@ describe('GitHub evidence authentication: tokens GitHub will not accept', () => 
             ).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
         },
     );
+});
+
+/**
+ * Contract tests: the resolver driven over the production factory — the real `createAppAuth`
+ * from `@octokit/auth-app@7.2.2` and a real Octokit request — entirely offline. The only stand-in
+ * is the global `fetch` that request ends in, answering GitHub's token endpoint with tokens the
+ * test controls, so the SDK's cache, its module-wide sharing of pending reads and its refresh
+ * path are the real ones.
+ */
+describe('GitHub evidence authentication over the real @octokit/auth-app', () => {
+    // Generated for this run and registered with no App anywhere: auth-app signs a genuine JWT
+    // with it, and nothing ever checks that signature.
+    const { privateKey: SYNTHETIC_KEY } = generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const TOKEN_ENDPOINT = 'https://api.github.com/app/installations/7890/access_tokens';
+    const rendered = (error: unknown) =>
+        `${(error as Error).message} ${(error as Error).stack ?? ''} ${JSON.stringify(error)}`;
+
+    /**
+     * A distinct App id per resolver. The shared slot is keyed by credentials, so no test inherits
+     * another's strategy or its cache; the installation stays the same, as in production.
+     */
+    let nextAppId = 900_000;
+    function resolver() {
+        nextAppId += 1;
+        return githubEvidenceAuthFromEnv({
+            GITHUB_APP_ID: String(nextAppId),
+            GITHUB_PRIVATE_KEY: SYNTHETIC_KEY,
+            GITHUB_INSTALLATION_ID: '7890',
+        });
+    }
+
+    interface Reply {
+        status?: number;
+        contentType?: string;
+        body: string | null;
+    }
+    /** GitHub's installation-token response: it carries `expires_at`, and no creation time. */
+    const granted = (token: string): Reply => ({
+        body: JSON.stringify({
+            token,
+            expires_at: new Date(Date.now() + 3_600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
+            permissions: { contents: 'read', metadata: 'read' },
+            repository_selection: 'all',
+        }),
+    });
+
+    /**
+     * Stands in for GitHub's token endpoint. Each exchange is numbered the moment it arrives —
+     * before anything is awaited, so overlapping exchanges can never share a number — and mints
+     * `ghs_syntheticexchange<n>` unless the test planned another reply for it. A planned reply
+     * may be a promise the test settles later, which holds that exchange in flight.
+     */
+    function tokenEndpoint(planned: (Reply | Promise<Reply> | undefined)[] = []) {
+        const exchanges: { authorization: string | null; body: unknown }[] = [];
+        vi.stubGlobal(
+            'fetch',
+            vi.fn<typeof fetch>(async (input, init) => {
+                const url = input instanceof Request ? input.url : String(input);
+                if (url !== TOKEN_ENDPOINT || init?.method !== 'POST')
+                    throw new Error(`unexpected request to ${url}`);
+                const exchange = exchanges.push({
+                    authorization: new Headers(init.headers).get('authorization'),
+                    body: JSON.parse(String(init.body)),
+                });
+                const reply =
+                    (await planned.shift()) ?? granted(`ghs_syntheticexchange${exchange}`);
+                return new Response(reply.body, {
+                    status: reply.status ?? 201,
+                    headers: {
+                        'content-type': reply.contentType ?? 'application/json; charset=utf-8',
+                    },
+                });
+            }),
+        );
+        return exchanges;
+    }
+
+    /** Waits, without moving the test's clock, until `count` exchanges have reached GitHub. */
+    async function exchangesReach(exchanges: unknown[], count: number) {
+        for (let turn = 0; exchanges.length < count; turn += 1) {
+            if (turn > 1_000) throw new Error(`${exchanges.length} of ${count} exchanges arrived`);
+            await new Promise((resolve) => setImmediate(resolve));
+        }
+    }
+
+    // The SDK stamps a token's creation time from the clock (`dist-node/index.js:246`), and the
+    // resolver ages a refused token from that stamp, so the clock is the test's to move.
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-19T12:00:00.000Z'));
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+    const elapse = (ms: number) => vi.setSystemTime(Date.now() + ms);
+
+    it('mints once, signed as the App and narrowed to contents:read, then serves the SDK cache', async () => {
+        const exchanges = tokenEndpoint();
+        const auth = resolver();
+        expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange1');
+        elapse(60_000);
+        expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange1');
+        expect(exchanges).toHaveLength(1);
+        expect(exchanges[0]?.authorization).toMatch(/^bearer [\w-]+\.[\w-]+\.[\w-]+$/);
+        expect(exchanges[0]?.body).toEqual({ permissions: { contents: 'read' } });
+    });
+
+    // Each of these is a 2xx the SDK returns as a success and caches on the strategy this
+    // resolver keeps for its whole life (`dist-node/index.js:229-273`).
+    it.each<{ name: string; reply: Reply }>([
+        {
+            name: 'a JSON body with no token',
+            reply: { body: JSON.stringify({ expires_at: '2026-10-19T13:00:00Z' }) },
+        },
+        {
+            name: "a proxy's HTML page",
+            reply: {
+                status: 200,
+                contentType: 'text/html; charset=utf-8',
+                body: '<html><body>ghs_syntheticproxy sign-in</body></html>',
+            },
+        },
+        {
+            name: 'a binary body',
+            reply: {
+                status: 200,
+                contentType: 'application/octet-stream',
+                body: 'ghs_syntheticbinary',
+            },
+        },
+        { name: 'no body at all', reply: { status: 204, body: null } },
+        { name: 'an empty token', reply: granted('') },
+        { name: 'a token of only whitespace', reply: granted(' \t ') },
+        { name: 'a token with a space in it', reply: granted('ghs_synthetic exchange1') },
+        { name: 'a token with a line break in it', reply: granted('ghs_synthetic\nexchange1') },
+        { name: 'a token with a | in it', reply: granted('ghs_synthetic|exchange1') },
+    ])(
+        'rejects $name, then exchanges again rather than serve what the SDK cached',
+        async ({ reply }) => {
+            const exchanges = tokenEndpoint([reply]);
+            const auth = resolver();
+            const error = await auth.authorization().catch((caught: unknown) => caught);
+            expect(error).toBeInstanceOf(GitHubEvidenceAuthError);
+            expect(githubEvidenceAuthDiagnostic(error)).toEqual({ code: 'token_exchange_failed' });
+            expect(rendered(error)).not.toContain('ghs_synthetic');
+            expect(rendered(error)).not.toContain('PRIVATE KEY');
+            // The next investigation gets this same resolver, and the SDK still holds that reply.
+            expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange2');
+            expect(exchanges).toHaveLength(2);
+            // Recovering costs one exchange, not one per request: the healthy token is cached.
+            expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange2');
+            expect(exchanges).toHaveLength(2);
+        },
+    );
+
+    it('refuses a malformed exchange to every caller that shared it', async () => {
+        let settle: (reply: Reply) => void = () => {};
+        const exchanges = tokenEndpoint([new Promise<Reply>((resolve) => (settle = resolve))]);
+        const auth = resolver();
+        const first = auth.authorization();
+        const second = auth.authorization();
+        await exchangesReach(exchanges, 1);
+        settle(granted('ghs_synthetic|exchange1'));
+        await expect(first).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
+        await expect(second).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
+        expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange2');
+        expect(exchanges).toHaveLength(2);
+    });
+
+    // auth-app retries a 401 while the token is younger than five seconds and gives up once it
+    // is that old (`dist-node/index.js:337`, `:399-412`). The resolver draws the same line.
+    it('keeps a token GitHub refused inside its replication lag, and retires it once past it', async () => {
+        const exchanges = tokenEndpoint();
+        const auth = resolver();
+        const refused = (await auth.authorization()) as string;
+        elapse(4_999);
+        auth.invalidate?.(refused);
+        expect(await auth.authorization()).toBe(refused);
+        expect(exchanges).toHaveLength(1);
+        elapse(1);
+        auth.invalidate?.(refused);
+        expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange2');
+        expect(exchanges).toHaveLength(2);
+    });
+
+    it('answers a refusal past the lag with a different bearer, at the cost of one exchange', async () => {
+        const exchanges = tokenEndpoint();
+        const auth = resolver();
+        const refused = (await auth.authorization()) as string;
+        elapse(60_000);
+        auth.invalidate?.(refused);
+        const replacement = await auth.authorization();
+        expect(replacement).toBe('Bearer ghs_syntheticexchange2');
+        expect(exchanges).toHaveLength(2);
+        // The SDK cached the replacement over the refused token, so it serves every later call.
+        expect(await auth.authorization()).toBe(replacement);
+        expect(exchanges).toHaveLength(2);
+    });
+
+    it('ignores a refusal that names a bearer it no longer hands out', async () => {
+        const exchanges = tokenEndpoint();
+        const auth = resolver();
+        const refused = (await auth.authorization()) as string;
+        elapse(60_000);
+        auth.invalidate?.(refused);
+        const replacement = await auth.authorization();
+        elapse(60_000);
+        // A request that carried the old bearer reports late; something reports a stranger.
+        auth.invalidate?.(refused);
+        auth.invalidate?.('Bearer ghs_syntheticneverissued');
+        expect(await auth.authorization()).toBe(replacement);
+        expect(exchanges).toHaveLength(2);
+    });
+
+    // The SDK shares one pending read per installation and permissions across every caller, and
+    // its key ignores `refresh` (`dist-node/index.js:99-114`, `:167-180`). A call that was
+    // already reading the cache when the refusal landed, and one made just after it, both get
+    // that read's answer: the refused bearer.
+    it('never hands the refused bearer to a call already reading, or to one that joined it', async () => {
+        const exchanges = tokenEndpoint();
+        const auth = resolver();
+        const refused = (await auth.authorization()) as string;
+        elapse(60_000);
+        const underway = auth.authorization();
+        auth.invalidate?.(refused);
+        const joined = auth.authorization();
+        expect(await Promise.all([underway, joined])).toEqual([
+            'Bearer ghs_syntheticexchange2',
+            'Bearer ghs_syntheticexchange2',
+        ]);
+        expect(exchanges).toHaveLength(2);
+    });
+
+    it('shares one refresh among the calls that need it while it is in flight', async () => {
+        let settle: (reply: Reply) => void = () => {};
+        const exchanges = tokenEndpoint([
+            undefined,
+            new Promise<Reply>((resolve) => (settle = resolve)),
+        ]);
+        const auth = resolver();
+        const refused = (await auth.authorization()) as string;
+        elapse(60_000);
+        auth.invalidate?.(refused);
+        const calls = [auth.authorization(), auth.authorization(), auth.authorization()];
+        await exchangesReach(exchanges, 2);
+        settle(granted('ghs_syntheticexchange2'));
+        expect(await Promise.all(calls)).toEqual(Array(3).fill('Bearer ghs_syntheticexchange2'));
+        expect(exchanges).toHaveLength(2);
+    });
 });

@@ -25,11 +25,32 @@ const EVIDENCE_PERMISSIONS = { contents: 'read' } as const;
 const INSTALLATION_ID = /^[1-9][0-9]*$/;
 
 /**
- * A minted token rides as `Bearer <token>`, so it must be one unbroken run of visible ASCII.
- * Anything else is a malformed exchange rather than a credential: an empty token authenticates
- * nothing, and `fetch` refuses outright a header value with a line break in it.
+ * A minted token rides as `Bearer <token>`, so it must be one unbroken run of visible ASCII
+ * other than `|`. Anything else is a malformed exchange rather than a credential: an empty
+ * token authenticates nothing, `fetch` refuses outright a header value with a line break in
+ * it, and a space or tab inside it leaves a header that is no longer a scheme and one token.
+ *
+ * `|` is excluded because the SDK cannot store it: `@octokit/auth-app@7.2.2` caches a token
+ * as one `|`-joined string and splits it on `|` when read back (`dist-node/index.js:89-96`
+ * `set`, `:57-64` `get`), so a cached `ghs_a|b` returns as the bearer `ghs_a`.
  */
-const INSTALLATION_TOKEN = /^[\x21-\x7E]+$/;
+const INSTALLATION_TOKEN = /^[\x21-\x7B\x7D\x7E]+$/;
+
+/**
+ * An `Authorization` value an evidence request may carry: a scheme, one space, and a credential
+ * of visible ASCII. Whitespace alone, or a scheme with nothing after it, is a credential the
+ * resolver failed to produce, not one GitHub could check.
+ */
+const AUTHORIZATION_VALUE = /^[A-Za-z]+ [\x21-\x7E]+$/;
+
+/**
+ * How long GitHub may refuse an installation token it has just issued, while the token
+ * replicates. `@octokit/auth-app@7.2.2` retries such a 401 rather than minting another while
+ * the token is younger than this, and gives up once it is this old (`dist-node/index.js:337`
+ * `FIVE_SECONDS_IN_MS`, `:399-412` `sendRequestWithRetries`). Re-minting inside the window
+ * would only trade one unreplicated token for another.
+ */
+const TOKEN_REPLICATION_LAG_MS = 5_000;
 
 /** The only configuration names this module reads, and the only ones it will ever name. */
 const EVIDENCE_VARIABLES = [
@@ -133,15 +154,16 @@ export interface GitHubEvidenceAuth {
      */
     authorization(signal?: AbortSignal): Promise<string | undefined>;
     /**
-     * Reports that GitHub refused a credential this resolver issued, so the next
-     * `authorization()` mints a fresh one instead of serving the same bearer from cache.
-     * Absent where there is nothing to drop: anonymous and misconfigured resolvers hold none.
+     * Reports that GitHub answered 401 to a request carrying `refusedAuthorization`, the exact
+     * `Authorization` value this resolver handed out for it. Absent where there is nothing to
+     * retire: anonymous and misconfigured resolvers hold no credential.
      *
-     * Safe while other investigations are mid-`authorization()`: each settles with what its own
-     * exchange produced, and only calls that start afterwards build anew. A refusal that lands
-     * after the replacement was minted costs one more exchange, never a stale token.
+     * The report is evidence, not an order. A resolver may ignore one that names a bearer it
+     * has already replaced, or one GitHub may still be replicating; once it acts, it must not
+     * hand `refusedAuthorization` to any caller again, including one whose `authorization()`
+     * was already under way when the refusal landed.
      */
-    invalidate?(): void;
+    invalidate?(refusedAuthorization: string): void;
 }
 
 /** Unauthenticated public reads, for development hosts with no App credentials. */
@@ -155,17 +177,36 @@ export interface InstallationCredentials {
     installationId: number;
 }
 
-/** Mints one installation token. The slice of the App strategy's `auth()` this module calls. */
+/**
+ * Mints one installation token, or reads it back from the strategy's cache. The slice of the
+ * App strategy's `auth()` this module calls.
+ *
+ * `token` and `createdAt` are typed as what actually arrives, not as the SDK declares them.
+ * `@octokit/auth-app@7.2.2` destructures `token` from whatever body a 2xx exchange carried and
+ * returns it without checking (`dist-node/index.js:229-241`, `:273`), so it can be absent.
+ * `createdAt` is the SDK's own clock reading at the exchange (`:246`); GitHub's response has no
+ * such field (`@octokit/openapi-types@25.1.0` `types.d.ts:11881-11899`, `installation-token`),
+ * and other sources need not report one.
+ */
 export type InstallationTokenSource = (options: {
     type: 'installation';
     installationId: number;
     permissions: Record<string, string>;
-}) => Promise<{ token: string }>;
+    /**
+     * Skip the strategy's cache and exchange again (`dist-node/index.js:182`). A call that
+     * overlaps another for the same installation and permissions still shares that call's
+     * promise, refresh or not (`:167-180`).
+     */
+    refresh?: boolean;
+}) => Promise<{ token?: string; createdAt?: string }>;
 
 /**
  * Builds a token source from credentials, named so tests can substitute it. Injecting
  * here rather than stubbing the module keeps the production path — env variables through
  * `createAppAuth` — the one every pipeline consumer gets by default.
+ *
+ * A source that caches must honor `refresh`: it is how the resolver retires a token GitHub
+ * refused. A source that ignores it can only fail those reads, never serve the refused bearer.
  */
 export type InstallationTokenFactory = (
     credentials: InstallationCredentials,
@@ -175,8 +216,9 @@ export type InstallationTokenFactory = (
  * The production factory: `createAppAuth`, wired to a request that cannot hang.
  *
  * `request` is the only seam the strategy exposes — `auth()` forwards no per-call request
- * — and `@octokit/request` reads its `fetch` from there, so this wrapper is the only
- * place a deadline can be applied. It must be minted per attempt: a single
+ * (`@octokit/auth-app@7.2.2` `dist-node/index.js:283-288`, `:160`) — and `@octokit/request`
+ * reads its `fetch` from there (`@octokit/request@9.2.4` `dist-bundle/index.js:33`), so this
+ * wrapper is the only place a deadline can be applied. It must be minted per attempt: a single
  * `AbortSignal.timeout` baked into the request defaults would fire once and then reject
  * every later exchange for the lifetime of the worker.
  *
@@ -267,15 +309,15 @@ let shared:
  * A pipeline, and with it a `SupportAgent`, is built for every job and every web QA
  * request. A resolver per agent would mean a `createAppAuth` per agent, and the SDK
  * keeps its token cache on the strategy instance — each `createAppAuth` starts an empty
- * one — so every ticket that read source would mint its own installation token. Sharing
- * the resolver lets one token serve investigation after investigation until the SDK
- * refreshes it.
+ * one (`@octokit/auth-app@7.2.2` `dist-node/index.js:449-452`) — so every ticket that read
+ * source would mint its own installation token. Sharing the resolver lets one token serve
+ * investigation after investigation until the SDK refreshes it.
  *
- * The cache is all this buys. In-flight sharing is not per instance: the SDK
- * de-duplicates concurrent exchanges in one module-level map, keyed by installation id,
- * permissions and repositories but not by App, so callers that overlap share an exchange
- * whichever strategy they came through. That exchange fills only the cache of the
- * strategy that opened it.
+ * The cache is all this buys. In-flight sharing is not per instance: the SDK shares every
+ * pending read, cache hits included, through one module-level map keyed by installation id,
+ * repositories and permissions — not by App, and not by `refresh` (`:99-114`, `:167-180`) —
+ * so callers that overlap share one read whichever strategy they came through. An exchange
+ * fills only the cache of the strategy that opened it (`:259`).
  *
  * One slot, not a map: a worker reads one fixed set of App credentials for its whole
  * life, so anything else that asks (a test with its own fake factory, a changed
@@ -300,49 +342,97 @@ function sharedInstallationAuth(
 
 /**
  * Mints installation tokens for evidence requests. The SDK decides when a cached token is due
- * for renewal; this resolver only throws that cache away once a token has proved unusable.
+ * for renewal; this resolver only asks it to skip that cache once what it holds has proved
+ * unusable, and keeps one strategy for its whole life to do so. Building a new strategy
+ * instead would not help: it still shares every read the old one had pending (see
+ * `sharedInstallationAuth`), so a call that overlapped one could still be handed the old token.
  */
 function installationAuth(
     credentials: InstallationCredentials,
     createAuth: InstallationTokenFactory,
 ): GitHubEvidenceAuth {
     let tokens: InstallationTokenSource | undefined;
+    /** The bearer most recently handed out, and the time its age is counted from. */
+    let issued: { authorization: string; since: number } | undefined;
+    /** The last bearer GitHub refused once past its replication lag. Never handed out again. */
+    let refused: string | undefined;
+    /** Whether the next read must skip the strategy's cache. */
+    let refresh = false;
+
+    const read = (skipCache: boolean) =>
+        mintWithoutLeaking(() => {
+            // Built on first use, and inside the boundary: createAppAuth validates its
+            // options synchronously and names what it rejected (`@octokit/auth-app@7.2.2`
+            // `dist-node/index.js:429-439`), so a throw here could quote the PEM exactly as a
+            // failed exchange could.
+            tokens ??= createAuth(credentials);
+            // Re-invoked per request on purpose. The SDK caches the installation token for
+            // 59 minutes and exchanges again once the entry lapses (`:43-50`, `:182-207`), a
+            // minute inside GitHub's one-hour expiry; holding the string here would pin a
+            // bearer that stops working an hour into the worker's uptime.
+            return tokens({
+                type: 'installation',
+                installationId: credentials.installationId,
+                permissions: EVIDENCE_PERMISSIONS,
+                ...(skipCache && { refresh: true }),
+            });
+        });
+
     return {
         async authorization(signal) {
             // Ahead of any credential work: an investigation that has already run out of
             // time must not sign a JWT or open an exchange whose result nothing will read.
             signal?.throwIfAborted();
-            // The strategy this call minted from, so a failure discards that one alone and
-            // never a replacement another investigation built while this exchange was in flight.
-            let used: InstallationTokenSource | undefined;
             try {
-                const token = await mintWithoutLeaking(() => {
-                    // Built on first use, and inside the boundary: createAppAuth validates its
-                    // options synchronously and names what it rejected, so a throw here could
-                    // quote the PEM exactly as a failed exchange could.
-                    used = tokens ??= createAuth(credentials);
-                    // Re-invoked per request on purpose. @octokit/auth-app caches the
-                    // installation token and re-mints it before the one-hour expiry; holding
-                    // the string here would pin a bearer that stops working an hour into the
-                    // worker's uptime.
-                    return used({
-                        type: 'installation',
-                        installationId: credentials.installationId,
-                        permissions: EVIDENCE_PERMISSIONS,
-                    });
-                });
-                return `Bearer ${token}`;
+                let skippedCache = refresh;
+                let minted = await read(skippedCache);
+                // Asking for a refresh is not enough on its own. A read that overlaps one
+                // already pending shares that read's promise whatever it asked for
+                // (`@octokit/auth-app@7.2.2` `dist-node/index.js:167-180`), so a call made just
+                // after a refusal — or one already under way when it landed — can come back
+                // with the refused bearer. The shared read has settled and left the map by the
+                // time this one resumes (`:177`), so asking again opens a read of its own or
+                // joins a newer one; a second refused answer is a failure, never a credential.
+                if (refused !== undefined && `Bearer ${minted.token}` === refused) {
+                    skippedCache = true;
+                    minted = await read(true);
+                    if (`Bearer ${minted.token}` === refused)
+                        throw new GitHubEvidenceAuthError(
+                            'GitHub App installation token request for evidence returned a token GitHub had refused',
+                            { code: 'token_exchange_failed' },
+                        );
+                }
+                if (skippedCache) refresh = false;
+                const authorization = `Bearer ${minted.token}`;
+                // Aged from the SDK's own stamp. A source that reports none is aged from when
+                // this resolver first handed the bearer out, which can only make it look
+                // younger than it is: the error is toward keeping a token a little longer,
+                // never toward retiring one GitHub is still replicating.
+                const since =
+                    minted.createdAt ??
+                    (issued?.authorization === authorization ? issued.since : Date.now());
+                issued = { authorization, since };
+                return authorization;
             } catch (error) {
-                // The SDK caches whatever a 2xx exchange resolved with, a missing token
-                // included, for 59 minutes, and every investigation shares this resolver.
-                // Dropping the strategy drops that cache, so the next call exchanges again.
-                // Nothing usable is lost: an exchange only runs when the cache had no token.
-                if (tokens === used) tokens = undefined;
+                // Whatever failed, the next read skips the cache. A 2xx that carried no usable
+                // token is cached before it is returned (`dist-node/index.js:259`) and would be
+                // served from there for 59 minutes (`:43-50`); a thrown exchange cached nothing
+                // (the request at `:238-241` rejects before `:259` runs), so skipping the cache
+                // costs it nothing.
+                refresh = true;
                 throw error;
             }
         },
-        invalidate() {
-            tokens = undefined;
+        invalidate(refusedAuthorization) {
+            // A refusal of a bearer this resolver has since replaced says nothing about the
+            // one it hands out now.
+            if (issued?.authorization !== refusedAuthorization) return;
+            // GitHub briefly refuses a token it has only just issued. Inside that window the
+            // token is kept, as auth-app keeps it (see `TOKEN_REPLICATION_LAG_MS`), and the
+            // next read reuses it.
+            if (Date.now() - issued.since < TOKEN_REPLICATION_LAG_MS) return;
+            refused = refusedAuthorization;
+            refresh = true;
         },
     };
 }
@@ -355,9 +445,16 @@ function rejecting(reason: string, diagnostic: GitHubEvidenceAuthDiagnostic): Gi
     };
 }
 
+/** A token the resolver can send, and when the source says it was minted. */
+interface MintedToken {
+    token: string;
+    /** Epoch milliseconds; absent when the source reported no creation time. */
+    createdAt?: number;
+}
+
 /**
- * Runs strategy construction and the token exchange inside one boundary, and resolves only
- * with a token that can actually be sent.
+ * Runs strategy construction and the token read inside one boundary, and resolves only with a
+ * token that can actually be sent.
  *
  * Either step can quote the PEM it rejected or the token it just minted. Only the underlying
  * error's class name crosses the boundary — deliberately not its message, and not as `cause`,
@@ -367,11 +464,15 @@ function rejecting(reason: string, diagnostic: GitHubEvidenceAuthDiagnostic): Gi
  * chooses its own error names and nothing constrains them. What reaches the operator is the
  * `token_exchange_failed` category alone.
  */
-async function mintWithoutLeaking(mint: () => Promise<{ token: string }>): Promise<string> {
-    // Read once, and inside the boundary, so a result with no object to read lands here too.
+async function mintWithoutLeaking(
+    mint: () => Promise<{ token?: string; createdAt?: string }>,
+): Promise<MintedToken> {
+    // Each read once, and inside the boundary, so a result with no object to read — or one
+    // whose fields throw when read — lands here too.
     let token: unknown;
+    let createdAt: unknown;
     try {
-        ({ token } = await mint());
+        ({ token, createdAt } = await mint());
     } catch (caught) {
         const kind = caught instanceof Error ? caught.name : typeof caught;
         throw new GitHubEvidenceAuthError(
@@ -379,16 +480,29 @@ async function mintWithoutLeaking(mint: () => Promise<{ token: string }>): Promi
             { code: 'token_exchange_failed' },
         );
     }
-    // A 2xx is not a token. `@octokit/request` hands back `""` as the data of a response whose
-    // body it could not read (the exchange deadline firing mid-body, a reset connection, a
-    // proxy's non-JSON page), and `@octokit/auth-app` returns the `undefined` it destructures
-    // from that as a success. The message names the shape that failed, never the value.
-    if (typeof token !== 'string' || !INSTALLATION_TOKEN.test(token))
-        throw new GitHubEvidenceAuthError(
-            'GitHub App installation token request for evidence returned no usable token',
-            { code: 'token_exchange_failed' },
-        );
-    return token;
+    // A 2xx is not a token. `@octokit/request@9.2.4` makes the response data whatever body it
+    // could read (`dist-bundle/index.js:127`, `:130-149`): parsed JSON, or the raw text when
+    // that does not parse; the text of a `text/*` or untyped body, a proxy's HTML page among
+    // them; an ArrayBuffer for any other type; and `""` only when there was no body or it could
+    // not be read (`:92`, `:101-103`). `@octokit/auth-app@7.2.2` destructures `token` from that
+    // data — `undefined` out of a string or an ArrayBuffer — then caches and returns it as a
+    // success (`dist-node/index.js:229-241`, `:259`, `:273`), and later cache hits read the
+    // entry back as `""` (`:57-64`). The message names the shape that failed, never the value.
+    if (typeof token !== 'string' || !INSTALLATION_TOKEN.test(token)) throw noUsableToken();
+    if (createdAt === undefined) return { token };
+    // The SDK stamps every token it mints with an ISO time (`:246`) and reads it back as the
+    // field after the token in its `|`-joined cache entry (`:57-64`). A creation time that is
+    // not a time means that split landed inside the token, so the token beside it is a fragment.
+    const created = typeof createdAt === 'string' ? Date.parse(createdAt) : Number.NaN;
+    if (!Number.isFinite(created)) throw noUsableToken();
+    return { token, createdAt: created };
+}
+
+function noUsableToken(): GitHubEvidenceAuthError {
+    return new GitHubEvidenceAuthError(
+        'GitHub App installation token request for evidence returned no usable token',
+        { code: 'token_exchange_failed' },
+    );
 }
 
 /**
@@ -437,10 +551,13 @@ export async function githubEvidenceHeaders(
     signal?.throwIfAborted();
     const authorization = await untilAborted(auth.authorization(signal), signal);
     if (authorization === undefined) return { Accept: 'application/vnd.github+json' };
-    // `undefined` alone means "send no Authorization header". An empty or non-string value is
-    // a credential the resolver failed to produce, and sending the request bare would turn that
-    // failure into the quietly rate-limited success the resolver contract forbids.
-    if (typeof authorization !== 'string' || !authorization)
+    // `undefined` alone means "send no Authorization header". Anything else that is not a
+    // scheme and a credential — an empty or whitespace-only string, a bare `Bearer `, a value
+    // that is not a string at all — is a credential the resolver failed to produce, and sending
+    // the request bare would turn that failure into the quietly rate-limited success the
+    // resolver contract forbids. The `typeof` check is not redundant: `RegExp.test` stringifies
+    // its argument, so `['Bearer x']` would otherwise pass and ride out as a header.
+    if (typeof authorization !== 'string' || !AUTHORIZATION_VALUE.test(authorization))
         throw new GitHubEvidenceAuthError('GitHub evidence authentication resolved no credential');
     return { Accept: 'application/vnd.github+json', Authorization: authorization };
 }

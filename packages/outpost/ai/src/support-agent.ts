@@ -142,9 +142,11 @@ async function githubJson(
     }
     // Every investigation in the worker shares one resolver, and the SDK cache behind it would
     // keep serving a token GitHub has refused until it expired. Only a request that carried a
-    // credential can have had one refused, so an anonymous 401 drops nothing and logs nothing.
+    // credential can have had one refused, so an anonymous 401 reports nothing and logs nothing.
+    // The report names the refused value: the resolver decides whether that bearer is still the
+    // one it hands out, and whether GitHub is merely still replicating it.
     if (response.status === 401 && headers.Authorization) {
-        auth.invalidate?.();
+        auth.invalidate?.(headers.Authorization);
         // A constant line: the body is untrusted and the bearer is the very thing refused.
         console.error('[SupportAgent] GitHub rejected the evidence credential with HTTP 401');
     }
