@@ -85,6 +85,22 @@ export const RESPONSE_RECOVERY_AFTER_MS = 5 * 60 * 1000;
  */
 const MAX_REPEATED_HANDOFF_REASON = 2000;
 
+/**
+ * `reason` as this handler repeats it into an escalation: trimmed, made storable
+ * and bounded to MAX_REPEATED_HANDOFF_REASON.
+ *
+ * Every arm that repeats the pipeline's reason goes through here, and so do the
+ * groundedness findings a withheld draft falls back to, because all of them land
+ * in the same durable column and queued payload. Prisma's query engine refuses
+ * an ill-formed string at the first write, `Message.create`, and Postgres
+ * refuses U+0000 and unpaired surrogates in text and jsonb. A blank or absent
+ * reason comes back as `''`, so each arm picks its own fallback instead of
+ * writing an empty parenthetical.
+ */
+function repeatableReason(reason: string | undefined): string {
+    return boundForStorage(reason?.trim() ?? '', MAX_REPEATED_HANDOFF_REASON);
+}
+
 interface StoredAiResponse {
     id: string;
     type: string;
@@ -918,14 +934,16 @@ export async function handleAiResponse(
         // recovered text — so the generic sentence stays intact ahead of the
         // detail. An absent or blank reason adds nothing at all, which keeps a
         // merely low-scoring reply reading exactly as it always has.
-        const knownHandoffReason = pipelineResult.handoffReason?.trim();
+        const knownHandoffReason = repeatableReason(pipelineResult.handoffReason);
+        const withheldReason =
+            knownHandoffReason ||
+            repeatableReason(pipelineResult.groundedness.reasons.join('; ')) ||
+            'Insufficient verified evidence';
         const nonDeliveryEscalationReason = pipelineResult.suppressed
-            ? `AI response withheld (${pipelineResult.handoffReason || pipelineResult.groundedness.reasons.join('; ') || 'Insufficient verified evidence'}) — needs a human answer`
+            ? `AI response withheld (${withheldReason}) — needs a human answer`
             : pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE
               ? `Low AI confidence (${(pipelineResult.confidenceScore * 100).toFixed(0)}%) — automated escalation` +
-                (knownHandoffReason
-                    ? ` (${boundForStorage(knownHandoffReason, MAX_REPEATED_HANDOFF_REASON)})`
-                    : '')
+                (knownHandoffReason ? ` (${knownHandoffReason})` : '')
               : null;
 
         // 5. Persist the AI-generated response and atomically claim this
@@ -1017,7 +1035,7 @@ export async function handleAiResponse(
         if (pipelineResult.suppressed) {
             console.warn(
                 `[AI Response] Ungrounded draft withheld for ticket ${ticketId} — ` +
-                    `${pipelineResult.handoffReason || pipelineResult.groundedness.reasons.join('; ') || 'Insufficient verified evidence'}. ` +
+                    `${withheldReason}. ` +
                     `Publishing the safe replacement and escalating to a human.`,
             );
         }

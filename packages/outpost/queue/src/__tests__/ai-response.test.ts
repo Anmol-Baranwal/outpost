@@ -1235,6 +1235,21 @@ describe('handleAiResponse', () => {
     describe('a published response that carries its own handoff reason', () => {
         const payload = { ticketId: 'tkt-1', source: 'discord' as const };
 
+        /**
+         * The handler's MAX_REPEATED_HANDOFF_REASON, restated rather than
+         * exported: these tests pin the number, so moving the bound fails them
+         * instead of moving them along with it.
+         */
+        const MAX_REPEATED_HANDOFF_REASON = 2000;
+
+        /**
+         * `LONE_SURROGATE` from ai/src/test-utils/surrogates.ts, restated because
+         * the queue's tsconfig roots at queue/src and refuses an import from the
+         * ai package's sources (TS6059).
+         */
+        const LONE_SURROGATE =
+            /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
         function escalationReasons(): string[] {
             return mockPrismaJob.create.mock.calls
                 .map((call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data)
@@ -1350,6 +1365,140 @@ describe('handleAiResponse', () => {
             expect(mockPrismaMessage.create).toHaveBeenCalledWith({
                 data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
             });
+        });
+
+        // The emoji case above cuts at 1999 whether the bound is 1999 or 2000, so
+        // it cannot tell the two apart. These lengths can: one either side of the
+        // bound, and the cut lands exactly on it.
+        it.each([
+            ['keeps a reason exactly as long as the bound whole', MAX_REPEATED_HANDOFF_REASON],
+            ['cuts a reason one unit over the bound to the bound', MAX_REPEATED_HANDOFF_REASON + 1],
+        ])('%s', async (_label, length) => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...forcedEscalationResult,
+                handoffReason: 'x'.repeat(length),
+            });
+
+            await handleAiResponse(payload, makeContext());
+
+            const expectedReason =
+                `Low AI confidence (39%) — automated escalation ` +
+                `(${'x'.repeat(MAX_REPEATED_HANDOFF_REASON)})`;
+            expect(escalationReasons()).toEqual([expectedReason]);
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+            });
+        });
+
+        // ── A withheld draft repeats its reason the same way ──
+        //
+        // The suppressed arm writes its reason to the same durable column and the
+        // same queued payload as the low-confidence arm, so it gets the same
+        // treatment: trimmed, falling back when blank, bounded, and made storable.
+        // Prisma's query engine refuses an ill-formed string at the first write,
+        // `Message.create`, and Postgres refuses U+0000 and unpaired surrogates in
+        // text and jsonb. Either refusal fails the job before it posts, on every
+        // retry.
+
+        it.each([
+            [
+                'the groundedness findings',
+                suppressedResult.groundedness.reasons,
+                'unverifiable claims: "bug confirmed"; identifiers absent from sources: ' +
+                    'copilotKitInputControls, copilotKitInputControlsExpanded',
+            ],
+            [
+                'the default when the findings are blank too',
+                ['   '],
+                'Insufficient verified evidence',
+            ],
+        ])(
+            'falls back from a blank withheld reason to %s',
+            async (_label, reasons, expectedDetail) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...suppressedResult,
+                    handoffReason: '   \n  ',
+                    groundedness: { ...suppressedResult.groundedness, reasons },
+                });
+                const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+                try {
+                    await handleAiResponse(payload, makeContext());
+
+                    const expectedReason = `AI response withheld (${expectedDetail}) — needs a human answer`;
+                    expect(escalationReasons()).toEqual([expectedReason]);
+                    expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                        data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                    });
+                    // The log names the same reason the human is handed.
+                    expect(warn).toHaveBeenCalledWith(
+                        expect.stringContaining(`withheld for ticket tkt-1 — ${expectedDetail}. `),
+                    );
+                } finally {
+                    warn.mockRestore();
+                }
+            },
+        );
+
+        it.each([
+            ['handoff reason', { handoffReason: 'x'.repeat(5000) }],
+            [
+                'groundedness fallback',
+                {
+                    groundedness: {
+                        ...suppressedResult.groundedness,
+                        reasons: ['x'.repeat(5000)],
+                    },
+                },
+            ],
+        ])('bounds a runaway withheld %s', async (_label, overrides) => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({ ...suppressedResult, ...overrides });
+
+            await handleAiResponse(payload, makeContext());
+
+            const expectedReason =
+                `AI response withheld (${'x'.repeat(MAX_REPEATED_HANDOFF_REASON)}) ` +
+                `— needs a human answer`;
+            expect(escalationReasons()).toEqual([expectedReason]);
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+            });
+        });
+
+        const ILL_FORMED_REASON = 'Reporter version \u0000 is unknown \uDE00 \uD83D';
+
+        it.each([
+            ['handoff reason', { handoffReason: ILL_FORMED_REASON }],
+            [
+                'groundedness fallback',
+                {
+                    groundedness: {
+                        ...suppressedResult.groundedness,
+                        reasons: [ILL_FORMED_REASON],
+                    },
+                },
+            ],
+        ])('makes an ill-formed withheld %s storable', async (_label, overrides) => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({ ...suppressedResult, ...overrides });
+
+            await handleAiResponse(payload, makeContext());
+
+            const queued = escalationReasons();
+            const stored = mockPrismaMessage.create.mock.calls[0][0].data
+                .escalationRequiredReason as string;
+            const expectedReason =
+                'AI response withheld (Reporter version \uFFFD is unknown \uFFFD \uFFFD) ' +
+                '— needs a human answer';
+            expect(queued).toEqual([expectedReason]);
+            expect(stored).toBe(expectedReason);
+            for (const reason of [...queued, stored]) {
+                expect(reason).not.toMatch(LONE_SURROGATE);
+                expect(reason).not.toContain('\u0000');
+            }
         });
 
         it('keeps the reason through a failed enqueue and recovers it on retry', async () => {
