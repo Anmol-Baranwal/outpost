@@ -122,6 +122,68 @@ describe('GitHub evidence authentication', () => {
         );
     });
 
+    /** A second synthetic key, standing in for a rotation of the configured one. */
+    const ROTATED_PRIVATE_KEY =
+        '-----BEGIN RSA PRIVATE KEY-----\nrotatedplaceholder\n-----END RSA PRIVATE KEY-----';
+
+    // The slot is reused only when everything its strategy was built from matches, and each
+    // part has to count on its own. A comparison that skipped the private key, say, would
+    // leave a rotated key's investigations on a strategy still signing with the old one.
+    it.each([
+        {
+            part: 'GITHUB_APP_ID',
+            env: { GITHUB_APP_ID: '654321' },
+            built: { appId: '654321' },
+        },
+        {
+            part: 'GITHUB_PRIVATE_KEY',
+            env: { GITHUB_PRIVATE_KEY: ROTATED_PRIVATE_KEY },
+            built: { privateKey: ROTATED_PRIVATE_KEY },
+        },
+        {
+            part: 'GITHUB_INSTALLATION_ID',
+            env: { GITHUB_INSTALLATION_ID: '7891' },
+            built: { installationId: 7891 },
+        },
+        { part: 'the token factory', env: {}, built: {}, newFactory: true },
+    ])(
+        'builds a fresh resolver when any part of its key changes: $part',
+        async ({ env, built, newFactory }) => {
+            const original = fakeAppAuth();
+            const first = githubEvidenceAuthFromEnv(CREDENTIALS, original.create);
+            // Built and serving, as the old strategy would be when the change lands.
+            await first.authorization();
+            const { create } = newFactory ? fakeAppAuth() : original;
+            const changed = githubEvidenceAuthFromEnv({ ...CREDENTIALS, ...env }, create);
+            expect(changed).not.toBe(first);
+            await changed.authorization();
+            expect(create).toHaveBeenLastCalledWith({
+                appId: CREDENTIALS.GITHUB_APP_ID,
+                privateKey: CREDENTIALS.GITHUB_PRIVATE_KEY,
+                installationId: 7890,
+                ...built,
+            });
+        },
+    );
+
+    // Construction is deferred to first use, so a strategy that failed to build must leave
+    // the shared resolver unbuilt. Remembering the failure would fail every investigation
+    // that followed, for as long as the worker stayed up.
+    it('does not pin a failed strategy construction on the shared resolver', async () => {
+        const { create, auth } = fakeAppAuth();
+        create.mockImplementationOnce(() => {
+            throw new TypeError('[@octokit/auth-app] strategy could not be built');
+        });
+        const first = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        await expect(first.authorization()).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
+        // The next ticket gets the same resolver, and it builds the strategy again.
+        const next = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        expect(next).toBe(first);
+        expect(await next.authorization()).toBe(`Bearer ${TOKEN}`);
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(auth).toHaveBeenCalledTimes(1);
+    });
+
     it('serves anonymous public reads only when no App credential is configured', async () => {
         const { create } = fakeAppAuth();
         const resolver = githubEvidenceAuthFromEnv({}, create);
