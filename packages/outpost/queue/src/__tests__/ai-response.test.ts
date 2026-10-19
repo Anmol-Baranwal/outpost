@@ -1348,9 +1348,11 @@ describe('handleAiResponse', () => {
         });
 
         // The bound counts UTF-16 code units, so an emoji whose leading half is the
-        // 2000th unit would be cut in two by a plain `.slice()`. The lone surrogate
-        // left behind goes into the ESCALATION job's jsonb payload, which Postgres
-        // rejects on every retry and every sweep, so nobody would ever be summoned.
+        // 2000th unit would be cut in two by a plain `.slice()`. Prisma refuses the
+        // lone surrogate left behind at the first write, `Message.create` of
+        // `escalationRequiredReason`, so the job fails before it posts, on every retry
+        // and every sweep, and nobody would ever be summoned. Postgres would refuse it
+        // in text and in the ESCALATION job's jsonb payload too.
         it('never leaves half an emoji at the end of a bounded handoff reason', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockGenerateSupportResponse.mockResolvedValue({
