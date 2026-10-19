@@ -703,6 +703,11 @@ describe('AIPipeline', () => {
                     expect(handoffReason.length).toBeLessThanOrEqual(2000);
                     expect(handoffReason.length).toBeGreaterThanOrEqual(1999);
                     expect(handoffReason).not.toMatch(LONE_SURROGATE);
+                    // The precondition: the cut fell inside the emoji run, so a whole
+                    // emoji ends the reason. Should the deterministic reasons ever fill
+                    // the bound on their own, this fails rather than the case passing
+                    // on a cut that never came near an emoji.
+                    expect(handoffReason.endsWith('😀')).toBe(true);
                 },
             );
 
