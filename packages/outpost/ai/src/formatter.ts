@@ -107,6 +107,26 @@ export function boundForStorage(text: string, maxLength: number): string {
     return storable.slice(0, splitsSurrogatePair(storable, bound - 1) ? bound - 1 : bound);
 }
 
+/** Only whitespace and U+FFFD: what a blank or wholly unstorable part cleans to. */
+const BLANK_REASON = /^[\s\uFFFD]*$/;
+
+/**
+ * `parts` as one stored reason, joined with `'; '`, or `''` when no part says
+ * anything, so the caller picks its own fallback.
+ *
+ * Each part is judged after cleaning, not before: made storable as
+ * {@link boundForStorage} does, trimmed, and dropped if only whitespace and
+ * U+FFFD remain. The join is then bounded by {@link boundForStorage}, and any
+ * whitespace the cut leaves at the end goes too.
+ */
+export function storableReason(parts: readonly (string | undefined)[], maxLength: number): string {
+    const kept = parts
+        .map((part) => (part ?? '').replace(UNSTORABLE_CODE_UNIT, '\uFFFD').trim())
+        .filter((part) => !BLANK_REASON.test(part));
+    const bounded = boundForStorage(kept.join('; '), maxLength).trimEnd();
+    return BLANK_REASON.test(bounded) ? '' : bounded;
+}
+
 /**
  * Formats AI-generated responses for different platform targets.
  *

@@ -41,7 +41,12 @@
  */
 
 import { prisma } from '@copilotkit/outpost/db';
-import { AIPipeline, boundForStorage, publishableText } from '@copilotkit/outpost/ai';
+import {
+    AIPipeline,
+    boundForStorage,
+    publishableText,
+    storableReason,
+} from '@copilotkit/outpost/ai';
 import { AI_CONFIDENCE, MAX_JOB_ATTEMPTS } from '@copilotkit/outpost/shared';
 import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
 import {
@@ -86,19 +91,20 @@ export const RESPONSE_RECOVERY_AFTER_MS = 5 * 60 * 1000;
 const MAX_REPEATED_HANDOFF_REASON = 2000;
 
 /**
- * `reason` as this handler repeats it into an escalation: trimmed, made storable
- * and bounded to MAX_REPEATED_HANDOFF_REASON.
+ * `parts` as one reason this handler repeats into an escalation: each made
+ * storable and trimmed, the blank ones dropped, the rest joined and bounded to
+ * MAX_REPEATED_HANDOFF_REASON. See storableReason.
  *
  * Every arm that repeats the pipeline's reason goes through here, and so do the
  * groundedness findings a withheld draft falls back to, because all of them land
  * in the same durable column and queued payload. Prisma's query engine refuses
  * an ill-formed string at the first write, `Message.create`, and Postgres
- * refuses U+0000 and unpaired surrogates in text and jsonb. A blank or absent
- * reason comes back as `''`, so each arm picks its own fallback instead of
- * writing an empty parenthetical.
+ * refuses U+0000 and unpaired surrogates in text and jsonb. A reason with
+ * nothing left after cleaning comes back as `''`, so each arm picks its own
+ * fallback instead of writing an empty parenthetical.
  */
-function repeatableReason(reason: string | undefined): string {
-    return boundForStorage(reason?.trim() ?? '', MAX_REPEATED_HANDOFF_REASON);
+function repeatableReason(...parts: (string | undefined)[]): string {
+    return storableReason(parts, MAX_REPEATED_HANDOFF_REASON);
 }
 
 interface StoredAiResponse {
@@ -947,10 +953,13 @@ export async function handleAiResponse(
         // detail. An absent or blank reason adds nothing at all, which keeps a
         // merely low-scoring reply reading exactly as it always has.
         const knownHandoffReason = repeatableReason(pipelineResult.handoffReason);
-        const withheldReason =
-            knownHandoffReason ||
-            repeatableReason(pipelineResult.groundedness.reasons.join('; ')) ||
-            'Insufficient verified evidence';
+        // Computed only for a withheld draft, so a published result is never
+        // asked for `groundedness`. Both readers sit behind the same check.
+        const withheldReason = pipelineResult.suppressed
+            ? knownHandoffReason ||
+              repeatableReason(...pipelineResult.groundedness.reasons) ||
+              'Insufficient verified evidence'
+            : '';
         const nonDeliveryEscalationReason = pipelineResult.suppressed
             ? `AI response withheld (${withheldReason}) — needs a human answer`
             : pipelineResult.confidenceScore < AI_CONFIDENCE.ESCALATE

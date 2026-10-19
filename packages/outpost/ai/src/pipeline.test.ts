@@ -990,6 +990,107 @@ describe('AIPipeline', () => {
                 expectStorable(result.handoffReason);
             });
         });
+
+        // Whether a part of the reason is blank, and so whether a fallback applies,
+        // is decided on the text as stored, not on the raw text.
+        describe('handoff reason judged after cleaning', () => {
+            const UNUSABLE_REASONINGS = [
+                ['whitespace only', ' \n\t '],
+                ['U+0000 only', '\u0000\u0000'],
+                ['lone surrogates only', '\uDE00 \uD83D'],
+            ];
+
+            it.each(UNUSABLE_REASONINGS)(
+                'leaves only the deterministic reasons on a forced escalation whose reasoning is %s',
+                async (_label, reasoning) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                        reasoning,
+                    });
+
+                    const result = await pipeline.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.groundedness.forcesEscalation).toBe(true);
+                    expect(result.groundedness.reasons.length).toBeGreaterThan(0);
+                    expect(result.handoffReason).toBe(result.groundedness.reasons.join('; '));
+                },
+            );
+
+            it.each(UNUSABLE_REASONINGS)(
+                'falls back to its own reason when a failed investigation reports %s',
+                async (_label, message) => {
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvalidSupportReplyError(message);
+                        },
+                    });
+
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expect(result.handoffReason).toBe(
+                        'Independent verification was unavailable or malformed',
+                    );
+                },
+            );
+
+            it.each(UNUSABLE_REASONINGS)(
+                'falls back to its own reason when a verified-too-low answer hands off with %s',
+                async (_label, handoffReason) => {
+                    const source = {
+                        title: 'Setup',
+                        content: 'Restart the dev server after you change the config.',
+                        sourceUrl: 'https://docs.copilotkit.ai/setup',
+                        score: 0.9,
+                    };
+                    const answering = createPipeline({
+                        investigate: async () => ({
+                            reply: {
+                                decision: 'answer',
+                                summary: 'Restart the dev server after you change the config.',
+                                details: '',
+                                apiVersion: 'v2',
+                                appliesTo: 'CopilotKit v2',
+                                evidence: [{ sourceUrl: source.sourceUrl, quote: source.content }],
+                                handoffReason,
+                            },
+                            sources: [source],
+                            tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                        }),
+                    });
+                    mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.2 });
+
+                    const result = await answering.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expect(result.groundedness.reasons).toEqual([]);
+                    expect(result.handoffReason).toBe(
+                        'Independent verification found insufficient support',
+                    );
+                },
+            );
+
+            it('never ends the reason in whitespace the bound cut it at', async () => {
+                const failing = createPipeline({
+                    investigate: async () => {
+                        throw new InvalidSupportReplyError(
+                            'x'.repeat(1999) + ' ' + 'y'.repeat(100),
+                        );
+                    },
+                });
+
+                const result = await failing.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.handoffReason).toBe('x'.repeat(1999));
+            });
+        });
     });
 
     describe('degraded confidence safety cap', () => {

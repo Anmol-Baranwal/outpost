@@ -1415,6 +1415,16 @@ describe('handleAiResponse', () => {
                 ['   '],
                 'Insufficient verified evidence',
             ],
+            [
+                'the default when several findings are blank',
+                ['', '', '  \n'],
+                'Insufficient verified evidence',
+            ],
+            [
+                'the default when the findings hold only unstorable units',
+                ['\u0000', '\uDE00 \uD83D'],
+                'Insufficient verified evidence',
+            ],
         ])(
             'falls back from a blank withheld reason to %s',
             async (_label, reasons, expectedDetail) => {
@@ -1501,6 +1511,101 @@ describe('handleAiResponse', () => {
                 expect(reason).not.toMatch(LONE_SURROGATE);
                 expect(reason).not.toContain('\u0000');
             }
+        });
+
+        // A reason made only of units the store refuses cleans to U+FFFD and
+        // nothing else, which says no more than a blank one.
+        const UNSTORABLE_ONLY = [
+            ['U+0000 only', '\u0000\u0000'],
+            ['lone surrogates only', '\uDE00 \uD83D'],
+        ];
+
+        it.each(UNSTORABLE_ONLY)(
+            'falls back from a withheld handoff reason of %s',
+            async (_label, handoffReason) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...suppressedResult,
+                    handoffReason,
+                });
+
+                await handleAiResponse(payload, makeContext());
+
+                const expectedReason =
+                    'AI response withheld (unverifiable claims: "bug confirmed"; identifiers ' +
+                    'absent from sources: copilotKitInputControls, ' +
+                    'copilotKitInputControlsExpanded) — needs a human answer';
+                expect(escalationReasons()).toEqual([expectedReason]);
+                expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                });
+            },
+        );
+
+        it.each(UNSTORABLE_ONLY)(
+            'adds nothing to the low-confidence reason for a handoff reason of %s',
+            async (_label, handoffReason) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...forcedEscalationResult,
+                    handoffReason,
+                });
+
+                await handleAiResponse(payload, makeContext());
+
+                const expectedReason = 'Low AI confidence (39%) — automated escalation';
+                expect(escalationReasons()).toEqual([expectedReason]);
+                expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                });
+            },
+        );
+
+        it.each([
+            [
+                'withheld',
+                suppressedResult,
+                `AI response withheld (${'x'.repeat(MAX_REPEATED_HANDOFF_REASON - 1)}) ` +
+                    `— needs a human answer`,
+            ],
+            [
+                'low-confidence',
+                forcedEscalationResult,
+                `Low AI confidence (39%) — automated escalation ` +
+                    `(${'x'.repeat(MAX_REPEATED_HANDOFF_REASON - 1)})`,
+            ],
+        ])(
+            'leaves no whitespace where the bound cuts a %s reason',
+            async (_label, result, expectedReason) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...result,
+                    handoffReason:
+                        'x'.repeat(MAX_REPEATED_HANDOFF_REASON - 1) + ' ' + 'y'.repeat(100),
+                });
+
+                await handleAiResponse(payload, makeContext());
+
+                expect(escalationReasons()).toEqual([expectedReason]);
+                expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                });
+            },
+        );
+
+        // `groundedness` is only read for a withheld draft.
+        it('publishes a confident reply whose result carries no groundedness', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...highConfidenceResult,
+                groundedness: undefined,
+            } as unknown as typeof highConfidenceResult);
+
+            const result = await handleAiResponse(payload, makeContext());
+
+            expect(result.success).toBe(true);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(escalationReasons()).toEqual([]);
         });
 
         it('keeps the reason through a failed enqueue and recovers it on retry', async () => {

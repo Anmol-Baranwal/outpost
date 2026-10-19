@@ -28,8 +28,8 @@ import {
     AI_DISCLAIMER_ESCALATED,
     AI_DISCLAIMER_REVIEWED,
     ResponseFormatter,
-    boundForStorage,
     publishableText,
+    storableReason,
 } from './formatter.js';
 import { config, validateConfig } from './config.js';
 
@@ -428,17 +428,16 @@ export class AIPipeline {
         // write, and Postgres refuses U+0000 and unpaired surrogates in text and
         // jsonb. The reasoning can carry either before any cut, and either one
         // fails the job before it posts, on every retry.
+        //
+        // Each part is judged blank after cleaning, so the fallback still applies
+        // when the reasoning cleans to nothing. See storableReason and
+        // boundForStorage.
         const handoffReason =
             suppressed || groundedness.forcesEscalation
-                ? boundForStorage(
-                      [...deterministicReasons, generatedResponse.reasoning]
-                          .filter(Boolean)
-                          .join('; ') ||
-                          (confidenceAssessment.degraded
-                              ? 'Independent verification was unavailable or malformed'
-                              : 'Independent verification found insufficient support'),
-                      2000,
-                  )
+                ? storableReason([...deterministicReasons, generatedResponse.reasoning], 2000) ||
+                  (confidenceAssessment.degraded
+                      ? 'Independent verification was unavailable or malformed'
+                      : 'Independent verification found insufficient support')
                 : undefined;
 
         return {
