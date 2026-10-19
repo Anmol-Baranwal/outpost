@@ -4596,3 +4596,406 @@ describe('restoreShadowMode', () => {
         expect(process.env.SHADOW_MODE).toBe('false');
     });
 });
+
+// ─── One hostile corpus through every escalation-reason arm ───────────────
+//
+// Three arms write an escalation reason: the published low-confidence arm, the
+// withheld arm and the delivery-failure arm. Each reason lands in
+// `Message.escalationRequiredReason` and in the ESCALATION job's jsonb payload.
+// Prisma's query engine refuses an ill-formed string at the first write, and
+// Postgres refuses U+0000 and unpaired surrogates in text and jsonb, so a bad
+// reason fails the job before it posts, on every retry. Review kept finding one
+// more arm that forgot to clean, bound or fall back. Every arm therefore takes
+// the same corpus here, and an arm added later joins ESCALATION_ARMS to inherit
+// it. The corpus is restated from ai/src/pipeline.test.ts because the queue's
+// tsconfig roots at queue/src and refuses an import from the ai package (TS6059).
+describe('every escalation-reason arm stores a clean, bounded reason', () => {
+    /**
+     * The handler's MAX_REPEATED_HANDOFF_REASON and MAX_STORED_ERROR_TEXT,
+     * restated so that moving either bound fails here.
+     */
+    const MAX_REPEATED_HANDOFF_REASON = 2000;
+    const MAX_STORED_ERROR_TEXT = 2000;
+
+    /**
+     * `String.prototype.isWellFormed` (Node 20+), typed by hand because this
+     * package compiles against the ES2022 lib. It is the oracle here because it
+     * shares no code with the production regex it is checking.
+     */
+    function isWellFormed(text: string): boolean {
+        return (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+    }
+
+    /** A parenthetical with nothing in it a reader could use. */
+    const BLANK_PARENTHETICAL = /^[\s\uFFFD;]*$/;
+
+    interface HostileCase {
+        /** The free text, given how many code units the arm leaves it before the bound. */
+        text(room: number): string;
+        /** Blank parts an arm that takes several parts receives ahead of `text`. */
+        blankParts?: readonly string[];
+        /** A fragment of the input that must survive, or null when none of it is usable. */
+        survivor: string | null;
+        /** What the raw input must hold at the bound, so the case cannot drift off it. */
+        atBound?: 'high surrogate' | 'space';
+    }
+
+    const HOSTILE_CORPUS: Array<[string, HostileCase]> = [
+        [
+            // What V8's JSON.parse reports for a reply opening with 😀: it quotes the
+            // emoji's leading half alone. The whole emoji later on must survive intact.
+            'a lone high surrogate',
+            {
+                text: () => `Unexpected token '\uD83D', "😀 not json" is not valid JSON`,
+                survivor: '"😀 not json" is not valid JSON',
+            },
+        ],
+        [
+            'a lone low surrogate',
+            { text: () => 'Evidence quote \uDE00 does not match', survivor: 'does not match' },
+        ],
+        [
+            'a reversed pair (low then high)',
+            { text: () => 'Diagnosis \uDE00\uD83D cut short', survivor: 'cut short' },
+        ],
+        ['U+0000', { text: () => 'Reporter version \u0000 is unknown', survivor: 'is unknown' }],
+        ['whitespace only', { text: () => ' \n\t ', survivor: null }],
+        [
+            'several blank parts',
+            {
+                blankParts: ['', '   ', '\u0000', '\uDE00 \uD83D'],
+                text: () => ' \n ',
+                survivor: null,
+            },
+        ],
+        [
+            'an over-bound reason (5000 chars)',
+            { text: () => 'x'.repeat(5000), survivor: 'x'.repeat(100) },
+        ],
+        [
+            'an emoji whose high half lands exactly on the bound',
+            {
+                text: (room) => 'x'.repeat(room - 1) + '😀' + ' and more after the cut',
+                survivor: 'x'.repeat(100),
+                atBound: 'high surrogate',
+            },
+        ],
+        [
+            'a space exactly at the cut',
+            {
+                text: (room) => 'x'.repeat(room - 1) + ' ' + 'y'.repeat(100),
+                survivor: 'x'.repeat(100),
+                atBound: 'space',
+            },
+        ],
+    ];
+
+    interface EscalationArm {
+        /** Everything before the parenthetical's contents, and everything after them. */
+        head: string;
+        tail: string;
+        /** The whole reason when the arm leaves the parenthetical off, if it may. */
+        bare?: string;
+        /** Text the arm puts inside the parenthetical ahead of the input, within the bound. */
+        innerPrefix: string;
+        /** Bound on the parenthetical's contents. */
+        bound: number;
+        /** Whether the arm receives the corpus as separate parts or as one string. */
+        takesParts: boolean;
+        arrange(parts: string[]): void;
+        /** Every owed reason written to the response row. */
+        stored(): string[];
+    }
+
+    /** The owed reason the BOT row is created with, before any publication. */
+    function createdReasons(): string[] {
+        return mockPrismaMessage.create.mock.calls
+            .map(
+                (call: Array<{ data: Partial<PersistedResponse> }>) =>
+                    call[0].data.escalationRequiredReason,
+            )
+            .filter((value): value is string => typeof value === 'string');
+    }
+
+    /** The owed reason a delivery failure replaces the created one with. */
+    function replacedReasons(): string[] {
+        return mockPrismaMessage.updateMany.mock.calls
+            .map(
+                (call: Array<{ data: Partial<PersistedResponse> }>) =>
+                    call[0].data.escalationRequiredReason,
+            )
+            .filter((value): value is string => typeof value === 'string');
+    }
+
+    function queuedReasons(): string[] {
+        return mockPrismaJob.create.mock.calls
+            .map((call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data)
+            .filter((data: { type: string }) => data.type === 'ESCALATION')
+            .map((data: { payload: unknown }) => (data.payload as { reason: string }).reason);
+    }
+
+    const LOW_CONFIDENCE = 'Low AI confidence (39%) — automated escalation';
+    const WITHHELD = { head: 'AI response withheld (', tail: ') — needs a human answer' };
+
+    /** One delivery-failure site: how it fails, and the text it puts before the error. */
+    function notDelivered(
+        source: string,
+        innerPrefix: string,
+        fail: (error: string) => void,
+    ): EscalationArm {
+        return {
+            head: `AI response generated but not delivered to ${source} (`,
+            tail: ') — needs a human to answer the reporter',
+            innerPrefix,
+            bound: MAX_STORED_ERROR_TEXT,
+            takesParts: false,
+            arrange: (parts) => {
+                // Only a row that already owes a handoff has its reason replaced.
+                mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+                fail(parts.join(' '));
+            },
+            stored: replacedReasons,
+        };
+    }
+
+    const ESCALATION_ARMS: Array<[string, EscalationArm]> = [
+        [
+            'the published low-confidence arm',
+            {
+                head: `${LOW_CONFIDENCE} (`,
+                tail: ')',
+                bare: LOW_CONFIDENCE,
+                innerPrefix: '',
+                bound: MAX_REPEATED_HANDOFF_REASON,
+                takesParts: false,
+                arrange: (parts) => {
+                    mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                    mockGenerateSupportResponse.mockResolvedValue({
+                        ...forcedEscalationResult,
+                        handoffReason: parts.join(' '),
+                    });
+                },
+                stored: createdReasons,
+            },
+        ],
+        [
+            'the withheld arm, from the handoff reason',
+            {
+                ...WITHHELD,
+                innerPrefix: '',
+                bound: MAX_REPEATED_HANDOFF_REASON,
+                takesParts: false,
+                arrange: (parts) => {
+                    mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                    mockGenerateSupportResponse.mockResolvedValue({
+                        ...suppressedResult,
+                        handoffReason: parts.join(' '),
+                    });
+                },
+                stored: createdReasons,
+            },
+        ],
+        [
+            'the withheld arm, from the groundedness findings',
+            {
+                ...WITHHELD,
+                innerPrefix: '',
+                bound: MAX_REPEATED_HANDOFF_REASON,
+                takesParts: true,
+                arrange: (parts) => {
+                    mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                    mockGenerateSupportResponse.mockResolvedValue({
+                        ...suppressedResult,
+                        groundedness: { ...suppressedResult.groundedness, reasons: parts },
+                    });
+                },
+                stored: createdReasons,
+            },
+        ],
+        [
+            'the delivery-failure arm, from a failed post',
+            notDelivered('DISCORD', '', (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockPostResponse.mockRejectedValueOnce(new Error(error));
+            }),
+        ],
+        [
+            'the delivery-failure arm, from a misconfigured adapter',
+            notDelivered('DISCORD', 'platform adapter misconfigured: ', (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGetAdapter.mockImplementation(() => {
+                    throw new Error(error);
+                });
+            }),
+        ],
+        [
+            'the delivery-failure arm, from a lost suggestedResponse with no adapter',
+            notDelivered(
+                'WEB',
+                'no platform adapter for WEB and suggestedResponse could not be stored: ',
+                (error) => {
+                    mockPrismaTicket.findUnique.mockResolvedValue({
+                        ...sampleTicket,
+                        source: 'WEB',
+                    });
+                    mockHasAdapter.mockReturnValue(false);
+                    mockPrismaTicket.update.mockImplementation(
+                        async (args: { data: Record<string, unknown> }) => {
+                            if (args.data.suggestedResponse !== undefined) {
+                                throw new Error(error);
+                            }
+                            return {};
+                        },
+                    );
+                },
+            ),
+        ],
+    ];
+
+    /** The parts `arm` receives for `hostile`, sized to the room its bound leaves. */
+    function partsFor(arm: EscalationArm, hostile: HostileCase): string[] {
+        const room = arm.bound - arm.innerPrefix.length;
+        return [...(hostile.blankParts ?? []), hostile.text(room)];
+    }
+
+    /**
+     * Arm × case pairs whose reason Prisma accepts but a reader cannot use. The
+     * delivery-failure arm bounds and cleans its error text with boundForStorage,
+     * but it neither trims what the cut leaves nor falls back when the text is
+     * blank. A blank adapter error is therefore stored as an empty parenthetical,
+     * and a cut at a space leaves the space inside it. Each pair still meets every
+     * storable property and is pinned as it stands rather than skipped, so fixing
+     * the arm fails it and the fix deletes the entry.
+     */
+    const KNOWN_GAPS = new Set([
+        'the delivery-failure arm, from a failed post: whitespace only',
+        'the delivery-failure arm, from a failed post: several blank parts',
+        'the delivery-failure arm, from a failed post: a space exactly at the cut',
+        'the delivery-failure arm, from a misconfigured adapter: whitespace only',
+        'the delivery-failure arm, from a misconfigured adapter: several blank parts',
+        'the delivery-failure arm, from a misconfigured adapter: a space exactly at the cut',
+        'the delivery-failure arm, from a lost suggestedResponse with no adapter: whitespace only',
+        'the delivery-failure arm, from a lost suggestedResponse with no adapter: several blank parts',
+        'the delivery-failure arm, from a lost suggestedResponse with no adapter: a space exactly at the cut',
+    ]);
+
+    const ARM_CASES = ESCALATION_ARMS.flatMap(([armLabel, arm]) =>
+        HOSTILE_CORPUS.map(
+            ([caseLabel, hostile]): [
+                string,
+                string,
+                string,
+                EscalationArm,
+                HostileCase,
+                boolean,
+            ] => {
+                const knownGap = KNOWN_GAPS.has(`${armLabel}: ${caseLabel}`);
+                return [
+                    armLabel,
+                    caseLabel,
+                    knownGap ? ' (known gap, pinned as it stands)' : '',
+                    arm,
+                    hostile,
+                    knownGap,
+                ];
+            },
+        ),
+    );
+
+    it('names only arm × case pairs that exist in KNOWN_GAPS', () => {
+        const names = new Set(ARM_CASES.map(([arm, hostile]) => `${arm}: ${hostile}`));
+        expect([...KNOWN_GAPS].filter((gap) => !names.has(gap))).toEqual([]);
+    });
+
+    beforeEach(() => {
+        // The same happy path describe('handleAiResponse') primes, restated
+        // because this block sits outside it.
+        vi.clearAllMocks();
+        mockPrismaTicket.update.mockResolvedValue({});
+        mockPrismaMessage.create.mockResolvedValue({ id: 'msg-new' });
+        mockPrismaMessage.update.mockResolvedValue({});
+        mockPrismaMessage.updateMany.mockResolvedValue({ count: 1 });
+        mockPrismaMessage.findUnique.mockResolvedValue(null);
+        mockPrismaMessage.findMany.mockResolvedValue([]);
+        mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
+        mockPrismaJob.findMany.mockResolvedValue([]);
+        mockPrismaQueryRaw.mockResolvedValue([{ now: new Date('2026-08-11T20:00:00.000Z') }]);
+        mockPrismaTransaction.mockImplementation(
+            async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+        );
+        mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
+        mockClassifyTicket.mockResolvedValue(sampleClassification);
+        mockGetFeedbackCalibration.mockResolvedValue(0);
+        mockPostResponse.mockResolvedValue(undefined);
+        mockHasAdapter.mockReturnValue(true);
+        mockGetAdapter.mockReturnValue({
+            platform: 'DISCORD',
+            postResponse: mockPostResponse,
+            postSystemMessage: vi.fn(),
+            parseInboundEvent: vi.fn(),
+            fetchUserInfo: vi.fn(),
+        });
+        // Every failure arm logs, and that noise would bury real output.
+        const quiet = [
+            vi.spyOn(console, 'error').mockImplementation(() => {}),
+            vi.spyOn(console, 'warn').mockImplementation(() => {}),
+            vi.spyOn(console, 'log').mockImplementation(() => {}),
+        ];
+        return () => quiet.forEach((spy) => spy.mockRestore());
+    });
+
+    it('has an oracle that tells a well-formed string from an ill-formed one', () => {
+        expect(isWellFormed('😀 and text')).toBe(true);
+        expect(isWellFormed('\uD83D')).toBe(false);
+        expect(isWellFormed('\uDE00')).toBe(false);
+        expect(isWellFormed('\uDE00\uD83D')).toBe(false);
+    });
+
+    it.each(ARM_CASES)('%s: %s%s', async (_arm, _case, _marker, arm, hostile, knownGap) => {
+        const parts = partsFor(arm, hostile);
+        // The alignment cases only mean something if the raw input really puts
+        // the named unit at the bound, so that is checked before the run.
+        const raw = arm.innerPrefix + parts.join(arm.takesParts ? '; ' : ' ');
+        if (hostile.atBound === 'high surrogate') {
+            expect(raw.charCodeAt(arm.bound - 1).toString(16)).toBe('d83d');
+            expect(raw.charCodeAt(arm.bound).toString(16)).toBe('de00');
+        }
+        if (hostile.atBound === 'space') expect(raw[arm.bound - 1]).toBe(' ');
+        arm.arrange(arm.takesParts ? parts : [parts.join(' ')]);
+
+        const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+        expect(result.success).toBe(true);
+        const stored = arm.stored();
+        const queued = queuedReasons();
+        expect(stored).toHaveLength(1);
+        expect(queued).toEqual(stored);
+        const reason = stored[0];
+
+        // Storable: what Prisma and Postgres require. No pair is excused from these.
+        expect(isWellFormed(reason)).toBe(true);
+        expect(reason).not.toContain('\u0000');
+        expect(reason.length).toBeLessThanOrEqual(arm.head.length + arm.bound + arm.tail.length);
+        expect(reason).not.toContain('()');
+        expect(reason).not.toContain('(;)');
+        if (arm.bare !== undefined && reason === arm.bare) {
+            // Leaving the parenthetical off is only right when nothing was usable.
+            expect(hostile.survivor).toBeNull();
+            return;
+        }
+        expect(reason.slice(0, arm.head.length)).toBe(arm.head);
+        expect(reason.slice(reason.length - arm.tail.length)).toBe(arm.tail);
+        const inner = reason.slice(arm.head.length, reason.length - arm.tail.length);
+        if (hostile.survivor !== null) expect(inner).toContain(hostile.survivor);
+
+        // Usable: something to read in the parenthetical, and no whitespace the
+        // cut left at its end.
+        if (knownGap) {
+            const usable = !BLANK_PARENTHETICAL.test(inner) && inner === inner.trimEnd();
+            expect(usable, 'this gap is fixed: delete its KNOWN_GAPS entry').toBe(false);
+            return;
+        }
+        expect(inner).not.toMatch(BLANK_PARENTHETICAL);
+        expect(inner).toBe(inner.trimEnd());
+    });
+});

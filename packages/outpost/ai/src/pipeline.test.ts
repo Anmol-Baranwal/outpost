@@ -1503,3 +1503,304 @@ describe('AIPipeline confidence calibration', () => {
         expect(result.confidenceScore).toBe(0);
     });
 });
+
+// ─── One hostile corpus through every handoff-reason path ─────────────────
+//
+// `handoffReason` is written through Prisma to `Message.escalationRequiredReason`
+// and then into the ESCALATION job's jsonb payload. Prisma's query engine refuses
+// an ill-formed string at that first write, and Postgres refuses U+0000 and
+// unpaired surrogates in text and jsonb, so a bad reason fails the job before it
+// posts, on every retry. Review kept finding one more route to the reason that
+// forgot to clean, bound or fall back. Every route therefore takes the same
+// corpus here, and a route added later joins HANDOFF_PATHS to inherit it.
+describe('every handoff-reason path survives the hostile corpus', () => {
+    /** The pipeline's bound on `handoffReason`, restated so moving it fails here. */
+    const BOUND = 2000;
+
+    /**
+     * `String.prototype.isWellFormed` (Node 20+), typed by hand because this
+     * package compiles against the ES2022 lib. It is the oracle here because it
+     * shares no code with the production regex it is checking.
+     */
+    function isWellFormed(text: string): boolean {
+        return (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+    }
+
+    /** Nothing a reader could use: only whitespace and U+FFFD. */
+    const BLANK = /^[\s\uFFFD]*$/;
+
+    interface HostileCase {
+        /** The free text, given how many code units the path leaves it before the bound. */
+        text(room: number): string;
+        /** Blank parts a path that takes several parts receives ahead of `text`. */
+        blankParts?: readonly string[];
+        /** A fragment of the input that must survive, or null when none of it is usable. */
+        survivor: string | null;
+        /** What the raw input must hold at the bound, so the case cannot drift off it. */
+        atBound?: 'high surrogate' | 'space';
+    }
+
+    const HOSTILE_CORPUS: Array<[string, HostileCase]> = [
+        [
+            // What V8's JSON.parse reports for a reply opening with 😀: it quotes the
+            // emoji's leading half alone. The whole emoji later on must survive intact.
+            'a lone high surrogate',
+            {
+                text: () => `Unexpected token '\uD83D', "😀 not json" is not valid JSON`,
+                survivor: '"😀 not json" is not valid JSON',
+            },
+        ],
+        [
+            'a lone low surrogate',
+            { text: () => 'Evidence quote \uDE00 does not match', survivor: 'does not match' },
+        ],
+        [
+            'a reversed pair (low then high)',
+            { text: () => 'Diagnosis \uDE00\uD83D cut short', survivor: 'cut short' },
+        ],
+        ['U+0000', { text: () => 'Reporter version \u0000 is unknown', survivor: 'is unknown' }],
+        ['whitespace only', { text: () => ' \n\t ', survivor: null }],
+        [
+            'several blank parts',
+            {
+                blankParts: ['', '   ', '\u0000', '\uDE00 \uD83D'],
+                text: () => ' \n ',
+                survivor: null,
+            },
+        ],
+        [
+            'an over-bound reason (5000 chars)',
+            { text: () => 'x'.repeat(5000), survivor: 'x'.repeat(100) },
+        ],
+        [
+            'an emoji whose high half lands exactly on the bound',
+            {
+                text: (room) => 'x'.repeat(room - 1) + '😀' + ' and more after the cut',
+                survivor: 'x'.repeat(100),
+                atBound: 'high surrogate',
+            },
+        ],
+        [
+            'a space exactly at the cut',
+            {
+                text: (room) => 'x'.repeat(room - 1) + ' ' + 'y'.repeat(100),
+                survivor: 'x'.repeat(100),
+                atBound: 'space',
+            },
+        ],
+    ];
+
+    interface HandoffPath {
+        /**
+         * The deterministic finding this path puts ahead of the model's text, for
+         * a path that composes several parts. A path without one receives the
+         * corpus as a single string.
+         */
+        finding?: string;
+        /** Drive the path with `parts` and return the reason it hands off. */
+        run(parts: string[]): Promise<string | undefined>;
+    }
+
+    const groundedness = (overrides: { suppress: boolean; forcesEscalation: boolean }) => ({
+        penalty: 0.6,
+        unverifiedClaims: [],
+        unsourcedIdentifiers: [],
+        hedgeCount: 0,
+        reasons: [] as string[],
+        ...overrides,
+    });
+
+    const supportSource = {
+        title: 'Setup',
+        content: 'Restart the dev server after you change the config.',
+        sourceUrl: 'https://docs.copilotkit.ai/setup',
+        score: 0.9,
+    };
+
+    const HANDOFF_PATHS: Array<[string, HandoffPath]> = [
+        [
+            'a draft withheld for unsourced identifiers',
+            {
+                finding: 'identifiers absent from sources: copilotKitGhostA',
+                run: async (parts) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        groundedness: {
+                            ...groundedness({ suppress: true, forcesEscalation: false }),
+                            unsourcedIdentifiers: ['copilotKitGhostA'],
+                            reasons: parts.slice(0, -1),
+                        },
+                        reasoning: parts[parts.length - 1],
+                    });
+                    const result = await createPipeline().generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'a forced escalation that still publishes',
+            {
+                finding: 'asserts own verification: "we reproduced it"',
+                run: async (parts) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        groundedness: {
+                            ...groundedness({ suppress: false, forcesEscalation: true }),
+                            unverifiedClaims: ['claims to have reproduced or tested'],
+                            reasons: parts.slice(0, -1),
+                        },
+                        reasoning: parts[parts.length - 1],
+                    });
+                    const result = await createPipeline().generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(false);
+                    expect(result.groundedness.forcesEscalation).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an answer the verifier scored too low to publish',
+            {
+                run: async (parts) => {
+                    mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.2 });
+                    const answering = createPipeline({
+                        investigate: async () => ({
+                            reply: {
+                                decision: 'answer',
+                                summary: supportSource.content,
+                                details: '',
+                                apiVersion: 'v2',
+                                appliesTo: 'CopilotKit v2',
+                                evidence: [
+                                    {
+                                        sourceUrl: supportSource.sourceUrl,
+                                        quote: supportSource.content,
+                                    },
+                                ],
+                                handoffReason: parts.join(' '),
+                            },
+                            sources: [supportSource],
+                            tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                        }),
+                    });
+                    const result = await answering.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an investigation whose reply failed validation',
+            {
+                run: async (parts) => {
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvalidSupportReplyError(parts.join(' '));
+                        },
+                    });
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an investigation that ran over budget',
+            {
+                run: async (parts) => {
+                    const { InvestigationBudgetError } = await import('./support-agent.js');
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvestigationBudgetError(parts.join(' '));
+                        },
+                    });
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+    ];
+
+    /**
+     * The parts `path` receives for `hostile`. A path with a finding puts it
+     * first, as production does, which leaves the free text less room before
+     * the bound; the blank-parts case stands in for every finding instead.
+     */
+    function partsFor(path: HandoffPath, hostile: HostileCase): string[] {
+        if (hostile.blankParts) return [...hostile.blankParts, hostile.text(BOUND)];
+        if (path.finding === undefined) return [hostile.text(BOUND)];
+        return [path.finding, hostile.text(BOUND - path.finding.length - '; '.length)];
+    }
+
+    const PATH_CASES = HANDOFF_PATHS.flatMap(([pathLabel, path]) =>
+        HOSTILE_CORPUS.map(([caseLabel, hostile]): [string, string, HandoffPath, HostileCase] => [
+            pathLabel,
+            caseLabel,
+            path,
+            hostile,
+        ]),
+    );
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        mockSearchDocs.mockResolvedValue(sampleSearchResults);
+        mockSearchCode.mockResolvedValue([]);
+        mockGenerate.mockResolvedValue(sampleGeneratedResponse);
+        mockScore.mockResolvedValue(sampleConfidence);
+        mockFormat.mockReturnValue({ text: 'Formatted response', truncated: false });
+        mockConfigState.draftLintMode = 'report';
+        // Every failed investigation logs, and that noise would bury real output.
+        const quiet = [
+            vi.spyOn(console, 'error').mockImplementation(() => {}),
+            vi.spyOn(console, 'warn').mockImplementation(() => {}),
+        ];
+        return () => quiet.forEach((spy) => spy.mockRestore());
+    });
+
+    it('has an oracle that tells a well-formed string from an ill-formed one', () => {
+        expect(isWellFormed('😀 and text')).toBe(true);
+        expect(isWellFormed('\uD83D')).toBe(false);
+        expect(isWellFormed('\uDE00')).toBe(false);
+        expect(isWellFormed('\uDE00\uD83D')).toBe(false);
+    });
+
+    it.each(PATH_CASES)('%s: %s', async (_path, _case, path, hostile) => {
+        const parts = partsFor(path, hostile);
+        // The alignment cases only mean something if the raw composition really
+        // puts the named unit at the bound, so that is checked before the run.
+        const raw = parts.join(path.finding === undefined ? ' ' : '; ');
+        if (hostile.atBound === 'high surrogate') {
+            expect(raw.charCodeAt(BOUND - 1).toString(16)).toBe('d83d');
+            expect(raw.charCodeAt(BOUND).toString(16)).toBe('de00');
+        }
+        if (hostile.atBound === 'space') expect(raw[BOUND - 1]).toBe(' ');
+
+        const handoffReason = await path.run(parts);
+
+        expect(handoffReason).toEqual(expect.any(String));
+        const reason = handoffReason ?? '';
+        expect(isWellFormed(reason)).toBe(true);
+        expect(reason).not.toContain('\u0000');
+        expect(reason.length).toBeLessThanOrEqual(BOUND);
+        expect(reason).not.toMatch(BLANK);
+        // Neither end padded, and no part blank between the separators.
+        expect(reason).toBe(reason.trim());
+        for (const part of reason.split('; ')) expect(part).not.toMatch(BLANK);
+        if (path.finding !== undefined && !hostile.blankParts) {
+            expect(reason.startsWith(path.finding)).toBe(true);
+        }
+        if (hostile.survivor !== null) expect(reason).toContain(hostile.survivor);
+    });
+});
