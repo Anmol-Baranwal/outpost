@@ -24,6 +24,13 @@ const EVIDENCE_PERMISSIONS = { contents: 'read' } as const;
 /** Installation ids are positive decimal integers; `Number` alone would accept `1e3` and ` 7 `. */
 const INSTALLATION_ID = /^[1-9][0-9]*$/;
 
+/**
+ * A minted token rides as `Bearer <token>`, so it must be one unbroken run of visible ASCII.
+ * Anything else is a malformed exchange rather than a credential: an empty token authenticates
+ * nothing, and `fetch` refuses outright a header value with a line break in it.
+ */
+const INSTALLATION_TOKEN = /^[\x21-\x7E]+$/;
+
 /** The only configuration names this module reads, and the only ones it will ever name. */
 const EVIDENCE_VARIABLES = [
     'GITHUB_APP_ID',
@@ -125,6 +132,16 @@ export interface GitHubEvidenceAuth {
      * investigations. An already-aborted signal must do no credential work at all.
      */
     authorization(signal?: AbortSignal): Promise<string | undefined>;
+    /**
+     * Reports that GitHub refused a credential this resolver issued, so the next
+     * `authorization()` mints a fresh one instead of serving the same bearer from cache.
+     * Absent where there is nothing to drop: anonymous and misconfigured resolvers hold none.
+     *
+     * Safe while other investigations are mid-`authorization()`: each settles with what its own
+     * exchange produced, and only calls that start afterwards build anew. A refusal that lands
+     * after the replacement was minted costs one more exchange, never a stale token.
+     */
+    invalidate?(): void;
 }
 
 /** Unauthenticated public reads, for development hosts with no App credentials. */
@@ -281,7 +298,10 @@ function sharedInstallationAuth(
     return auth;
 }
 
-/** Mints installation tokens for evidence requests, deferring every cache decision to the SDK. */
+/**
+ * Mints installation tokens for evidence requests. The SDK decides when a cached token is due
+ * for renewal; this resolver only throws that cache away once a token has proved unusable.
+ */
 function installationAuth(
     credentials: InstallationCredentials,
     createAuth: InstallationTokenFactory,
@@ -292,22 +312,37 @@ function installationAuth(
             // Ahead of any credential work: an investigation that has already run out of
             // time must not sign a JWT or open an exchange whose result nothing will read.
             signal?.throwIfAborted();
-            const { token } = await mintWithoutLeaking(() => {
-                // Built on first use, and inside the boundary: createAppAuth validates its
-                // options synchronously and names what it rejected, so a throw here could
-                // quote the PEM exactly as a failed exchange could.
-                tokens ??= createAuth(credentials);
-                // Re-invoked per request on purpose. @octokit/auth-app caches the
-                // installation token and re-mints it before the one-hour expiry; holding
-                // the string here would pin a bearer that stops working an hour into the
-                // worker's uptime.
-                return tokens({
-                    type: 'installation',
-                    installationId: credentials.installationId,
-                    permissions: EVIDENCE_PERMISSIONS,
+            // The strategy this call minted from, so a failure discards that one alone and
+            // never a replacement another investigation built while this exchange was in flight.
+            let used: InstallationTokenSource | undefined;
+            try {
+                const token = await mintWithoutLeaking(() => {
+                    // Built on first use, and inside the boundary: createAppAuth validates its
+                    // options synchronously and names what it rejected, so a throw here could
+                    // quote the PEM exactly as a failed exchange could.
+                    used = tokens ??= createAuth(credentials);
+                    // Re-invoked per request on purpose. @octokit/auth-app caches the
+                    // installation token and re-mints it before the one-hour expiry; holding
+                    // the string here would pin a bearer that stops working an hour into the
+                    // worker's uptime.
+                    return used({
+                        type: 'installation',
+                        installationId: credentials.installationId,
+                        permissions: EVIDENCE_PERMISSIONS,
+                    });
                 });
-            });
-            return `Bearer ${token}`;
+                return `Bearer ${token}`;
+            } catch (error) {
+                // The SDK caches whatever a 2xx exchange resolved with, a missing token
+                // included, for 59 minutes, and every investigation shares this resolver.
+                // Dropping the strategy drops that cache, so the next call exchanges again.
+                // Nothing usable is lost: an exchange only runs when the cache had no token.
+                if (tokens === used) tokens = undefined;
+                throw error;
+            }
+        },
+        invalidate() {
+            tokens = undefined;
         },
     };
 }
@@ -321,7 +356,8 @@ function rejecting(reason: string, diagnostic: GitHubEvidenceAuthDiagnostic): Gi
 }
 
 /**
- * Runs strategy construction and the token exchange inside one boundary.
+ * Runs strategy construction and the token exchange inside one boundary, and resolves only
+ * with a token that can actually be sent.
  *
  * Either step can quote the PEM it rejected or the token it just minted. Only the underlying
  * error's class name crosses the boundary — deliberately not its message, and not as `cause`,
@@ -331,11 +367,11 @@ function rejecting(reason: string, diagnostic: GitHubEvidenceAuthDiagnostic): Gi
  * chooses its own error names and nothing constrains them. What reaches the operator is the
  * `token_exchange_failed` category alone.
  */
-async function mintWithoutLeaking(
-    mint: () => Promise<{ token: string }>,
-): Promise<{ token: string }> {
+async function mintWithoutLeaking(mint: () => Promise<{ token: string }>): Promise<string> {
+    // Read once, and inside the boundary, so a result with no object to read lands here too.
+    let token: unknown;
     try {
-        return await mint();
+        ({ token } = await mint());
     } catch (caught) {
         const kind = caught instanceof Error ? caught.name : typeof caught;
         throw new GitHubEvidenceAuthError(
@@ -343,6 +379,16 @@ async function mintWithoutLeaking(
             { code: 'token_exchange_failed' },
         );
     }
+    // A 2xx is not a token. `@octokit/request` hands back `""` as the data of a response whose
+    // body it could not read (the exchange deadline firing mid-body, a reset connection, a
+    // proxy's non-JSON page), and `@octokit/auth-app` returns the `undefined` it destructures
+    // from that as a success. The message names the shape that failed, never the value.
+    if (typeof token !== 'string' || !INSTALLATION_TOKEN.test(token))
+        throw new GitHubEvidenceAuthError(
+            'GitHub App installation token request for evidence returned no usable token',
+            { code: 'token_exchange_failed' },
+        );
+    return token;
 }
 
 /**
@@ -390,8 +436,11 @@ export async function githubEvidenceHeaders(
 ): Promise<Record<string, string>> {
     signal?.throwIfAborted();
     const authorization = await untilAborted(auth.authorization(signal), signal);
-    return {
-        Accept: 'application/vnd.github+json',
-        ...(authorization ? { Authorization: authorization } : {}),
-    };
+    if (authorization === undefined) return { Accept: 'application/vnd.github+json' };
+    // `undefined` alone means "send no Authorization header". An empty or non-string value is
+    // a credential the resolver failed to produce, and sending the request bare would turn that
+    // failure into the quietly rate-limited success the resolver contract forbids.
+    if (typeof authorization !== 'string' || !authorization)
+        throw new GitHubEvidenceAuthError('GitHub evidence authentication resolved no credential');
+    return { Accept: 'application/vnd.github+json', Authorization: authorization };
 }

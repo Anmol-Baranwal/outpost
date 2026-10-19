@@ -140,6 +140,14 @@ async function githubJson(
         rethrowIfTerminal(error, signal);
         return { ok: false, reason: 'transport_error' };
     }
+    // Every investigation in the worker shares one resolver, and the SDK cache behind it would
+    // keep serving a token GitHub has refused until it expired. Only a request that carried a
+    // credential can have had one refused, so an anonymous 401 drops nothing and logs nothing.
+    if (response.status === 401 && headers.Authorization) {
+        auth.invalidate?.();
+        // A constant line: the body is untrusted and the bearer is the very thing refused.
+        console.error('[SupportAgent] GitHub rejected the evidence credential with HTTP 401');
+    }
     if (response.status === 404) return { ok: false, reason: 'not_found' };
     if (response.status === 403)
         return {

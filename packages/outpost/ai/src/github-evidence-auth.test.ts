@@ -574,3 +574,132 @@ describe('GitHub evidence authentication', () => {
         });
     });
 });
+
+describe('GitHub evidence authentication: tokens GitHub will not accept', () => {
+    /** A planned exchange result, or one the test settles later to hold the exchange in flight. */
+    type PlannedExchange = { token: unknown } | Promise<{ token: unknown }>;
+
+    /**
+     * Stands in for `createAppAuth` as it actually behaves: each strategy exchanges once and then
+     * serves that same result from its own cache, malformed or not. Every exchange mints a
+     * distinct token, so a resolver that kept a strategy past a bad result, or past an
+     * invalidation, hands back the earlier bearer instead of a fresh one.
+     */
+    function cachingAppAuth(planned: PlannedExchange[] = []) {
+        let exchanges = 0;
+        const exchange = vi.fn(async (): Promise<{ token: unknown }> => {
+            exchanges += 1;
+            return (await planned.shift()) ?? { token: `ghs_syntheticexchange${exchanges}` };
+        });
+        const create = vi.fn<InstallationTokenFactory>(() => {
+            let cached: Promise<{ token: string }> | undefined;
+            return () => (cached ??= exchange() as Promise<{ token: string }>);
+        });
+        return { create, exchange };
+    }
+    const bearer = (exchange: number) => `Bearer ghs_syntheticexchange${exchange}`;
+
+    // `@octokit/request` hands back `""` as the data of a 2xx whose body it could not read, and
+    // `@octokit/auth-app` destructures that into `token: undefined`, returns it as a success and
+    // caches it — after which every cache hit reads back `""`.
+    const MALFORMED = [
+        { name: 'no token at all', token: undefined },
+        { name: 'an empty token', token: '' },
+        { name: 'a token no header can carry', token: 'ghs_syntheticexchange1\r\nX-Injected: 1' },
+    ];
+
+    it.each(MALFORMED)('rejects a 2xx exchange that yielded $name', async ({ token }) => {
+        const { create } = cachingAppAuth([{ token }]);
+        const error = await githubEvidenceAuthFromEnv(CREDENTIALS, create)
+            .authorization()
+            .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(GitHubEvidenceAuthError);
+        expect((error as GitHubEvidenceAuthError).diagnostic).toEqual({
+            code: 'token_exchange_failed',
+        });
+        expect(githubEvidenceAuthDiagnostic(error)).toEqual({ code: 'token_exchange_failed' });
+        const rendered = `${(error as Error).message} ${(error as Error).stack ?? ''} ${JSON.stringify(error)}`;
+        expect(rendered).not.toContain('ghs_synthetic');
+        expect(rendered).not.toContain('placeholder');
+    });
+
+    it.each(MALFORMED)(
+        'rebuilds the strategy after an exchange that yielded $name and serves the next healthy token',
+        async ({ token }) => {
+            const { create, exchange } = cachingAppAuth([{ token }]);
+            const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+            await expect(resolver.authorization()).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
+            // The next investigation is handed this same resolver, and it must exchange again
+            // rather than read the bad result back out of the strategy's cache.
+            expect(await githubEvidenceAuthFromEnv(CREDENTIALS, create).authorization()).toBe(
+                bearer(2),
+            );
+            expect(create).toHaveBeenCalledTimes(2);
+            expect(exchange).toHaveBeenCalledTimes(2);
+            // A usable token is kept: recovering must not cost an exchange per request.
+            expect(await resolver.authorization()).toBe(bearer(2));
+            expect(create).toHaveBeenCalledTimes(2);
+            expect(exchange).toHaveBeenCalledTimes(2);
+        },
+    );
+
+    it('drops the strategy on invalidate, so the next call exchanges for a fresh token', async () => {
+        const { create, exchange } = cachingAppAuth();
+        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        expect(await resolver.authorization()).toBe(bearer(1));
+        expect(await resolver.authorization()).toBe(bearer(1));
+        expect(resolver.invalidate).toBeTypeOf('function');
+        resolver.invalidate?.();
+        expect(await resolver.authorization()).toBe(bearer(2));
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(exchange).toHaveBeenCalledTimes(2);
+    });
+
+    it('still settles a caller that was awaiting its token when another investigation invalidated', async () => {
+        let settle: (value: { token: unknown }) => void = () => {};
+        const { create, exchange } = cachingAppAuth([
+            new Promise<{ token: unknown }>((resolve) => (settle = resolve)),
+        ]);
+        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        const waiting = resolver.authorization();
+        resolver.invalidate?.();
+        const replacement = resolver.authorization();
+        settle({ token: 'ghs_syntheticexchange1' });
+        expect(await waiting).toBe(bearer(1));
+        expect(await replacement).toBe(bearer(2));
+        // The strategy built after the invalidation is the one every later caller shares.
+        expect(await resolver.authorization()).toBe(bearer(2));
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(exchange).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not let a bad exchange that was already in flight discard the strategy that replaced it', async () => {
+        let settle: (value: { token: unknown }) => void = () => {};
+        const { create } = cachingAppAuth([
+            new Promise<{ token: unknown }>((resolve) => (settle = resolve)),
+        ]);
+        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        const stale = resolver.authorization();
+        resolver.invalidate?.();
+        const replacement = resolver.authorization();
+        settle({ token: undefined });
+        await expect(stale).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
+        expect(await replacement).toBe(bearer(2));
+        expect(await resolver.authorization()).toBe(bearer(2));
+        expect(create).toHaveBeenCalledTimes(2);
+    });
+
+    // `undefined` is the only value that means "read anonymously". Anything else a resolver hands
+    // back is a credential it failed to produce, and must not quietly become an anonymous read.
+    it.each([
+        { name: 'an empty string', value: '' },
+        { name: 'null', value: null },
+    ])(
+        'refuses a resolver that resolves to $name instead of reading anonymously',
+        async ({ value }) => {
+            await expect(
+                githubEvidenceHeaders({ authorization: async () => value as never }),
+            ).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
+        },
+    );
+});

@@ -1468,5 +1468,105 @@ describe('OpenAI support agent', () => {
             // configuration and hand the operator a fix that cannot work.
             expect(operatorSaw()).not.toContain('auth_unavailable');
         });
+
+        // The resolver is shared by every investigation in the worker, so a token GitHub has
+        // stopped accepting would otherwise be served to all of them until the SDK cache expired.
+        it.each([
+            {
+                name: 'an authenticated read drops the credential',
+                authorization: SYNTHETIC_HEADER,
+                invalidations: 1,
+            },
+            {
+                name: 'an anonymous read leaves the resolver alone',
+                authorization: undefined,
+                invalidations: 0,
+            },
+        ])('on a 401, $name', async ({ authorization, invalidations }) => {
+            const githubRequests = stubGitHub(
+                () => new Response('{"message":"Bad credentials"}', { status: 401 }),
+            );
+            scriptTurns([{ tool: 'read_release', tag: 'v2.0.0' }, { output: routeReply }]);
+            const invalidate = vi.fn();
+            const agent = new SupportAgent({
+                apiKey: 'test-key',
+                baseURL: mock().url,
+                tracingDisabled: true,
+                pathfinder: { searchEvidence: vi.fn<PathfinderClient['searchEvidence']>() },
+                githubAuth: { authorization: async () => authorization, invalidate },
+            });
+
+            const result = await agent.investigate({ question: 'Shipped?', source: 'github' });
+
+            expect(result.reply.decision).toBe('route');
+            expect(githubRequests).toHaveLength(1);
+            expect(invalidate).toHaveBeenCalledTimes(invalidations);
+            // One line per rejected credential, carrying neither the bearer nor GitHub's body.
+            expect(operatorLog).toHaveBeenCalledTimes(invalidations);
+            expect(operatorSaw()).not.toContain('ghs_syntheticplaceholdertoken');
+            expect(operatorSaw()).not.toContain('Bad credentials');
+            const failure = toolResultSentToModel(0);
+            expect(failure).toContain('upstream_error');
+            expect(failure).not.toContain('Bad credentials');
+        });
+
+        it('sends the next read a freshly minted token after GitHub rejects the shared one', async () => {
+            const realFetch = globalThis.fetch;
+            const sent: (string | null)[] = [];
+            vi.stubGlobal(
+                'fetch',
+                vi.fn<typeof fetch>(async (input, init) => {
+                    const url = input instanceof Request ? input.url : String(input);
+                    if (!url.startsWith('https://api.github.com/')) return realFetch(input, init);
+                    sent.push(new Headers(init?.headers).get('authorization'));
+                    return sent.length === 1
+                        ? new Response('{"message":"Bad credentials"}', { status: 401 })
+                        : new Response(
+                              JSON.stringify({
+                                  tag_name: 'v2.0.0',
+                                  html_url: releaseUrl,
+                                  body: source.content,
+                                  published_at: '2026-01-01',
+                                  draft: false,
+                                  prerelease: false,
+                              }),
+                          );
+                }),
+            );
+            // Each strategy exchanges once and then serves its cached token, as `createAppAuth`
+            // does, and every exchange mints a distinct one.
+            let exchanges = 0;
+            const cachingExchange: InstallationTokenFactory = () => {
+                let cached: Promise<{ token: string }> | undefined;
+                return () =>
+                    (cached ??= Promise.resolve({ token: `ghs_syntheticexchange${++exchanges}` }));
+            };
+            scriptTurns([
+                { tool: 'read_release', tag: 'v2.0.0' },
+                { tool: 'read_release', tag: 'v2.0.0' },
+                { output: routeReply },
+            ]);
+            const agent = new SupportAgent({
+                apiKey: 'test-key',
+                baseURL: mock().url,
+                tracingDisabled: true,
+                pathfinder: { searchEvidence: vi.fn<PathfinderClient['searchEvidence']>() },
+                githubAuth: githubEvidenceAuthFromEnv(
+                    {
+                        GITHUB_APP_ID: '123456',
+                        GITHUB_PRIVATE_KEY: PEM,
+                        GITHUB_INSTALLATION_ID: '7890',
+                    },
+                    cachingExchange,
+                ),
+            });
+
+            await agent.investigate({ question: 'Shipped?', source: 'github' });
+
+            expect(sent).toEqual([
+                'Bearer ghs_syntheticexchange1',
+                'Bearer ghs_syntheticexchange2',
+            ]);
+        });
     });
 });
