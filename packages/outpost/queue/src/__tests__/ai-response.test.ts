@@ -2479,6 +2479,221 @@ describe('handleAiResponse', () => {
         });
     });
 
+    // ── A delivery failure is stored bounded and storable ─────────────────
+    //
+    // The failure text comes from an adapter or Prisma error, and some adapters
+    // put a whole HTTP response body in it. It is written to responseError, to
+    // the owed escalationRequiredReason and to the queued ESCALATION payload.
+    // Prisma refuses U+0000 and unpaired surrogates there, which blocks the
+    // escalation and loses the diagnostic, and nothing else bounds its length.
+    describe('a delivery failure is bounded and made storable before it is written', () => {
+        /**
+         * The handler's bound on error text it stores, restated rather than
+         * exported so that moving it fails these tests.
+         */
+        const MAX_STORED_ERROR_TEXT = 2000;
+
+        /**
+         * `LONE_SURROGATE` from ai/src/test-utils/surrogates.ts, restated because
+         * the queue's tsconfig roots at queue/src and refuses an import from the
+         * ai package's sources (TS6059).
+         */
+        const LONE_SURROGATE =
+            /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+        const ILL_FORMED_ERROR = 'Teams API 400: {"error":"bad \u0000 body \uDE00 \uD83D"}';
+        const STORABLE_ERROR = 'Teams API 400: {"error":"bad \uFFFD body \uFFFD \uFFFD"}';
+
+        /**
+         * The three places the handler derives a delivery failure. Each arranges
+         * its failure around `error` and names the text the handler puts before it.
+         */
+        const SITES: Array<
+            [string, { source: string; prefix: string; fail(error: string): void }]
+        > = [
+            [
+                'a failed post',
+                {
+                    source: 'DISCORD',
+                    prefix: '',
+                    fail: (error) => {
+                        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                        mockPostResponse.mockRejectedValueOnce(new Error(error));
+                    },
+                },
+            ],
+            [
+                'a misconfigured adapter',
+                {
+                    source: 'DISCORD',
+                    prefix: 'platform adapter misconfigured: ',
+                    fail: (error) => {
+                        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                        mockGetAdapter.mockImplementation(() => {
+                            throw new Error(error);
+                        });
+                    },
+                },
+            ],
+            [
+                'a lost suggestedResponse with no adapter',
+                {
+                    source: 'WEB',
+                    prefix: 'no platform adapter for WEB and suggestedResponse could not be stored: ',
+                    fail: (error) => {
+                        mockPrismaTicket.findUnique.mockResolvedValue({
+                            ...sampleTicket,
+                            source: 'WEB',
+                        });
+                        mockHasAdapter.mockReturnValue(false);
+                        mockPrismaTicket.update.mockImplementation(
+                            async (args: { data: Record<string, unknown> }) => {
+                                if (args.data.suggestedResponse !== undefined) {
+                                    throw new Error(error);
+                                }
+                                return {};
+                            },
+                        );
+                    },
+                },
+            ],
+        ];
+
+        function notDelivered(source: string, failure: string): string {
+            return `AI response generated but not delivered to ${source} (${failure}) — needs a human to answer the reporter`;
+        }
+
+        /** Every responseError and owed reason written after create, and every queued reason. */
+        function writtenFailure() {
+            const writes = [
+                ...mockPrismaMessage.update.mock.calls,
+                ...mockPrismaMessage.updateMany.mock.calls,
+            ].map((call: Array<{ data: Partial<PersistedResponse> }>) => call[0].data);
+            return {
+                responseErrors: writes
+                    .map((data) => data.responseError)
+                    .filter((value): value is string => typeof value === 'string'),
+                owedReasons: writes
+                    .map((data) => data.escalationRequiredReason)
+                    .filter((value): value is string => typeof value === 'string'),
+                queuedReasons: mockPrismaJob.create.mock.calls
+                    .map(
+                        (call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data,
+                    )
+                    .filter((data: { type: string }) => data.type === 'ESCALATION')
+                    .map(
+                        (data: { payload: unknown }) => (data.payload as { reason: string }).reason,
+                    ),
+            };
+        }
+
+        it.each(SITES)(
+            'replaces U+0000 and lone surrogates in the failure from %s',
+            async (_label, site) => {
+                mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+                site.fail(ILL_FORMED_ERROR);
+
+                const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                expect(result.success).toBe(true);
+                expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+                const failure = site.prefix + STORABLE_ERROR;
+                const written = writtenFailure();
+                expect(written).toEqual({
+                    responseErrors: [failure],
+                    owedReasons: [notDelivered(site.source, failure)],
+                    queuedReasons: [notDelivered(site.source, failure)],
+                });
+                for (const text of [
+                    ...written.responseErrors,
+                    ...written.owedReasons,
+                    ...written.queuedReasons,
+                ]) {
+                    expect(text).not.toMatch(LONE_SURROGATE);
+                    expect(text).not.toContain('\u0000');
+                }
+            },
+        );
+
+        it.each(SITES)('bounds an oversize failure from %s', async (_label, site) => {
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            site.fail('x'.repeat(100_000));
+            const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            try {
+                await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                const failure =
+                    site.prefix + 'x'.repeat(MAX_STORED_ERROR_TEXT - site.prefix.length);
+                expect(failure).toHaveLength(MAX_STORED_ERROR_TEXT);
+                expect(writtenFailure()).toEqual({
+                    responseErrors: [failure],
+                    owedReasons: [notDelivered(site.source, failure)],
+                    queuedReasons: [notDelivered(site.source, failure)],
+                });
+                // The operator log names the same bounded text.
+                expect(log).toHaveBeenCalledWith(
+                    expect.stringContaining(`, delivery failed (${failure})`),
+                );
+            } finally {
+                log.mockRestore();
+            }
+        });
+
+        it('bounds the failure written alone when no handoff was owed', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error('x'.repeat(100_000)));
+
+            await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+            // High confidence owes no handoff, so the diagnostic goes through the
+            // plain update rather than the owed-reason replacement.
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: { responseError: 'x'.repeat(MAX_STORED_ERROR_TEXT) },
+            });
+            expect(writtenFailure().queuedReasons).toEqual([
+                notDelivered('DISCORD', 'x'.repeat(MAX_STORED_ERROR_TEXT)),
+            ]);
+        });
+
+        it.each(SITES)('leaves an ordinary failure from %s unchanged', async (_label, site) => {
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            site.fail('API 503');
+
+            await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+            const failure = `${site.prefix}API 503`;
+            expect(writtenFailure()).toEqual({
+                responseErrors: [failure],
+                owedReasons: [notDelivered(site.source, failure)],
+                queuedReasons: [notDelivered(site.source, failure)],
+            });
+        });
+
+        it('bounds and cleans a failed DELIVERED write before storing it as responseError', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPrismaMessage.update.mockRejectedValueOnce(
+                new Error(`${ILL_FORMED_ERROR} ${'x'.repeat(100_000)}`),
+            );
+
+            const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+            expect(result.success).toBe(true);
+            const prefix = 'Delivery succeeded but the DELIVERED state write failed: ';
+            const stored = `${prefix}${STORABLE_ERROR} ${'x'.repeat(100_000)}`.slice(
+                0,
+                MAX_STORED_ERROR_TEXT,
+            );
+            expect(mockPrismaMessage.update).toHaveBeenLastCalledWith({
+                where: { id: 'msg-new' },
+                data: { deliveryConfirmed: true, responseError: stored },
+            });
+            expect(stored).not.toMatch(LONE_SURROGATE);
+            expect(stored).not.toContain('\u0000');
+        });
+    });
+
     /**
      * The recovery paths face the same no-op enqueue the main path does.
      *

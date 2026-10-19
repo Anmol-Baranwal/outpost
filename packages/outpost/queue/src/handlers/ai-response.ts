@@ -591,6 +591,17 @@ function toPlatformTarget(source: string): PlatformTarget {
     return mapping[source] ?? 'web';
 }
 
+/**
+ * Bound on error text this handler stores or queues. An adapter's error can carry
+ * a whole HTTP response body.
+ */
+const MAX_STORED_ERROR_TEXT = 2000;
+
+/** `text` made storable and bounded for a row or a queued job. See boundForStorage. */
+function storableErrorText(text: string): string {
+    return boundForStorage(text, MAX_STORED_ERROR_TEXT);
+}
+
 export async function handleAiResponse(
     payload: AiResponsePayload,
     context: JobHandlerContext,
@@ -847,6 +858,7 @@ export async function handleAiResponse(
     // post-back arm below and consumed by the escalation step. If this attempt
     // cannot durably enqueue that escalation, the PENDING response lets its
     // retry schedule a safe delayed handoff without risking a second post.
+    // Every assignment goes through storableErrorText, since it is stored and queued.
     let deliveryFailure: string | null = null;
     // Set when any required ESCALATION enqueue fails. Delivery failures,
     // suppression, and low confidence all promise a human handoff, so none may
@@ -1084,7 +1096,7 @@ export async function handleAiResponse(
                 );
                 // Don't attempt postResponse — adapter init failed (permanent error)
                 adapter = null;
-                deliveryFailure = `platform adapter misconfigured: ${message}`;
+                deliveryFailure = storableErrorText(`platform adapter misconfigured: ${message}`);
             }
 
             if (adapter) {
@@ -1114,7 +1126,7 @@ export async function handleAiResponse(
                         `[AI Response] Failed to post response to ${ticket.source} for ticket ${ticketId}:`,
                         message,
                     );
-                    deliveryFailure = message;
+                    deliveryFailure = storableErrorText(message);
                     delivery = 'post-failed';
                 }
 
@@ -1138,7 +1150,9 @@ export async function handleAiResponse(
         } else {
             // For sources without adapters, suggestedResponse is the durable sink.
             if (suggestedResponseError) {
-                deliveryFailure = `no platform adapter for ${ticket.source} and suggestedResponse could not be stored: ${suggestedResponseError}`;
+                deliveryFailure = storableErrorText(
+                    `no platform adapter for ${ticket.source} and suggestedResponse could not be stored: ${suggestedResponseError}`,
+                );
             } else {
                 responseDelivered = true;
             }
@@ -1167,7 +1181,9 @@ export async function handleAiResponse(
                         where: { id: aiMessage.id },
                         data: {
                             deliveryConfirmed: true,
-                            responseError: `Delivery succeeded but the DELIVERED state write failed: ${message}`,
+                            responseError: storableErrorText(
+                                `Delivery succeeded but the DELIVERED state write failed: ${message}`,
+                            ),
                         },
                     });
                 } catch (markerError) {
