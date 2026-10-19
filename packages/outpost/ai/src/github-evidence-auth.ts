@@ -248,10 +248,17 @@ let shared:
  * that asks with the same credentials and factory.
  *
  * A pipeline, and with it a `SupportAgent`, is built for every job and every web QA
- * request. A resolver per agent would mean a `createAppAuth` per agent, and the SDK's
- * token cache and in-flight sharing live inside that one strategy instance, so every
- * ticket that read source would mint its own installation token. Sharing the resolver
- * lets one token serve investigation after investigation until the SDK refreshes it.
+ * request. A resolver per agent would mean a `createAppAuth` per agent, and the SDK
+ * keeps its token cache on the strategy instance — each `createAppAuth` starts an empty
+ * one — so every ticket that read source would mint its own installation token. Sharing
+ * the resolver lets one token serve investigation after investigation until the SDK
+ * refreshes it.
+ *
+ * The cache is all this buys. In-flight sharing is not per instance: the SDK
+ * de-duplicates concurrent exchanges in one module-level map, keyed by installation id,
+ * permissions and repositories but not by App, so callers that overlap share an exchange
+ * whichever strategy they came through. That exchange fills only the cache of the
+ * strategy that opened it.
  *
  * One slot, not a map: a worker reads one fixed set of App credentials for its whole
  * life, so anything else that asks (a test with its own fake factory, a changed
@@ -344,7 +351,8 @@ async function mintWithoutLeaking(
  * The exchange behind `pending` is deliberately left running rather than cancelled:
  * `@octokit/auth-app` shares one in-flight token request between concurrent callers, so
  * cancelling on behalf of a single abandoned investigation would reject the others too.
- * Detaching lets it finish and fill the SDK cache for whoever is still waiting.
+ * Detaching lets it finish, settle for whoever is still waiting on it, and fill the cache
+ * of the strategy that opened it for whoever asks next.
  *
  * The rejection is the signal's own reason, which makes a cancelled authorization
  * indistinguishable from the cancelled fetch it was about to authorize: terminal, and
