@@ -41,12 +41,7 @@
  */
 
 import { prisma } from '@copilotkit/outpost/db';
-import {
-    AIPipeline,
-    boundForStorage,
-    publishableText,
-    storableReason,
-} from '@copilotkit/outpost/ai';
+import { AIPipeline, publishableText, storableReason } from '@copilotkit/outpost/ai';
 import { AI_CONFIDENCE, MAX_JOB_ATTEMPTS } from '@copilotkit/outpost/shared';
 import type { PlatformTarget, TicketSource } from '@copilotkit/outpost/shared';
 import {
@@ -603,9 +598,24 @@ function toPlatformTarget(source: string): PlatformTarget {
  */
 const MAX_STORED_ERROR_TEXT = 2000;
 
-/** `text` made storable and bounded for a row or a queued job. See boundForStorage. */
-function storableErrorText(text: string): string {
-    return boundForStorage(text, MAX_STORED_ERROR_TEXT);
+/** What storableErrorText says in place of an error message with nothing usable in it. */
+const ERROR_WITHOUT_MESSAGE = 'no usable error message';
+
+/**
+ * `message` as error text for a row or a queued job, after `label` when one is
+ * given: made storable, trimmed and bounded to MAX_STORED_ERROR_TEXT. See
+ * storableReason.
+ *
+ * Never blank: a message that is empty, or holds only whitespace and unstorable
+ * code units, reads as ERROR_WITHOUT_MESSAGE. Otherwise a whitespace-only
+ * delivery failure is written as an empty parenthetical, and an empty one is
+ * falsy, which skips the escalation the reporter is owed.
+ */
+function storableErrorText(message: string, label?: string): string {
+    const detail = storableReason([message], MAX_STORED_ERROR_TEXT) || ERROR_WITHOUT_MESSAGE;
+    return label === undefined
+        ? detail
+        : storableReason([`${label}: ${detail}`], MAX_STORED_ERROR_TEXT);
 }
 
 export async function handleAiResponse(
@@ -1105,7 +1115,7 @@ export async function handleAiResponse(
                 );
                 // Don't attempt postResponse — adapter init failed (permanent error)
                 adapter = null;
-                deliveryFailure = storableErrorText(`platform adapter misconfigured: ${message}`);
+                deliveryFailure = storableErrorText(message, 'platform adapter misconfigured');
             }
 
             if (adapter) {
@@ -1158,9 +1168,11 @@ export async function handleAiResponse(
             }
         } else {
             // For sources without adapters, suggestedResponse is the durable sink.
-            if (suggestedResponseError) {
+            // Null, not falsy: an error with an empty message is still a failure.
+            if (suggestedResponseError !== null) {
                 deliveryFailure = storableErrorText(
-                    `no platform adapter for ${ticket.source} and suggestedResponse could not be stored: ${suggestedResponseError}`,
+                    suggestedResponseError,
+                    `no platform adapter for ${ticket.source} and suggestedResponse could not be stored`,
                 );
             } else {
                 responseDelivered = true;
@@ -1191,7 +1203,8 @@ export async function handleAiResponse(
                         data: {
                             deliveryConfirmed: true,
                             responseError: storableErrorText(
-                                `Delivery succeeded but the DELIVERED state write failed: ${message}`,
+                                message,
+                                'Delivery succeeded but the DELIVERED state write failed',
                             ),
                         },
                     });

@@ -1765,6 +1765,28 @@ describe('handleAiResponse', () => {
             expect(escalationPayload().reason).toContain('adapter misconfigured');
         });
 
+        it('enqueues an ESCALATION job when post-back throws an error with no message', async () => {
+            // An empty failure must not read as no failure: the reply never landed,
+            // and nothing else owes this reporter a human.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error(''));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+            expect(escalationPayload().reason).toBe(
+                'AI response generated but not delivered to DISCORD (no usable error message) — needs a human to answer the reporter',
+            );
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: { responseError: 'no usable error message' },
+            });
+        });
+
         it('names the delivery failure even when confidence is also low', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
@@ -2816,6 +2838,25 @@ describe('handleAiResponse', () => {
                 notDelivered('DISCORD', 'x'.repeat(MAX_STORED_ERROR_TEXT)),
             ]);
         });
+
+        it.each(SITES)(
+            'escalates a failure from %s whose error has no message',
+            async (_label, site) => {
+                mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+                site.fail('');
+
+                const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                expect(result.success).toBe(true);
+                expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+                const failure = `${site.prefix}no usable error message`;
+                expect(writtenFailure()).toEqual({
+                    responseErrors: [failure],
+                    owedReasons: [notDelivered(site.source, failure)],
+                    queuedReasons: [notDelivered(site.source, failure)],
+                });
+            },
+        );
 
         it.each(SITES)('leaves an ordinary failure from %s unchanged', async (_label, site) => {
             mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
@@ -4858,54 +4899,14 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
         return [...(hostile.blankParts ?? []), hostile.text(room)];
     }
 
-    /**
-     * Arm × case pairs whose reason Prisma accepts but a reader cannot use. The
-     * delivery-failure arm bounds and cleans its error text with boundForStorage,
-     * but it neither trims what the cut leaves nor falls back when the text is
-     * blank. A blank adapter error is therefore stored as an empty parenthetical,
-     * and a cut at a space leaves the space inside it. Each pair still meets every
-     * storable property and is pinned as it stands rather than skipped, so fixing
-     * the arm fails it and the fix deletes the entry.
-     */
-    const KNOWN_GAPS = new Set([
-        'the delivery-failure arm, from a failed post: whitespace only',
-        'the delivery-failure arm, from a failed post: several blank parts',
-        'the delivery-failure arm, from a failed post: a space exactly at the cut',
-        'the delivery-failure arm, from a misconfigured adapter: whitespace only',
-        'the delivery-failure arm, from a misconfigured adapter: several blank parts',
-        'the delivery-failure arm, from a misconfigured adapter: a space exactly at the cut',
-        'the delivery-failure arm, from a lost suggestedResponse with no adapter: whitespace only',
-        'the delivery-failure arm, from a lost suggestedResponse with no adapter: several blank parts',
-        'the delivery-failure arm, from a lost suggestedResponse with no adapter: a space exactly at the cut',
-    ]);
-
     const ARM_CASES = ESCALATION_ARMS.flatMap(([armLabel, arm]) =>
-        HOSTILE_CORPUS.map(
-            ([caseLabel, hostile]): [
-                string,
-                string,
-                string,
-                EscalationArm,
-                HostileCase,
-                boolean,
-            ] => {
-                const knownGap = KNOWN_GAPS.has(`${armLabel}: ${caseLabel}`);
-                return [
-                    armLabel,
-                    caseLabel,
-                    knownGap ? ' (known gap, pinned as it stands)' : '',
-                    arm,
-                    hostile,
-                    knownGap,
-                ];
-            },
-        ),
+        HOSTILE_CORPUS.map(([caseLabel, hostile]): [string, string, EscalationArm, HostileCase] => [
+            armLabel,
+            caseLabel,
+            arm,
+            hostile,
+        ]),
     );
-
-    it('names only arm × case pairs that exist in KNOWN_GAPS', () => {
-        const names = new Set(ARM_CASES.map(([arm, hostile]) => `${arm}: ${hostile}`));
-        expect([...KNOWN_GAPS].filter((gap) => !names.has(gap))).toEqual([]);
-    });
 
     beforeEach(() => {
         // The same happy path describe('handleAiResponse') primes, restated
@@ -4951,7 +4952,7 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
         expect(isWellFormed('\uDE00\uD83D')).toBe(false);
     });
 
-    it.each(ARM_CASES)('%s: %s%s', async (_arm, _case, _marker, arm, hostile, knownGap) => {
+    it.each(ARM_CASES)('%s: %s', async (_arm, _case, arm, hostile) => {
         const parts = partsFor(arm, hostile);
         // The alignment cases only mean something if the raw input really puts
         // the named unit at the bound, so that is checked before the run.
@@ -4990,11 +4991,6 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
 
         // Usable: something to read in the parenthetical, and no whitespace the
         // cut left at its end.
-        if (knownGap) {
-            const usable = !BLANK_PARENTHETICAL.test(inner) && inner === inner.trimEnd();
-            expect(usable, 'this gap is fixed: delete its KNOWN_GAPS entry').toBe(false);
-            return;
-        }
         expect(inner).not.toMatch(BLANK_PARENTHETICAL);
         expect(inner).toBe(inner.trimEnd());
     });
