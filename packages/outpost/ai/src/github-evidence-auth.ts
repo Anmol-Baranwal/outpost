@@ -194,6 +194,10 @@ export const appInstallationTokens: InstallationTokenFactory = (credentials) => 
  * resolver that rejects when invoked rather than one that throws at construction:
  * the agent is built for every ticket, and a misconfigured host should fail the
  * evidence request it actually attempted, not every unrelated investigation.
+ *
+ * A usable configuration resolves to one resolver shared across the process (see
+ * `sharedInstallationAuth`), so the token one investigation mints is the one the
+ * next investigation reuses.
  */
 export function githubEvidenceAuthFromEnv(
     env: Record<string, string | undefined> = process.env,
@@ -224,10 +228,50 @@ export function githubEvidenceAuthFromEnv(
             { code: 'invalid_installation_id' },
         );
 
-    return installationAuth(
+    return sharedInstallationAuth(
         { appId, privateKey, installationId: Number(installationId) },
         createAuth,
     );
+}
+
+/** The most recently built installation resolver, and exactly what it was built from. */
+let shared:
+    | {
+          credentials: InstallationCredentials;
+          createAuth: InstallationTokenFactory;
+          auth: GitHubEvidenceAuth;
+      }
+    | undefined;
+
+/**
+ * The installation resolver for `credentials`, built once and handed to every caller
+ * that asks with the same credentials and factory.
+ *
+ * A pipeline, and with it a `SupportAgent`, is built for every job and every web QA
+ * request. A resolver per agent would mean a `createAppAuth` per agent, and the SDK's
+ * token cache and in-flight sharing live inside that one strategy instance, so every
+ * ticket that read source would mint its own installation token. Sharing the resolver
+ * lets one token serve investigation after investigation until the SDK refreshes it.
+ *
+ * One slot, not a map: a worker reads one fixed set of App credentials for its whole
+ * life, so anything else that asks (a test with its own fake factory, a changed
+ * configuration) replaces the slot rather than accumulating entries.
+ */
+function sharedInstallationAuth(
+    credentials: InstallationCredentials,
+    createAuth: InstallationTokenFactory,
+): GitHubEvidenceAuth {
+    if (
+        shared &&
+        shared.createAuth === createAuth &&
+        shared.credentials.appId === credentials.appId &&
+        shared.credentials.privateKey === credentials.privateKey &&
+        shared.credentials.installationId === credentials.installationId
+    )
+        return shared.auth;
+    const auth = installationAuth(credentials, createAuth);
+    shared = { credentials, createAuth, auth };
+    return auth;
 }
 
 /** Mints installation tokens for evidence requests, deferring every cache decision to the SDK. */

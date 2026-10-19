@@ -79,6 +79,49 @@ describe('GitHub evidence authentication', () => {
         expect(auth).toHaveBeenCalledTimes(3);
     });
 
+    // A SupportAgent is built per job and per web QA request, and each one asks for its
+    // own resolver. The SDK's token cache lives in the strategy, so a resolver per agent
+    // would mean a token exchange per ticket instead of one shared token.
+    it('hands every agent the same resolver, so one strategy serves many investigations', async () => {
+        const { create, auth } = fakeAppAuth();
+        const first = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        const second = githubEvidenceAuthFromEnv({ ...CREDENTIALS }, create);
+        expect(second).toBe(first);
+        await first.authorization();
+        await second.authorization();
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(auth).toHaveBeenCalledTimes(2);
+    });
+
+    it('shares the resolver on the production path, where the factory is defaulted', () => {
+        // No authorization is requested, so the real `createAppAuth` is never built.
+        expect(githubEvidenceAuthFromEnv(CREDENTIALS)).toBe(githubEvidenceAuthFromEnv(CREDENTIALS));
+    });
+
+    it('builds a fresh resolver when the credentials change', async () => {
+        const { create } = fakeAppAuth();
+        const first = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        const moved = githubEvidenceAuthFromEnv(
+            { ...CREDENTIALS, GITHUB_INSTALLATION_ID: '7891' },
+            create,
+        );
+        expect(moved).not.toBe(first);
+        await moved.authorization();
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ installationId: 7891 }));
+    });
+
+    it('does not pin a failed exchange on the shared resolver', async () => {
+        const { create, auth } = fakeAppAuth();
+        auth.mockRejectedValueOnce(new Error('connect ETIMEDOUT'));
+        await expect(
+            githubEvidenceAuthFromEnv(CREDENTIALS, create).authorization(),
+        ).rejects.toBeInstanceOf(GitHubEvidenceAuthError);
+        // The next ticket gets the same resolver, and it exchanges again.
+        expect(await githubEvidenceAuthFromEnv(CREDENTIALS, create).authorization()).toBe(
+            `Bearer ${TOKEN}`,
+        );
+    });
+
     it('serves anonymous public reads only when no App credential is configured', async () => {
         const { create } = fakeAppAuth();
         const resolver = githubEvidenceAuthFromEnv({}, create);
