@@ -94,6 +94,7 @@ All default AI stages use `gpt-5.6-luna`: support investigation, independent con
 1. Set `OPENAI_API_KEY` on `outpost-worker` and on `outpost-web`. These are the two services that make model calls. The other services only format and post replies.
 2. Clear any `claude-*` value from `AI_RESPONSE_MODEL`, `AI_CONFIDENCE_MODEL`, `AI_CLASSIFIER_MODEL` and `AI_SENTIMENT_MODEL`. `validateConfig` rejects a Claude model under the OpenAI provider. `AI_LEGACY_RESPONSE_MODEL` only applies to the legacy generator and can stay.
 3. Grant the GitHub App **Contents: Read-only**. An org owner or a GitHub App manager adds it under the App's **Permissions & events**, and the installation accepts the updated permissions. `read_source` and `read_release` run only on the OpenAI path, and they ask for a token narrowed to `contents: read`. An App without Contents fails every evidence read from the moment the OpenAI default deploys.
+4. Set `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` and `GITHUB_INSTALLATION_ID` on `outpost-web` too, if web QA evidence reads should be authenticated. The web QA route (`/api/qa`) runs the same support agent as the worker, and it reads these three variables from its own service. Without them, web QA evidence reads are anonymous and rate-limited, on the shared 60 requests/hour budget. Set all three or none: a partial set fails every web QA evidence read.
 
 Missing step 1 or 2 does not fail at boot. `validateConfig` runs only when a pipeline is built, so every `AI_RESPONSE` job fails before its pending response row exists, then retries and dead-letters. The reporter gets no reply, and no human gets a handoff. Sentiment analysis meanwhile logs an error line, but nothing fails. Account scoring skips the sentiment update, so each account keeps its last sentiment. Missing step 3 does not stop the job either. Every source and release read fails instead, as [GitHub App Setup](#github-app-setup) describes. To stay on Anthropic instead, set `AI_RESPONSE_PROVIDER=anthropic` (the rollback above) before the release lands.
 
@@ -115,7 +116,7 @@ Outpost's GitHub integration (`apps/github-app`) responds to issues and discussi
 
 3. **Install the App.** App settings → Install App → pick the target repo (scope to one repo rather than the whole org for testing). After installing, the URL bar shows an `installation_id` — that's `GITHUB_INSTALLATION_ID`.
 
-4. **Set environment variables.** Both `apps/github-app` (the webhook receiver) and the worker/web services (via `packages/outpost/shared`'s platform adapter registry) read:
+4. **Set environment variables.** `apps/github-app` (the webhook receiver) reads all four. The worker reads the first three to post replies (via `packages/outpost/shared`'s platform adapter registry), to poll reactions, and for the support agent's evidence reads. `outpost-web` reads the first three only for the support agent's evidence reads in web QA (see [Before the OpenAI default reaches an environment](#before-the-openai-default-reaches-an-environment)).
 
     ```
     GITHUB_APP_ID=<app id>
