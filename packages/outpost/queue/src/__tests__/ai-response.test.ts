@@ -1357,11 +1357,11 @@ describe('handleAiResponse', () => {
         });
 
         // The bound counts UTF-16 code units, so an emoji whose leading half is the
-        // 2000th unit would be cut in two by a plain `.slice()`. Prisma refuses the
-        // lone surrogate left behind at the first write, `Message.create` of
-        // `escalationRequiredReason`, so the job fails before it posts, on every retry
-        // and every sweep, and nobody would ever be summoned. Postgres would refuse it
-        // in text and in the ESCALATION job's jsonb payload too.
+        // 2000th unit would be cut in two by a plain `.slice()`. The lone surrogate
+        // left behind is refused at the first write, `Message.create` of
+        // `escalationRequiredReason` (see boundForStorage), so the attempt fails
+        // before it posts: nothing is stored, nobody is summoned, and a retry that
+        // produces the same reason fails the same way.
         it('never leaves half an emoji at the end of a bounded handoff reason', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockGenerateSupportResponse.mockResolvedValue({
@@ -1403,8 +1403,8 @@ describe('handleAiResponse', () => {
         });
 
         // The published arm repeats the reason into the same column and payload a
-        // withheld draft does, and Prisma refuses an ill-formed string at
-        // `Message.create` whichever arm wrote it. Every unit is replaced in place,
+        // withheld draft does, and the store refuses an ill-formed string whichever
+        // arm wrote it (see boundForStorage). Every unit is replaced in place,
         // so the diagnosis survives around each U+FFFD rather than being dropped.
         it('makes an ill-formed low-confidence handoff reason storable', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
@@ -1442,10 +1442,7 @@ describe('handleAiResponse', () => {
         // The suppressed arm writes its reason to the same durable column and the
         // same queued payload as the low-confidence arm, so it gets the same
         // treatment: trimmed, falling back when blank, bounded, and made storable.
-        // Prisma's query engine refuses an ill-formed string at the first write,
-        // `Message.create`, and Postgres refuses U+0000 and unpaired surrogates in
-        // text and jsonb. Either refusal fails the job before it posts, on every
-        // retry.
+        // An unstorable reason fails the attempt before it posts; see boundForStorage.
 
         it.each([
             [
@@ -2656,8 +2653,9 @@ describe('handleAiResponse', () => {
     // The failure text comes from an adapter or Prisma error, and some adapters
     // put a whole HTTP response body in it. It is written to responseError, to
     // the owed escalationRequiredReason and to the queued ESCALATION payload.
-    // Prisma refuses U+0000 and unpaired surrogates there, which blocks the
-    // escalation and loses the diagnostic, and nothing else bounds its length.
+    // The store refuses U+0000 and unpaired surrogates there (see boundForStorage),
+    // which blocks the escalation and loses the diagnostic, and nothing else bounds
+    // its length.
     describe('a delivery failure is bounded and made storable before it is written', () => {
         /**
          * The handler's bound on error text it stores, restated rather than
@@ -4643,10 +4641,9 @@ describe('restoreShadowMode', () => {
 // Three arms write an escalation reason: the published low-confidence arm, the
 // withheld arm and the delivery-failure arm. Each reason lands in
 // `Message.escalationRequiredReason` and in the ESCALATION job's jsonb payload.
-// Prisma's query engine refuses an ill-formed string at the first write, and
-// Postgres refuses U+0000 and unpaired surrogates in text and jsonb, so a bad
-// reason fails the job before it posts, on every retry. Review kept finding one
-// more arm that forgot to clean, bound or fall back. Every arm therefore takes
+// A unit the store refuses there fails the attempt before it posts (see
+// boundForStorage). Review kept finding one more arm that forgot to clean, bound
+// or fall back. Every arm therefore takes
 // the same corpus here, and an arm added later joins ESCALATION_ARMS to inherit
 // it. The corpus is restated from ai/src/pipeline.test.ts because the queue's
 // tsconfig roots at queue/src and refuses an import from the ai package (TS6059).

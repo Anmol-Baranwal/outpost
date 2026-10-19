@@ -723,8 +723,7 @@ describe('publishableText', () => {
 describe('boundForStorage', () => {
     // 😀 is two UTF-16 code units, so `.slice(0, 2000)` on a string whose 2000th
     // unit is its leading half keeps that half and drops the other: a lone high
-    // surrogate, which Prisma refuses at `Message.create` and Postgres refuses in
-    // text and jsonb.
+    // surrogate, which the store refuses (see boundForStorage).
     const EMOJI = '😀';
 
     it('drops an emoji that straddles the cut instead of keeping half of it', () => {
@@ -765,8 +764,9 @@ describe('boundForStorage', () => {
 
     // A clean cut is not enough: the input can already be ill-formed. V8 quotes the
     // leading half of an emoji when JSON.parse rejects a reply that opens with one,
-    // and that message is the pipeline's reasoning on the failure path. Each unit
-    // below stops `Message.create` before the reply posts, on every retry.
+    // and with the SDK's model-data logging on that message is the pipeline's
+    // reasoning on the failure path (see boundForStorage). Each unit below fails
+    // `Message.create`, so that attempt stops before the reply posts.
     describe.each([
         ['a lone high surrogate', '\uD83D', '\uFFFD', LONE_SURROGATE],
         ['a lone low surrogate', '\uDE00', '\uFFFD', LONE_SURROGATE],

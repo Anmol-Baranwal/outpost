@@ -424,10 +424,8 @@ export class AIPipeline {
         //
         // The bound also makes the string storable. It is written through Prisma to
         // `Message.escalationRequiredReason`, then into the escalation job's jsonb
-        // payload. Prisma's query engine refuses an ill-formed string at that first
-        // write, and Postgres refuses U+0000 and unpaired surrogates in text and
-        // jsonb. The reasoning can carry either before any cut, and either one
-        // fails the job before it posts, on every retry.
+        // payload, and the reasoning can carry a unit the store refuses before any
+        // cut. boundForStorage says which units and what a refusal costs.
         //
         // Each part is judged blank after cleaning, so the fallback still applies
         // when the reasoning cleans to nothing. See storableReason and

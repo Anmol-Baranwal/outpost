@@ -85,19 +85,27 @@ const UNSTORABLE_CODE_UNIT =
 /**
  * `text` made storable and bounded to at most `maxLength` UTF-16 code units.
  *
- * Every unpaired surrogate and every U+0000 becomes U+FFFD first. Prisma's query
- * engine refuses an ill-formed string at the first write, `Message.create`, and
- * Postgres refuses U+0000 and unpaired surrogates in both text and jsonb. Either
- * refusal throws before the reply posts, and every retry throws the same way. A
- * clean cut is not enough on its own, because the input can already be
- * ill-formed: V8's JSON.parse error quotes the leading half of an emoji a reply
- * opens with, and that message becomes the reasoning on the failure path. The
- * replacement is one code unit for one, so the length does not change.
+ * Every unpaired surrogate and every U+0000 becomes U+FFFD first. Prisma 6.19.3's
+ * query engine refuses an ill-formed string at the first write, `Message.create`,
+ * and Postgres 17 refuses U+0000 in text and jsonb. Either refusal fails the
+ * attempt before the reply posts, so nothing is stored and nobody is summoned, and
+ * any retry that produces the same reason fails the same way. The replacement is
+ * one code unit for one, so the length does not change.
+ *
+ * A clean cut is not enough on its own, because the input can already be
+ * ill-formed. V8's JSON.parse error quotes the leading half of an emoji a reply
+ * opens with. In @openai/agents-core 0.18.0 that error becomes the reasoning on the
+ * failure path only with model-data logging on: `OPENAI_AGENTS_DONT_LOG_MODEL_DATA`
+ * set to `false` or `0`, or `setSensitiveDataLoggingEnabled(true)`. By default
+ * `processFinalOutputWithRedaction` (dist/utils/finalOutputError.mjs) passes a
+ * fixed message instead, so `formatFinalOutputTypeError`
+ * (dist/runner/turnResolution.mjs) never quotes it.
  *
  * The cut then never lands between the two halves of an astral character such as
  * 👍; that character is dropped whole instead, with the same guard the Discord
- * splitter uses. A bound that is not positive, NaN included, yields `''` rather
- * than reaching `.slice()`, which reads a negative end as "all but that many".
+ * splitter uses. Any `maxLength` below 1, NaN included, floors to no positive
+ * bound and yields `''` rather than reaching `.slice()`, which reads a negative
+ * end as "all but that many".
  */
 export function boundForStorage(text: string, maxLength: number): string {
     const bound = Math.floor(maxLength);

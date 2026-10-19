@@ -677,8 +677,8 @@ describe('AIPipeline', () => {
                 expect(result.handoffReason ?? '').toContain('asserts own verification');
             });
 
-            // The reason is bounded at 2000 UTF-16 code units and written through
-            // Prisma, which refuses a lone surrogate at `Message.create`. The
+            // The reason is bounded at 2000 UTF-16 code units, and a lone surrogate
+            // left at the cut is unstorable (see boundForStorage). The
             // deterministic reasons lead, so where the model's text starts depends
             // on their length; running both parities puts an emoji's leading half
             // on the 2000th unit in exactly one of them, whatever that length is.
@@ -943,9 +943,9 @@ describe('AIPipeline', () => {
             );
         });
 
-        // The handoff reason is written through Prisma to `escalationRequiredReason`.
-        // Prisma refuses an ill-formed string at that first write and Postgres refuses
-        // U+0000, so either one stops the reply before it posts, on every retry.
+        // The handoff reason is written through Prisma to `escalationRequiredReason`,
+        // and a unit the store refuses fails that attempt before the reply posts.
+        // See boundForStorage.
         describe('storable handoff reason', () => {
             /** What the pipeline says when the model's diagnosis says nothing. */
             const FALLBACK_REASONS = [
@@ -1507,12 +1507,11 @@ describe('AIPipeline confidence calibration', () => {
 // ─── One hostile corpus through every handoff-reason path ─────────────────
 //
 // `handoffReason` is written through Prisma to `Message.escalationRequiredReason`
-// and then into the ESCALATION job's jsonb payload. Prisma's query engine refuses
-// an ill-formed string at that first write, and Postgres refuses U+0000 and
-// unpaired surrogates in text and jsonb, so a bad reason fails the job before it
-// posts, on every retry. Review kept finding one more route to the reason that
-// forgot to clean, bound or fall back. Every route therefore takes the same
-// corpus here, and a route added later joins HANDOFF_PATHS to inherit it.
+// and then into the ESCALATION job's jsonb payload, so a reason with a unit the
+// store refuses fails the attempt before it posts (see boundForStorage). Review
+// kept finding one more route to the reason that forgot to clean, bound or fall
+// back. Every route therefore takes the same corpus here, and a route added later
+// joins HANDOFF_PATHS to inherit it.
 describe('every handoff-reason path survives the hostile corpus', () => {
     /** The pipeline's bound on `handoffReason`, restated so moving it fails here. */
     const BOUND = 2000;

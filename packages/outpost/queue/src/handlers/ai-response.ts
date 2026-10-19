@@ -71,17 +71,16 @@ export const PRIMARY_AI_RESPONSE_KEY = 'PRIMARY_AI_RESPONSE';
 export const RESPONSE_RECOVERY_AFTER_MS = 5 * 60 * 1000;
 
 /**
- * Upper bound on the pipeline's own reason when this handler repeats it into an
- * escalation.
+ * Upper bound on a reason this handler repeats into an escalation.
  *
- * The pipeline already bounds `handoffReason` to the same length, so this only
- * binds if that bound ever moves or a future producer skips it. It is restated
- * here because the value crosses a trust boundary at this seam: past it the
- * reason lives in a durable column and in a queued job payload, neither of
- * which should be able to grow without a decision made right here. The bound
- * also keeps the reason storable: Prisma's query engine refuses an ill-formed
- * string at the `Message.create` below, and Postgres refuses U+0000 and
- * unpaired surrogates in text and jsonb.
+ * It is the only bound on the groundedness findings a withheld draft falls back
+ * to: the pipeline returns those raw, and they reach the store through
+ * repeatableReason alone. For `handoffReason` it restates the pipeline's own
+ * bound, so there it only binds if that bound moves or a future producer skips
+ * it. Either way the value crosses a trust boundary at this seam: past it the
+ * reason lives in a durable column and in a queued job payload, neither of which
+ * should be able to grow without a decision made right here. repeatableReason
+ * also makes the reason storable; see boundForStorage.
  */
 const MAX_REPEATED_HANDOFF_REASON = 2000;
 
@@ -92,11 +91,10 @@ const MAX_REPEATED_HANDOFF_REASON = 2000;
  *
  * Every arm that repeats the pipeline's reason goes through here, and so do the
  * groundedness findings a withheld draft falls back to, because all of them land
- * in the same durable column and queued payload. Prisma's query engine refuses
- * an ill-formed string at the first write, `Message.create`, and Postgres
- * refuses U+0000 and unpaired surrogates in text and jsonb. A reason with
- * nothing left after cleaning comes back as `''`, so each arm picks its own
- * fallback instead of writing an empty parenthetical.
+ * in the same durable column and queued payload, where an unstorable unit fails
+ * the write (see boundForStorage). A reason with nothing left after cleaning
+ * comes back as `''`, so each arm picks its own fallback instead of writing an
+ * empty parenthetical.
  */
 function repeatableReason(...parts: (string | undefined)[]): string {
     return storableReason(parts, MAX_REPEATED_HANDOFF_REASON);
