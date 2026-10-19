@@ -1250,6 +1250,15 @@ describe('handleAiResponse', () => {
         const LONE_SURROGATE =
             /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+        /**
+         * `isWellFormed` from ai/src/test-utils/surrogates.ts, restated for the
+         * same reason: the engine's own check, which does not share the
+         * production regex the way LONE_SURROGATE does. The TS lib stops at
+         * ES2022, hence the cast. U+0000 is well formed, so it is asserted apart.
+         */
+        const isWellFormed = (text: string): boolean =>
+            (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+
         function escalationReasons(): string[] {
             return mockPrismaJob.create.mock.calls
                 .map((call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data)
@@ -1393,6 +1402,41 @@ describe('handleAiResponse', () => {
             });
         });
 
+        // The published arm repeats the reason into the same column and payload a
+        // withheld draft does, and Prisma refuses an ill-formed string at
+        // `Message.create` whichever arm wrote it. Every unit is replaced in place,
+        // so the diagnosis survives around each U+FFFD rather than being dropped.
+        it('makes an ill-formed low-confidence handoff reason storable', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            const handoffReason = 'Evidence quote \uDE00 does not match\u0000 the \uD83D docs';
+            // The input really is unstorable, so the test cannot pass vacuously.
+            expect(isWellFormed(handoffReason)).toBe(false);
+            expect(handoffReason).toContain('\u0000');
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...forcedEscalationResult,
+                handoffReason,
+            });
+
+            const result = await handleAiResponse(payload, makeContext());
+
+            expect(result.success).toBe(true);
+            // Still published: cleaning the reason must not turn it into a suppression.
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            const queued = escalationReasons();
+            const stored = mockPrismaMessage.create.mock.calls[0][0].data
+                .escalationRequiredReason as string;
+            const expectedReason =
+                'Low AI confidence (39%) — automated escalation ' +
+                '(Evidence quote \uFFFD does not match\uFFFD the \uFFFD docs)';
+            expect(queued).toEqual([expectedReason]);
+            expect(stored).toBe(expectedReason);
+            for (const reason of [...queued, stored]) {
+                expect(isWellFormed(reason)).toBe(true);
+                expect(reason).not.toMatch(LONE_SURROGATE);
+                expect(reason).not.toContain('\u0000');
+            }
+        });
+
         // ── A withheld draft repeats its reason the same way ──
         //
         // The suppressed arm writes its reason to the same durable column and the
@@ -1508,6 +1552,7 @@ describe('handleAiResponse', () => {
             expect(queued).toEqual([expectedReason]);
             expect(stored).toBe(expectedReason);
             for (const reason of [...queued, stored]) {
+                expect(isWellFormed(reason)).toBe(true);
                 expect(reason).not.toMatch(LONE_SURROGATE);
                 expect(reason).not.toContain('\u0000');
             }
@@ -2606,6 +2651,15 @@ describe('handleAiResponse', () => {
         const LONE_SURROGATE =
             /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+        /**
+         * `isWellFormed` from ai/src/test-utils/surrogates.ts, restated for the
+         * same reason: the engine's own check, which does not share the
+         * production regex the way LONE_SURROGATE does. The TS lib stops at
+         * ES2022, hence the cast. U+0000 is well formed, so it is asserted apart.
+         */
+        const isWellFormed = (text: string): boolean =>
+            (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+
         const ILL_FORMED_ERROR = 'Teams API 400: {"error":"bad \u0000 body \uDE00 \uD83D"}';
         const STORABLE_ERROR = 'Teams API 400: {"error":"bad \uFFFD body \uFFFD \uFFFD"}';
 
@@ -2714,6 +2768,7 @@ describe('handleAiResponse', () => {
                     ...written.owedReasons,
                     ...written.queuedReasons,
                 ]) {
+                    expect(isWellFormed(text)).toBe(true);
                     expect(text).not.toMatch(LONE_SURROGATE);
                     expect(text).not.toContain('\u0000');
                 }
@@ -2794,6 +2849,7 @@ describe('handleAiResponse', () => {
                 where: { id: 'msg-new' },
                 data: { deliveryConfirmed: true, responseError: stored },
             });
+            expect(isWellFormed(stored)).toBe(true);
             expect(stored).not.toMatch(LONE_SURROGATE);
             expect(stored).not.toContain('\u0000');
         });

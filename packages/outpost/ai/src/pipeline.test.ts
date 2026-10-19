@@ -36,7 +36,7 @@ import { ConfidenceLevel, TicketPriority, TicketType } from './types.js';
 import type { SearchResult, GeneratedResponse } from './types.js';
 import type { ConfidenceAssessment } from './confidence.js';
 import { InvalidSupportReplyError, type SupportAgent } from './support-agent.js';
-import { LONE_SURROGATE } from './test-utils/surrogates.js';
+import { LONE_SURROGATE, isWellFormed } from './test-utils/surrogates.js';
 
 // Create mock instances
 const mockSearchDocs = vi.fn();
@@ -702,6 +702,7 @@ describe('AIPipeline', () => {
                     expect(handoffReason).toContain('asserts own verification');
                     expect(handoffReason.length).toBeLessThanOrEqual(2000);
                     expect(handoffReason.length).toBeGreaterThanOrEqual(1999);
+                    expect(isWellFormed(handoffReason)).toBe(true);
                     expect(handoffReason).not.toMatch(LONE_SURROGATE);
                     // The precondition: the cut fell inside the emoji run, so a whole
                     // emoji ends the reason. Should the deterministic reasons ever fill
@@ -946,11 +947,35 @@ describe('AIPipeline', () => {
         // Prisma refuses an ill-formed string at that first write and Postgres refuses
         // U+0000, so either one stops the reply before it posts, on every retry.
         describe('storable handoff reason', () => {
-            const expectStorable = (handoffReason: string | undefined) => {
+            /** What the pipeline says when the model's diagnosis says nothing. */
+            const FALLBACK_REASONS = [
+                'Independent verification was unavailable or malformed',
+                'Independent verification found insufficient support',
+            ];
+
+            /**
+             * The reason is storable AND still carries the diagnosis. Storable alone
+             * proves nothing: dropping the diagnosis, stripping its bad units, or
+             * swapping in a fallback or `''` all store fine. `cleaned` is the
+             * diagnosis written out by hand with U+FFFD where each bad unit was, so
+             * it pins both the surviving text and where the replacement landed.
+             */
+            const expectStorable = (handoffReason: string | undefined, cleaned: string) => {
                 expect(handoffReason).toEqual(expect.any(String));
-                expect(handoffReason).not.toMatch(LONE_SURROGATE);
-                expect(handoffReason).not.toContain('\u0000');
-                expect((handoffReason ?? '').length).toBeLessThanOrEqual(2000);
+                const reason = handoffReason ?? '';
+                expect(isWellFormed(reason)).toBe(true);
+                expect(reason).not.toMatch(LONE_SURROGATE);
+                expect(reason).not.toContain('\u0000');
+                expect(reason.length).toBeLessThanOrEqual(2000);
+                expect(reason).not.toBe('');
+                expect(FALLBACK_REASONS).not.toContain(reason);
+                expect(reason).toContain(cleaned);
+            };
+
+            /** The input really is ill-formed, so the case cannot pass vacuously. */
+            const expectIllFormed = (text: string) => {
+                expect(isWellFormed(text)).toBe(false);
+                expect(text).toMatch(LONE_SURROGATE);
             };
 
             it.each([
@@ -959,11 +984,39 @@ describe('AIPipeline', () => {
                 [
                     'a JSON.parse error quoting half an emoji',
                     `Unexpected token '\uD83D', "😀 not json" is not valid JSON`,
+                    `Unexpected token '\uFFFD', "😀 not json" is not valid JSON`,
                 ],
-                ['a lone low surrogate and U+0000', 'Evidence quote \uDE00 does not match\u0000'],
-                ['a lone surrogate past the bound', '\uD83D' + 'x'.repeat(2500)],
-            ])("makes a failed investigation's diagnosis storable: %s", async (_label, message) => {
-                expect(message).toMatch(LONE_SURROGATE);
+                [
+                    'a lone low surrogate and U+0000',
+                    'Evidence quote \uDE00 does not match\u0000',
+                    'Evidence quote \uFFFD does not match\uFFFD',
+                ],
+            ])(
+                "makes a failed investigation's diagnosis storable: %s",
+                async (_label, message, cleaned) => {
+                    expectIllFormed(message);
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvalidSupportReplyError(message);
+                        },
+                    });
+
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expectStorable(result.handoffReason, cleaned);
+                },
+            );
+
+            // The bad unit opens the diagnosis, at index 0, and the diagnosis runs
+            // 500 units past the bound. A failed investigation has no deterministic
+            // reason to lead with, so the stored reason is the diagnosis alone:
+            // replaced in place, then cut to exactly the bound.
+            it("makes a failed investigation's diagnosis storable: a lone surrogate opening a diagnosis longer than the bound", async () => {
+                const message = '\uD83D' + 'x'.repeat(2500);
+                expectIllFormed(message);
                 const failing = createPipeline({
                     investigate: async () => {
                         throw new InvalidSupportReplyError(message);
@@ -973,21 +1026,26 @@ describe('AIPipeline', () => {
                 const result = await failing.generateSupportResponse('q', { source: 'github' });
 
                 expect(result.suppressed).toBe(true);
-                expectStorable(result.handoffReason);
+                expectStorable(result.handoffReason, '\uFFFD' + 'x'.repeat(100));
+                expect(result.handoffReason).toHaveLength(2000);
+                expect(result.handoffReason).toBe('\uFFFD' + 'x'.repeat(1999));
             });
 
             it('makes the model reasoning storable on a forced escalation', async () => {
+                const reasoning = 'Diagnosis \uDE00\uD83D cut short\u0000';
+                expectIllFormed(reasoning);
                 mockGenerate.mockResolvedValue({
                     ...sampleGeneratedResponse,
                     text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
-                    reasoning: 'Diagnosis \uDE00\uD83D cut short\u0000',
+                    reasoning,
                 });
 
                 const result = await pipeline.generateSupportResponse('q', { source: 'github' });
 
                 expect(result.groundedness.forcesEscalation).toBe(true);
                 expect(result.handoffReason ?? '').toContain('asserts own verification');
-                expectStorable(result.handoffReason);
+                // A reversed pair is two bad units, one of each kind.
+                expectStorable(result.handoffReason, 'Diagnosis \uFFFD\uFFFD cut short\uFFFD');
             });
         });
 

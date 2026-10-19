@@ -9,7 +9,7 @@ import {
     boundForStorage,
     publishableText,
 } from './formatter.js';
-import { LONE_SURROGATE } from './test-utils/surrogates.js';
+import { LONE_SURROGATE, isWellFormed } from './test-utils/surrogates.js';
 
 describe('disclaimer copy', () => {
     it('opens every variant with the plain AI-generated sentence', () => {
@@ -133,6 +133,7 @@ describe('ResponseFormatter', () => {
             const messages = messagesFor(result);
             for (const message of messages) {
                 expect(message.length).toBeLessThanOrEqual(2000);
+                expect(isWellFormed(message)).toBe(true);
                 expect(message).not.toMatch(LONE_SURROGATE);
                 expect(message.endsWith('...')).toBe(false);
             }
@@ -177,6 +178,7 @@ describe('ResponseFormatter', () => {
             // shipped a bare \uD83D to Discord.
             const messages = postableMessages(formatter.format('A'.repeat(1896), 'discord'));
 
+            expect(isWellFormed(messages.join(''))).toBe(true);
             expect(messages.join('')).not.toMatch(LONE_SURROGATE);
         });
 
@@ -728,11 +730,13 @@ describe('boundForStorage', () => {
     it('drops an emoji that straddles the cut instead of keeping half of it', () => {
         const text = 'x'.repeat(1999) + EMOJI + 'tail';
         // The failure being fixed, so the test cannot pass vacuously.
+        expect(isWellFormed(text.slice(0, 2000))).toBe(false);
         expect(text.slice(0, 2000)).toMatch(LONE_SURROGATE);
 
         const cut = boundForStorage(text, 2000);
 
         expect(cut).toBe('x'.repeat(1999));
+        expect(isWellFormed(cut)).toBe(true);
         expect(cut).not.toMatch(LONE_SURROGATE);
     });
 
@@ -747,6 +751,7 @@ describe('boundForStorage', () => {
             const text = pad + EMOJI.repeat(1500);
             const cut = boundForStorage(text, 2000);
 
+            expect(isWellFormed(cut)).toBe(true);
             expect(cut).not.toMatch(LONE_SURROGATE);
             expect(cut.length).toBeLessThanOrEqual(2000);
             expect(cut.length).toBeGreaterThanOrEqual(1999);
@@ -769,6 +774,7 @@ describe('boundForStorage', () => {
         ['U+0000', '\u0000', '\uFFFD', '\u0000'],
     ])('given %s already in the input', (_label, unit, replacement, detector) => {
         const expectStorable = (bounded: string) => {
+            expect(isWellFormed(bounded)).toBe(true);
             expect(bounded).not.toMatch(LONE_SURROGATE);
             expect(bounded).not.toContain('\u0000');
         };
@@ -776,7 +782,10 @@ describe('boundForStorage', () => {
         it('replaces it in place under the bound, keeping the length', () => {
             const text = `before ${unit} after ${EMOJI}`;
             // The input really is unstorable, so the test cannot pass vacuously.
+            // isWellFormed is the engine's own check, independent of the pattern,
+            // and U+0000 is well formed, so only a surrogate case expects false.
             expect(text).toMatch(detector);
+            expect(isWellFormed(text)).toBe(detector !== LONE_SURROGATE);
 
             const bounded = boundForStorage(text, 2000);
 
@@ -806,12 +815,22 @@ describe('boundForStorage', () => {
 
     // `.slice(0, -1)` keeps all but the last unit, which here is the trailing half
     // of the emoji: a negative bound returned nearly the whole string, ending in a
-    // lone high surrogate.
+    // lone high surrogate. A fractional bound under one rounds down to zero;
+    // rounding it up would keep the 'x'.
     it.each([
         ['negative', -1],
         ['zero', 0],
         ['NaN', Number.NaN],
+        ['fractional, under one', 0.5],
     ])('returns an empty string for a %s bound', (_label, maxLength) => {
         expect(boundForStorage(`x${EMOJI}`, maxLength)).toBe('');
+    });
+
+    // The bound is a count of whole code units the caller allows, so a fractional
+    // one rounds down. Rounding up keeps one unit more than that, and here the
+    // extra unit would be the trailing half that completes the emoji.
+    it('rounds a fractional bound down, never up', () => {
+        expect(boundForStorage('abcdef', 3.5)).toBe('abc');
+        expect(boundForStorage(`ab${EMOJI}`, 3.5)).toBe('ab');
     });
 });
