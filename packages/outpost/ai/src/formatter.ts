@@ -87,10 +87,18 @@ const UNSTORABLE_CODE_UNIT =
  *
  * Every unpaired surrogate and every U+0000 becomes U+FFFD first. Prisma 6.19.3's
  * query engine refuses an ill-formed string at the first write, `Message.create`,
- * and Postgres 17 refuses U+0000 in text and jsonb. Either refusal fails the
- * attempt before the reply posts, so nothing is stored and nobody is summoned, and
- * any retry that produces the same reason fails the same way. The replacement is
- * one code unit for one, so the length does not change.
+ * and Postgres 17 refuses U+0000 in text and jsonb. What a refusal loses depends on
+ * the write it hits, and any retry that produces the same text loses it again:
+ *
+ * - At `Message.create` the attempt fails before the reply posts. The ticket's
+ *   classification is written before it, so what is lost is the reply row and
+ *   the handoff.
+ * - After it, the queue handler's `storableErrorText` sends the error text it
+ *   records through here as well, for the reply row and the escalation job's
+ *   payload. A refusal there loses that write and what it carries: the error
+ *   text on the row, or the escalation that hands the reporter to a human.
+ *
+ * The replacement is one code unit for one, so the length does not change.
  *
  * A clean cut is not enough on its own, because the input can already be
  * ill-formed. V8's JSON.parse error quotes the leading half of an emoji a reply
@@ -118,21 +126,55 @@ export function boundForStorage(text: string, maxLength: number): string {
 /** Only whitespace and U+FFFD: what a blank or wholly unstorable part cleans to. */
 const BLANK_REASON = /^[\s\uFFFD]*$/;
 
+/** What {@link storableReason} puts between two parts. */
+const REASON_SEPARATOR = '; ';
+
+/**
+ * `part` as text, without throwing: `''` for `null` and `undefined`, otherwise
+ * `String(part)`, and `''` again when that conversion throws, as it does for a
+ * value whose `toString` throws or an object with no prototype.
+ */
+function reasonText(part: unknown): string {
+    if (part === null || part === undefined) return '';
+    try {
+        return String(part);
+    } catch {
+        return '';
+    }
+}
+
 /**
  * `parts` as one stored reason, joined with `'; '`, or `''` when no part says
  * anything, so the caller picks its own fallback.
  *
+ * It never throws, whatever the parts turn out to be at runtime. A groundedness
+ * finding is model output, and an Error's `message` can be overridden with
+ * anything while still being typed as a string. So each part is read through
+ * {@link reasonText}, and a part that cannot be converted counts as blank.
+ *
  * Each part is judged after cleaning, not before: made storable as
  * {@link boundForStorage} does, trimmed, and dropped if only whitespace and
- * U+FFFD remain. The join is then bounded by {@link boundForStorage}, and any
- * whitespace the cut leaves at the end goes too.
+ * U+FFFD remain. The rest are joined in order until the bound cuts one, so the
+ * result is always a prefix of the whole join. The part that is cut keeps what
+ * {@link boundForStorage} leaves of it, less any trailing whitespace. If nothing
+ * but whitespace and U+FFFD is left, it is dropped with the separator before it.
+ * A cut inside or just after a separator therefore never leaves `;`, `; ` or
+ * `; ` and a U+FFFD at the end.
  */
-export function storableReason(parts: readonly (string | undefined)[], maxLength: number): string {
-    const kept = parts
-        .map((part) => (part ?? '').replace(UNSTORABLE_CODE_UNIT, '\uFFFD').trim())
-        .filter((part) => !BLANK_REASON.test(part));
-    const bounded = boundForStorage(kept.join('; '), maxLength).trimEnd();
-    return BLANK_REASON.test(bounded) ? '' : bounded;
+export function storableReason(parts: readonly unknown[], maxLength: number): string {
+    let reason = '';
+    for (const part of parts) {
+        const cleaned = reasonText(part).replace(UNSTORABLE_CODE_UNIT, '\uFFFD').trim();
+        if (BLANK_REASON.test(cleaned)) continue;
+        const lead = reason === '' ? '' : reason + REASON_SEPARATOR;
+        const kept = boundForStorage(cleaned, maxLength - lead.length).trimEnd();
+        if (kept === cleaned) {
+            reason = lead + cleaned;
+            continue;
+        }
+        return BLANK_REASON.test(kept) ? reason : lead + kept;
+    }
+    return reason;
 }
 
 /**

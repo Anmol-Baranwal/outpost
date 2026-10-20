@@ -8,6 +8,7 @@ import {
     ResponseFormatter,
     boundForStorage,
     publishableText,
+    storableReason,
 } from './formatter.js';
 import { LONE_SURROGATE, isWellFormed } from './test-utils/surrogates.js';
 
@@ -832,5 +833,181 @@ describe('boundForStorage', () => {
     it('rounds a fractional bound down, never up', () => {
         expect(boundForStorage('abcdef', 3.5)).toBe('abc');
         expect(boundForStorage(`ab${EMOJI}`, 3.5)).toBe('ab');
+    });
+});
+
+describe('storableReason', () => {
+    const EMOJI = '😀';
+
+    // By the engine's own check rather than the pattern under test. U+0000 is well
+    // formed, so it is checked separately.
+    const expectStorable = (reason: string) => {
+        expect(isWellFormed(reason)).toBe(true);
+        expect(reason).not.toContain('\u0000');
+    };
+
+    describe.each([
+        ['a lone high surrogate', '\uD83D', '\uFFFD'],
+        ['a lone low surrogate', '\uDE00', '\uFFFD'],
+        ['a reversed pair', '\uDE00\uD83D', '\uFFFD\uFFFD'],
+        ['U+0000', '\u0000', '\uFFFD'],
+    ])('given %s in a part', (_label, unit, replacement) => {
+        it('replaces it in place at the start, middle and end of every part', () => {
+            // The unit really is unstorable, so the test cannot pass vacuously.
+            expect(isWellFormed(unit) && !unit.includes('\u0000')).toBe(false);
+
+            const reason = storableReason([`${unit}first`, `sec${unit}ond`, `third${unit}`], 2000);
+
+            expect(reason).toBe(`${replacement}first; sec${replacement}ond; third${replacement}`);
+            expectStorable(reason);
+        });
+    });
+
+    it('trims each part, so no whitespace sits on either side of a separator', () => {
+        expect(storableReason(['  first \n', '\tsecond  ', ' third'], 2000)).toBe(
+            'first; second; third',
+        );
+    });
+
+    it.each([
+        ['empty', ''],
+        ['only whitespace', ' \t\n '],
+        ['only U+FFFD', '\uFFFD\uFFFD'],
+        ['whitespace and U+FFFD', ' \uFFFD \n\uFFFD '],
+        ['only units that clean to U+FFFD', ' \uD83D\u0000\uDE00 '],
+    ])('drops a part that is %s', (_label, blank) => {
+        expect(storableReason(['first', blank, 'second'], 2000)).toBe('first; second');
+        expect(storableReason([blank, 'first'], 2000)).toBe('first');
+        expect(storableReason(['first', blank], 2000)).toBe('first');
+    });
+
+    // The handler wraps a reason in parentheses, so residue reads as `(; finding)`.
+    it('leaves no separator residue around the usable parts of a mix', () => {
+        const parts = [' ', '', 'finding one', '\uFFFD', undefined, '\u0000 ', 'finding two', '\n'];
+
+        expect(`(${storableReason(parts, 2000)})`).toBe('(finding one; finding two)');
+        expect(`(${storableReason([' ', 'finding'], 2000)})`).toBe('(finding)');
+        expect(`(${storableReason(['finding', '\uD83D'], 2000)})`).toBe('(finding)');
+    });
+
+    // In 'first; second' the separator is units 5 and 6.
+    it.each([
+        ['inside the separator', 6],
+        ['right after the separator', 7],
+    ])('drops the separator when the cut lands %s', (_label, maxLength) => {
+        expect(storableReason(['first', 'second'], maxLength)).toBe('first');
+    });
+
+    // The lone high surrogate cleans to U+FFFD, which says nothing on its own.
+    it.each([8, 9, 10])(
+        'drops the separator when a cut at %i leaves only blank residue after it',
+        (maxLength) => {
+            expect(storableReason(['first', '\uD83D\uFFFD second'], maxLength)).toBe('first');
+        },
+    );
+
+    it('keeps as much of the cut part as says something', () => {
+        expect(storableReason(['first', 'second'], 5)).toBe('first');
+        expect(storableReason(['first', 'second'], 8)).toBe('first; s');
+        expect(storableReason(['first', '\uD83D\uFFFD second'], 11)).toBe('first; \uFFFD\uFFFD s');
+        expect(storableReason(['first', 'second'], 13)).toBe('first; second');
+    });
+
+    it('drops an emoji the cut would split, and the separator left dangling before it', () => {
+        // 'first; ' is 7 units, so a bound of 8 falls between the emoji's halves.
+        const parts = ['first', `${EMOJI} second`];
+
+        expect(storableReason(parts, 8)).toBe('first');
+        expect(storableReason(parts, 9)).toBe(`first; ${EMOJI}`);
+        expect(storableReason(['first', `x${EMOJI}`], 9)).toBe('first; x');
+        for (const maxLength of [8, 9]) expectStorable(storableReason(parts, maxLength));
+    });
+
+    // The declared element type is a promise the runtime does not keep: a
+    // groundedness finding is model output, and an Error's message can be anything.
+    it.each([
+        ['a number', 404, '404'],
+        ['a boolean', false, 'false'],
+        ['a plain object', { status: 500 }, '[object Object]'],
+        ['an object with its own toString', { toString: () => ' custom \uD83D ' }, 'custom \uFFFD'],
+        ['an object whose text is blank', { toString: () => ' \u0000 ' }, ''],
+        ['a symbol', Symbol('reason'), 'Symbol(reason)'],
+        ['null', null, ''],
+        ['undefined', undefined, ''],
+        [
+            'a value whose toString throws',
+            {
+                toString() {
+                    throw new Error('no text');
+                },
+            },
+            '',
+        ],
+        ['a value with nothing to convert', Object.create(null), ''],
+    ])('coerces %s without throwing', (_label, part, text) => {
+        expect(storableReason(['before', part, 'after'], 2000)).toBe(
+            text ? `before; ${text}; after` : 'before; after',
+        );
+    });
+
+    it('coerces an Error message that was overridden with a non-string', () => {
+        const error = new Error('placeholder');
+        Object.defineProperty(error, 'message', { value: 503 });
+
+        // `error.message` is typed as a string, which is all the compiler checks.
+        expect(storableReason([error.message], 2000)).toBe('503');
+    });
+
+    it('returns an empty string when nothing usable is left', () => {
+        expect(storableReason([], 2000)).toBe('');
+        expect(storableReason(['', ' \n', '\uFFFD', '\u0000\uD83D', undefined, null], 2000)).toBe(
+            '',
+        );
+        // The bound leaves only blank residue of the one part.
+        expect(storableReason(['\uFFFD\uFFFD finding'], 3)).toBe('');
+        expect(storableReason(['finding'], 0)).toBe('');
+        expect(storableReason(['finding'], Number.NaN)).toBe('');
+    });
+
+    // Every bound over one hostile input, against a brute-force reading of "fill the
+    // bound as fully as possible": the longest prefix of the whole reason that is
+    // well formed, ends in neither whitespace nor a separator, and does not end in a
+    // separator followed only by whitespace and U+FFFD.
+    it('fills every bound with the longest clean prefix, idempotently', () => {
+        const parts = [
+            ' first\u0000 ',
+            '',
+            `${EMOJI}two`,
+            ' \uFFFD ',
+            404,
+            '\uFFFD x \uD83D',
+            null,
+            'end',
+        ];
+        const whole = `first\uFFFD; ${EMOJI}two; 404; \uFFFD x \uFFFD; end`;
+        const longestCleanPrefix = (maxLength: number): string => {
+            for (let end = Math.min(maxLength, whole.length); end > 0; end--) {
+                const prefix = whole.slice(0, end);
+                const lastPart = prefix.split('; ').pop() ?? '';
+                if (
+                    isWellFormed(prefix) &&
+                    prefix === prefix.trimEnd() &&
+                    !prefix.endsWith(';') &&
+                    !/^[\s\uFFFD]*$/.test(lastPart)
+                ) {
+                    return prefix;
+                }
+            }
+            return '';
+        };
+
+        expect(storableReason(parts, 2000)).toBe(whole);
+        for (let maxLength = 0; maxLength <= whole.length + 1; maxLength++) {
+            const reason = storableReason(parts, maxLength);
+
+            expect(reason, `bound ${maxLength}`).toBe(longestCleanPrefix(maxLength));
+            expectStorable(reason);
+            expect(storableReason([reason], maxLength), `bound ${maxLength}`).toBe(reason);
+        }
     });
 });
