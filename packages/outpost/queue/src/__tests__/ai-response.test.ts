@@ -1359,9 +1359,8 @@ describe('handleAiResponse', () => {
         // The bound counts UTF-16 code units, so an emoji whose leading half is the
         // 2000th unit would be cut in two by a plain `.slice()`. The lone surrogate
         // left behind is refused at the first write, `Message.create` of
-        // `escalationRequiredReason` (see boundForStorage), so the attempt fails
-        // before it posts: nothing is stored, nobody is summoned, and a retry that
-        // produces the same reason fails the same way.
+        // `escalationRequiredReason`, before the reply posts. boundForStorage says
+        // what that refusal loses.
         it('never leaves half an emoji at the end of a bounded handoff reason', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
             mockGenerateSupportResponse.mockResolvedValue({
@@ -1379,8 +1378,8 @@ describe('handleAiResponse', () => {
         });
 
         // The emoji case above cuts at 1999 whether the bound is 1999 or 2000, so
-        // it cannot tell the two apart. These lengths can: one either side of the
-        // bound, and the cut lands exactly on it.
+        // it cannot tell the two apart. These lengths can: one is exactly the
+        // bound and one is a unit over it, and both must come out at the bound.
         it.each([
             ['keeps a reason exactly as long as the bound whole', MAX_REPEATED_HANDOFF_REASON],
             ['cuts a reason one unit over the bound to the bound', MAX_REPEATED_HANDOFF_REASON + 1],
@@ -2652,10 +2651,10 @@ describe('handleAiResponse', () => {
     //
     // The failure text comes from an adapter or Prisma error, and some adapters
     // put a whole HTTP response body in it. It is written to responseError, to
-    // the owed escalationRequiredReason and to the queued ESCALATION payload.
-    // The store refuses U+0000 and unpaired surrogates there (see boundForStorage),
-    // which blocks the escalation and loses the diagnostic, and nothing else bounds
-    // its length.
+    // the owed escalationRequiredReason when the row already owes a handoff, and
+    // to the queued ESCALATION payload. Nothing else bounds its length, and the
+    // store refuses U+0000 and unpaired surrogates. boundForStorage says what a
+    // refusal at these writes loses.
     describe('a delivery failure is bounded and made storable before it is written', () => {
         /**
          * The handler's bound on error text it stores, restated rather than
@@ -2766,6 +2765,19 @@ describe('handleAiResponse', () => {
             };
         }
 
+        /**
+         * Hold every captured text to what the store requires. It reads the
+         * arguments the handler passed, never the test's own expectation, which
+         * is a literal and well formed whatever the handler did.
+         */
+        function expectStorable(texts: string[]): void {
+            for (const text of texts) {
+                expect(isWellFormed(text)).toBe(true);
+                expect(text).not.toMatch(LONE_SURROGATE);
+                expect(text).not.toContain('\u0000');
+            }
+        }
+
         it.each(SITES)(
             'replaces U+0000 and lone surrogates in the failure from %s',
             async (_label, site) => {
@@ -2776,22 +2788,18 @@ describe('handleAiResponse', () => {
 
                 expect(result.success).toBe(true);
                 expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
-                const failure = site.prefix + STORABLE_ERROR;
                 const written = writtenFailure();
+                expectStorable([
+                    ...written.responseErrors,
+                    ...written.owedReasons,
+                    ...written.queuedReasons,
+                ]);
+                const failure = site.prefix + STORABLE_ERROR;
                 expect(written).toEqual({
                     responseErrors: [failure],
                     owedReasons: [notDelivered(site.source, failure)],
                     queuedReasons: [notDelivered(site.source, failure)],
                 });
-                for (const text of [
-                    ...written.responseErrors,
-                    ...written.owedReasons,
-                    ...written.queuedReasons,
-                ]) {
-                    expect(isWellFormed(text)).toBe(true);
-                    expect(text).not.toMatch(LONE_SURROGATE);
-                    expect(text).not.toContain('\u0000');
-                }
             },
         );
 
@@ -2803,10 +2811,13 @@ describe('handleAiResponse', () => {
             try {
                 await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
 
+                const written = writtenFailure();
+                for (const text of written.responseErrors) {
+                    expect(text).toHaveLength(MAX_STORED_ERROR_TEXT);
+                }
                 const failure =
                     site.prefix + 'x'.repeat(MAX_STORED_ERROR_TEXT - site.prefix.length);
-                expect(failure).toHaveLength(MAX_STORED_ERROR_TEXT);
-                expect(writtenFailure()).toEqual({
+                expect(written).toEqual({
                     responseErrors: [failure],
                     owedReasons: [notDelivered(site.source, failure)],
                     queuedReasons: [notDelivered(site.source, failure)],
@@ -2879,6 +2890,9 @@ describe('handleAiResponse', () => {
             const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
 
             expect(result.success).toBe(true);
+            const { responseErrors } = writtenFailure();
+            expect(responseErrors).toHaveLength(1);
+            expectStorable(responseErrors);
             const prefix = 'Delivery succeeded but the DELIVERED state write failed: ';
             const stored = `${prefix}${STORABLE_ERROR} ${'x'.repeat(100_000)}`.slice(
                 0,
@@ -2888,10 +2902,65 @@ describe('handleAiResponse', () => {
                 where: { id: 'msg-new' },
                 data: { deliveryConfirmed: true, responseError: stored },
             });
-            expect(isWellFormed(stored)).toBe(true);
-            expect(stored).not.toMatch(LONE_SURROGATE);
-            expect(stored).not.toContain('\u0000');
         });
+
+        // An Error's `message` is typed as a string, but anything can be assigned
+        // to it. storableReason used to call `.replace()` on each part, so a
+        // message that was not a string threw inside the post's catch, and the
+        // attempt rejected without escalating. It is converted now, and a value
+        // that will not convert reads as having no usable message.
+        it.each([
+            ['a number', () => Object.assign(new Error('x'), { message: 42 }), '42'],
+            [
+                'an object, read through a getter',
+                () =>
+                    Object.defineProperty(new Error('x'), 'message', {
+                        get: () => ({ toString: () => 'Teams API 503' }),
+                    }),
+                'Teams API 503',
+            ],
+            [
+                'an object whose toString throws',
+                () =>
+                    Object.assign(new Error('x'), {
+                        message: {
+                            toString() {
+                                throw new Error('no text');
+                            },
+                        },
+                    }),
+                'no usable error message',
+            ],
+            [
+                'an object with no prototype',
+                () => Object.assign(new Error('x'), { message: Object.create(null) }),
+                'no usable error message',
+            ],
+        ])(
+            'escalates a failed post at once when its error message is %s',
+            async (_label, postError, failure) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockPostResponse.mockRejectedValueOnce(postError());
+                const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+                try {
+                    const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                    expect(result.success).toBe(true);
+                    expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+                    const written = writtenFailure();
+                    expectStorable([...written.responseErrors, ...written.queuedReasons]);
+                    // High confidence owed no handoff, so no owed reason is written.
+                    expect(written).toEqual({
+                        responseErrors: [failure],
+                        owedReasons: [],
+                        queuedReasons: [notDelivered('DISCORD', failure)],
+                    });
+                } finally {
+                    error.mockRestore();
+                }
+            },
+        );
     });
 
     /**
@@ -4609,7 +4678,13 @@ describe('handleAiResponse', () => {
  * pinned here rather than left to trust.
  */
 describe('restoreShadowMode', () => {
-    const beforeEachTest = process.env.SHADOW_MODE;
+    // Read per test, not when the describe is collected. Collection runs before
+    // the file's beforeAll clears SHADOW_MODE, so a value read then is the
+    // ambient one, and handing it back would set it for every block after this.
+    let beforeEachTest: string | undefined;
+    beforeEach(() => {
+        beforeEachTest = process.env.SHADOW_MODE;
+    });
     afterEach(() => {
         restoreShadowMode(beforeEachTest);
     });
@@ -4638,22 +4713,35 @@ describe('restoreShadowMode', () => {
 
 // ─── One hostile corpus through every escalation-reason arm ───────────────
 //
-// Three arms write an escalation reason: the published low-confidence arm, the
-// withheld arm and the delivery-failure arm. Each reason lands in
-// `Message.escalationRequiredReason` and in the ESCALATION job's jsonb payload.
-// A unit the store refuses there fails the attempt before it posts (see
-// boundForStorage). Review kept finding one more arm that forgot to clean, bound
-// or fall back. Every arm therefore takes
-// the same corpus here, and an arm added later joins ESCALATION_ARMS to inherit
-// it. The corpus is restated from ai/src/pipeline.test.ts because the queue's
-// tsconfig roots at queue/src and refuses an import from the ai package (TS6059).
-describe('every escalation-reason arm stores a clean, bounded reason', () => {
+// An attempt that generates a reply writes its escalation reason from one of
+// three arms: the published low-confidence arm, the withheld arm or the
+// delivery-failure arm. Each queues the reason in the ESCALATION job's payload.
+// The first two also create the response row with it as
+// `escalationRequiredReason`, before the reply posts. The delivery-failure arm
+// writes only after the post has failed. Its error text goes to `responseError`,
+// and its reason replaces the owed one only on a row that already owed a
+// handoff. On a row that owed none, the reason is queued and nothing more. What
+// a refused write loses differs between these writes; see boundForStorage.
+//
+// Recovery writes reasons as well: recoverRequiredEscalation,
+// recoverPendingResponse and the pending-response sweep compose theirs from what
+// the row already holds. None of them is driven here.
+//
+// Review kept finding one more arm that forgot to clean, bound or fall back, so
+// every way into the three arms takes the same corpus, and a way added later
+// joins ESCALATION_ARMS to inherit it. The corpus extends the one in
+// ai/src/pipeline.test.ts, restated because the queue's tsconfig roots at
+// queue/src and refuses an import from the ai package (TS6059).
+describe('every first-attempt escalation-reason arm writes a clean, bounded reason', () => {
     /**
-     * The handler's MAX_REPEATED_HANDOFF_REASON and MAX_STORED_ERROR_TEXT,
-     * restated so that moving either bound fails here.
+     * The handler's MAX_REPEATED_HANDOFF_REASON, MAX_STORED_ERROR_TEXT and
+     * ERROR_WITHOUT_MESSAGE, restated rather than exported. A case that reaches
+     * a bound expects its exact text, so moving either bound, up or down, fails
+     * the over-bound case here.
      */
     const MAX_REPEATED_HANDOFF_REASON = 2000;
     const MAX_STORED_ERROR_TEXT = 2000;
+    const ERROR_WITHOUT_MESSAGE = 'no usable error message';
 
     /**
      * `String.prototype.isWellFormed` (Node 20+), typed by hand because this
@@ -4664,18 +4752,24 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
         return (text as unknown as { isWellFormed(): boolean }).isWellFormed();
     }
 
-    /** A parenthetical with nothing in it a reader could use. */
-    const BLANK_PARENTHETICAL = /^[\s\uFFFD;]*$/;
-
     interface HostileCase {
-        /** The free text, given how many code units the arm leaves it before the bound. */
-        text(room: number): string;
-        /** Blank parts an arm that takes several parts receives ahead of `text`. */
-        blankParts?: readonly string[];
-        /** A fragment of the input that must survive, or null when none of it is usable. */
-        survivor: string | null;
-        /** What the raw input must hold at the bound, so the case cannot drift off it. */
-        atBound?: 'high surrogate' | 'space';
+        /**
+         * The input as parts, given how many code units the arm leaves it before
+         * the bound. An arm that takes one string receives them joined with a
+         * space.
+         */
+        parts(room: number): string[];
+        /**
+         * Exactly what the arm keeps of the input after its own prefix, given the
+         * same room and whether the input arrived as parts. Null when nothing in
+         * it is usable, so the arm must fall back.
+         */
+        kept: ((room: number, asParts: boolean) => string) | null;
+        /**
+         * The two code units the raw input holds either side of the bound, so the
+         * case cannot drift off it.
+         */
+        straddles?(asParts: boolean): string;
     }
 
     const HOSTILE_CORPUS: Array<[string, HostileCase]> = [
@@ -4684,46 +4778,101 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
             // emoji's leading half alone. The whole emoji later on must survive intact.
             'a lone high surrogate',
             {
-                text: () => `Unexpected token '\uD83D', "😀 not json" is not valid JSON`,
-                survivor: '"😀 not json" is not valid JSON',
+                parts: () => [`Unexpected token '\uD83D', "😀 not json" is not valid JSON`],
+                kept: () => `Unexpected token '\uFFFD', "😀 not json" is not valid JSON`,
             },
         ],
         [
             'a lone low surrogate',
-            { text: () => 'Evidence quote \uDE00 does not match', survivor: 'does not match' },
+            {
+                parts: () => ['Evidence quote \uDE00 does not match'],
+                kept: () => 'Evidence quote \uFFFD does not match',
+            },
         ],
         [
             'a reversed pair (low then high)',
-            { text: () => 'Diagnosis \uDE00\uD83D cut short', survivor: 'cut short' },
+            {
+                parts: () => ['Diagnosis \uDE00\uD83D cut short'],
+                kept: () => 'Diagnosis \uFFFD\uFFFD cut short',
+            },
         ],
-        ['U+0000', { text: () => 'Reporter version \u0000 is unknown', survivor: 'is unknown' }],
-        ['whitespace only', { text: () => ' \n\t ', survivor: null }],
+        [
+            'U+0000',
+            {
+                parts: () => ['Reporter version \u0000 is unknown'],
+                kept: () => 'Reporter version \uFFFD is unknown',
+            },
+        ],
+        ['whitespace only', { parts: () => [' \n\t '], kept: null }],
         [
             'several blank parts',
+            { parts: () => ['', '   ', '\u0000', '\uDE00 \uD83D', ' \n '], kept: null },
+        ],
+        [
+            // As parts, each blank one is dropped with its separator. Joined into
+            // one string, the unstorable units sit inside the text and stay as U+FFFD.
+            'blank parts around usable ones',
             {
-                blankParts: ['', '   ', '\u0000', '\uDE00 \uD83D'],
-                text: () => ' \n ',
-                survivor: null,
+                parts: () => [
+                    '  ',
+                    'first finding',
+                    '\u0000',
+                    '\uDE00 \uD83D',
+                    'second finding  ',
+                    '',
+                ],
+                kept: (_room, asParts) =>
+                    asParts
+                        ? 'first finding; second finding'
+                        : 'first finding \uFFFD \uFFFD \uFFFD second finding',
             },
         ],
         [
             'an over-bound reason (5000 chars)',
-            { text: () => 'x'.repeat(5000), survivor: 'x'.repeat(100) },
+            { parts: () => ['x'.repeat(5000)], kept: (room) => 'x'.repeat(room) },
         ],
         [
             'an emoji whose high half lands exactly on the bound',
             {
-                text: (room) => 'x'.repeat(room - 1) + '😀' + ' and more after the cut',
-                survivor: 'x'.repeat(100),
-                atBound: 'high surrogate',
+                parts: (room) => ['x'.repeat(room - 1) + '😀' + ' and more after the cut'],
+                kept: (room) => 'x'.repeat(room - 1),
+                straddles: () => '\uD83D\uDE00',
             },
         ],
         [
             'a space exactly at the cut',
             {
-                text: (room) => 'x'.repeat(room - 1) + ' ' + 'y'.repeat(100),
-                survivor: 'x'.repeat(100),
-                atBound: 'space',
+                parts: (room) => ['x'.repeat(room - 1) + ' ' + 'y'.repeat(100)],
+                kept: (room) => 'x'.repeat(room - 1),
+                straddles: () => ' y',
+            },
+        ],
+        [
+            // As parts, the bound falls between the separator's ';' and its space.
+            'a cut inside the separator',
+            {
+                parts: (room) => ['x'.repeat(room - 1), 'y'.repeat(100)],
+                kept: (room) => 'x'.repeat(room - 1),
+                straddles: (asParts) => (asParts ? '; ' : ' y'),
+            },
+        ],
+        [
+            // As parts, the bound falls right after the separator.
+            'a cut just after the separator',
+            {
+                parts: (room) => ['x'.repeat(room - 2), 'y'.repeat(100)],
+                kept: (room, asParts) => 'x'.repeat(room - 2) + (asParts ? '' : ' y'),
+                straddles: (asParts) => (asParts ? ' y' : 'yy'),
+            },
+        ],
+        [
+            // As parts, all the bound leaves of the second part is a unit the
+            // store refuses, which cleans to U+FFFD and nothing else.
+            'a cut that leaves only an unstorable unit after the separator',
+            {
+                parts: (room) => ['x'.repeat(room - 3), '\uDE00' + 'y'.repeat(100)],
+                kept: (room, asParts) => 'x'.repeat(room - 3) + (asParts ? '' : ' \uFFFDy'),
+                straddles: (asParts) => (asParts ? '\uDE00y' : 'yy'),
             },
         ],
     ];
@@ -4732,17 +4881,25 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
         /** Everything before the parenthetical's contents, and everything after them. */
         head: string;
         tail: string;
-        /** The whole reason when the arm leaves the parenthetical off, if it may. */
-        bare?: string;
+        /**
+         * The whole reason when nothing in the input is usable. The low-confidence
+         * arm leaves its parenthetical off, the withheld arm falls through to its
+         * next source, and a delivery failure says its error had no usable message.
+         */
+        fallback: string;
         /** Text the arm puts inside the parenthetical ahead of the input, within the bound. */
         innerPrefix: string;
         /** Bound on the parenthetical's contents. */
         bound: number;
         /** Whether the arm receives the corpus as separate parts or as one string. */
         takesParts: boolean;
-        arrange(parts: string[]): void;
-        /** Every owed reason written to the response row. */
+        arrange(input: string[]): void;
+        /** Every owed reason the arm writes to the response row. */
         stored(): string[];
+        /** Whether it writes one: a delivery failure on a row that owed no handoff does not. */
+        storesReason: boolean;
+        /** Whether it writes the parenthetical's contents to `responseError`, as a delivery failure does. */
+        storesError: boolean;
     }
 
     /** The owed reason the BOT row is created with, before any publication. */
@@ -4765,6 +4922,13 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
             .filter((value): value is string => typeof value === 'string');
     }
 
+    /** Every `responseError` written to the row after it was created. */
+    function errorTexts(): string[] {
+        return [...mockPrismaMessage.update.mock.calls, ...mockPrismaMessage.updateMany.mock.calls]
+            .map((call: Array<{ data: Partial<PersistedResponse> }>) => call[0].data.responseError)
+            .filter((value): value is string => typeof value === 'string');
+    }
+
     function queuedReasons(): string[] {
         return mockPrismaJob.create.mock.calls
             .map((call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data)
@@ -4775,26 +4939,78 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
     const LOW_CONFIDENCE = 'Low AI confidence (39%) — automated escalation';
     const WITHHELD = { head: 'AI response withheld (', tail: ') — needs a human answer' };
 
-    /** One delivery-failure site: how it fails, and the text it puts before the error. */
+    /**
+     * One delivery-failure site: how it fails, the label it puts before the
+     * error, and whether the reply already owed a handoff when the post failed.
+     */
     function notDelivered(
         source: string,
         innerPrefix: string,
+        owesHandoff: boolean,
         fail: (error: string) => void,
     ): EscalationArm {
+        const head = `AI response generated but not delivered to ${source} (`;
+        const tail = ') — needs a human to answer the reporter';
         return {
-            head: `AI response generated but not delivered to ${source} (`,
-            tail: ') — needs a human to answer the reporter',
+            head,
+            tail,
+            fallback: head + innerPrefix + ERROR_WITHOUT_MESSAGE + tail,
             innerPrefix,
             bound: MAX_STORED_ERROR_TEXT,
             takesParts: false,
-            arrange: (parts) => {
-                // Only a row that already owes a handoff has its reason replaced.
-                mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
-                fail(parts.join(' '));
+            arrange: ([error]) => {
+                // A low score owes a handoff before the post; a high one does not.
+                mockGenerateSupportResponse.mockResolvedValue(
+                    owesHandoff ? lowConfidenceResult : highConfidenceResult,
+                );
+                fail(error);
             },
             stored: replacedReasons,
+            storesReason: owesHandoff,
+            storesError: true,
         };
     }
+
+    /** The three places the handler derives a delivery failure, and the label each puts first. */
+    const DELIVERY_SITES: Array<[string, string, string, (error: string) => void]> = [
+        [
+            'a failed post',
+            'DISCORD',
+            '',
+            (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockPostResponse.mockRejectedValueOnce(new Error(error));
+            },
+        ],
+        [
+            'a misconfigured adapter',
+            'DISCORD',
+            'platform adapter misconfigured: ',
+            (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGetAdapter.mockImplementation(() => {
+                    throw new Error(error);
+                });
+            },
+        ],
+        [
+            'a lost suggestedResponse with no adapter',
+            'WEB',
+            'no platform adapter for WEB and suggestedResponse could not be stored: ',
+            (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+                mockHasAdapter.mockReturnValue(false);
+                mockPrismaTicket.update.mockImplementation(
+                    async (args: { data: Record<string, unknown> }) => {
+                        if (args.data.suggestedResponse !== undefined) {
+                            throw new Error(error);
+                        }
+                        return {};
+                    },
+                );
+            },
+        ],
+    ];
 
     const ESCALATION_ARMS: Array<[string, EscalationArm]> = [
         [
@@ -4802,99 +5018,76 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
             {
                 head: `${LOW_CONFIDENCE} (`,
                 tail: ')',
-                bare: LOW_CONFIDENCE,
+                fallback: LOW_CONFIDENCE,
                 innerPrefix: '',
                 bound: MAX_REPEATED_HANDOFF_REASON,
                 takesParts: false,
-                arrange: (parts) => {
+                arrange: ([handoffReason]) => {
                     mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
                     mockGenerateSupportResponse.mockResolvedValue({
                         ...forcedEscalationResult,
-                        handoffReason: parts.join(' '),
+                        handoffReason,
                     });
                 },
                 stored: createdReasons,
+                storesReason: true,
+                storesError: false,
             },
         ],
         [
             'the withheld arm, from the handoff reason',
             {
                 ...WITHHELD,
+                // A handoff reason with nothing usable in it falls through to the findings.
+                fallback:
+                    WITHHELD.head +
+                    suppressedResult.groundedness.reasons.join('; ') +
+                    WITHHELD.tail,
                 innerPrefix: '',
                 bound: MAX_REPEATED_HANDOFF_REASON,
                 takesParts: false,
-                arrange: (parts) => {
+                arrange: ([handoffReason]) => {
                     mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
                     mockGenerateSupportResponse.mockResolvedValue({
                         ...suppressedResult,
-                        handoffReason: parts.join(' '),
+                        handoffReason,
                     });
                 },
                 stored: createdReasons,
+                storesReason: true,
+                storesError: false,
             },
         ],
         [
             'the withheld arm, from the groundedness findings',
             {
                 ...WITHHELD,
+                fallback: WITHHELD.head + 'Insufficient verified evidence' + WITHHELD.tail,
                 innerPrefix: '',
                 bound: MAX_REPEATED_HANDOFF_REASON,
                 takesParts: true,
-                arrange: (parts) => {
+                arrange: (reasons) => {
                     mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
                     mockGenerateSupportResponse.mockResolvedValue({
                         ...suppressedResult,
-                        groundedness: { ...suppressedResult.groundedness, reasons: parts },
+                        groundedness: { ...suppressedResult.groundedness, reasons },
                     });
                 },
                 stored: createdReasons,
+                storesReason: true,
+                storesError: false,
             },
         ],
-        [
-            'the delivery-failure arm, from a failed post',
-            notDelivered('DISCORD', '', (error) => {
-                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
-                mockPostResponse.mockRejectedValueOnce(new Error(error));
-            }),
-        ],
-        [
-            'the delivery-failure arm, from a misconfigured adapter',
-            notDelivered('DISCORD', 'platform adapter misconfigured: ', (error) => {
-                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
-                mockGetAdapter.mockImplementation(() => {
-                    throw new Error(error);
-                });
-            }),
-        ],
-        [
-            'the delivery-failure arm, from a lost suggestedResponse with no adapter',
-            notDelivered(
-                'WEB',
-                'no platform adapter for WEB and suggestedResponse could not be stored: ',
-                (error) => {
-                    mockPrismaTicket.findUnique.mockResolvedValue({
-                        ...sampleTicket,
-                        source: 'WEB',
-                    });
-                    mockHasAdapter.mockReturnValue(false);
-                    mockPrismaTicket.update.mockImplementation(
-                        async (args: { data: Record<string, unknown> }) => {
-                            if (args.data.suggestedResponse !== undefined) {
-                                throw new Error(error);
-                            }
-                            return {};
-                        },
-                    );
-                },
-            ),
-        ],
+        ...DELIVERY_SITES.flatMap(
+            ([site, source, label, fail]): Array<[string, EscalationArm]> => [
+                [`the delivery-failure arm, from ${site}`, notDelivered(source, label, true, fail)],
+                [
+                    `the delivery-failure arm, from ${site}, owing no handoff`,
+                    notDelivered(source, label, false, fail),
+                ],
+            ],
+        ),
     ];
-
-    /** The parts `arm` receives for `hostile`, sized to the room its bound leaves. */
-    function partsFor(arm: EscalationArm, hostile: HostileCase): string[] {
-        const room = arm.bound - arm.innerPrefix.length;
-        return [...(hostile.blankParts ?? []), hostile.text(room)];
-    }
 
     const ARM_CASES = ESCALATION_ARMS.flatMap(([armLabel, arm]) =>
         HOSTILE_CORPUS.map(([caseLabel, hostile]): [string, string, EscalationArm, HostileCase] => [
@@ -4906,6 +5099,11 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
     );
 
     beforeEach(() => {
+        // Every arm here takes the non-shadow path. SHADOW_MODE is cleared for
+        // each test and handed back after it, so neither the environment nor a
+        // block that ran earlier decides which path that is.
+        const shadowMode = process.env.SHADOW_MODE;
+        delete process.env.SHADOW_MODE;
         // The same happy path describe('handleAiResponse') primes, restated
         // because this block sits outside it.
         vi.clearAllMocks();
@@ -4939,7 +5137,10 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
             vi.spyOn(console, 'warn').mockImplementation(() => {}),
             vi.spyOn(console, 'log').mockImplementation(() => {}),
         ];
-        return () => quiet.forEach((spy) => spy.mockRestore());
+        return () => {
+            quiet.forEach((spy) => spy.mockRestore());
+            restoreShadowMode(shadowMode);
+        };
     });
 
     it('has an oracle that tells a well-formed string from an ill-formed one', () => {
@@ -4950,45 +5151,54 @@ describe('every escalation-reason arm stores a clean, bounded reason', () => {
     });
 
     it.each(ARM_CASES)('%s: %s', async (_arm, _case, arm, hostile) => {
-        const parts = partsFor(arm, hostile);
-        // The alignment cases only mean something if the raw input really puts
-        // the named unit at the bound, so that is checked before the run.
-        const raw = arm.innerPrefix + parts.join(arm.takesParts ? '; ' : ' ');
-        if (hostile.atBound === 'high surrogate') {
-            expect(raw.charCodeAt(arm.bound - 1).toString(16)).toBe('d83d');
-            expect(raw.charCodeAt(arm.bound).toString(16)).toBe('de00');
+        const room = arm.bound - arm.innerPrefix.length;
+        const parts = hostile.parts(room);
+        const input = arm.takesParts ? parts : [parts.join(' ')];
+        // A case aimed at the bound only means something if the raw input really
+        // puts the named units either side of it, so that is checked before the run.
+        if (hostile.straddles) {
+            const raw = arm.innerPrefix + input.join('; ');
+            expect(raw.slice(arm.bound - 1, arm.bound + 1)).toBe(hostile.straddles(arm.takesParts));
         }
-        if (hostile.atBound === 'space') expect(raw[arm.bound - 1]).toBe(' ');
-        arm.arrange(arm.takesParts ? parts : [parts.join(' ')]);
+        arm.arrange(input);
 
         const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
 
         expect(result.success).toBe(true);
-        const stored = arm.stored();
+        expect(result.data).toMatchObject({ escalated: true, deliveryFailed: arm.storesError });
         const queued = queuedReasons();
-        expect(stored).toHaveLength(1);
-        expect(queued).toEqual(stored);
-        const reason = stored[0];
+        expect(queued).toHaveLength(1);
+        const [reason] = queued;
+        expect(arm.stored()).toEqual(arm.storesReason ? [reason] : []);
+        const errors = errorTexts();
 
-        // Storable: what Prisma and Postgres require. No pair is excused from these.
-        expect(isWellFormed(reason)).toBe(true);
-        expect(reason).not.toContain('\u0000');
-        expect(reason.length).toBeLessThanOrEqual(arm.head.length + arm.bound + arm.tail.length);
-        expect(reason).not.toContain('()');
-        expect(reason).not.toContain('(;)');
-        if (arm.bare !== undefined && reason === arm.bare) {
-            // Leaving the parenthetical off is only right when nothing was usable.
-            expect(hostile.survivor).toBeNull();
-            return;
+        // Storable: what Prisma and Postgres require of every text written or
+        // queued. No pair is excused from these.
+        for (const text of [reason, ...errors]) {
+            expect(isWellFormed(text)).toBe(true);
+            expect(text).not.toContain('\u0000');
         }
-        expect(reason.slice(0, arm.head.length)).toBe(arm.head);
-        expect(reason.slice(reason.length - arm.tail.length)).toBe(arm.tail);
-        const inner = reason.slice(arm.head.length, reason.length - arm.tail.length);
-        if (hostile.survivor !== null) expect(inner).toContain(hostile.survivor);
+        // Nothing a cut or a blank part can leave behind: an empty
+        // parenthetical, or a separator or whitespace at either end of one.
+        expect(reason).not.toContain('()');
+        expect(reason).not.toContain('(;');
+        expect(reason).not.toContain('; )');
+        if (reason.startsWith(arm.head) && reason.endsWith(arm.tail)) {
+            const inner = reason.slice(arm.head.length, reason.length - arm.tail.length);
+            expect(inner).not.toMatch(/;$/);
+            expect(inner).toBe(inner.trim());
+        }
 
-        // Usable: something to read in the parenthetical, and no whitespace the
-        // cut left at its end.
-        expect(inner).not.toMatch(BLANK_PARENTHETICAL);
-        expect(inner).toBe(inner.trimEnd());
+        // Exact, so a case that reaches the bound pins it, and a fallback is the
+        // arm's own text rather than whatever survives around a label.
+        const expected =
+            hostile.kept === null
+                ? arm.fallback
+                : arm.head + arm.innerPrefix + hostile.kept(room, arm.takesParts) + arm.tail;
+        expect(reason).toBe(expected);
+        // A delivery failure stores its error text exactly as the parenthetical holds it.
+        expect(errors).toEqual(
+            arm.storesError ? [reason.slice(arm.head.length, reason.length - arm.tail.length)] : [],
+        );
     });
 });
