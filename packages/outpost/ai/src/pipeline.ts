@@ -148,6 +148,7 @@ export class AIPipeline {
         let searchResults: SearchResult[];
         let generatedResponse: GeneratedResponse;
         let mustRoute = false;
+        let investigationFailed = false;
         const pipelineContext: PipelineContext = {
             question,
             source: options.source,
@@ -182,6 +183,7 @@ export class AIPipeline {
                     error instanceof Error ? error.message : String(error),
                 );
                 mustRoute = true;
+                investigationFailed = true;
                 searchResults = [];
                 generatedResponse = {
                     text: '',
@@ -189,7 +191,7 @@ export class AIPipeline {
                     confidenceScore: 0,
                     confidenceLevel: ConfidenceLevel.LOW,
                     // Returned only as the bounded private handoff reason, never public copy.
-                    reasoning: error.message || 'Investigation failed validation or execution',
+                    reasoning: error.message,
                     tokenUsage:
                         error instanceof InvalidSupportReplyError ? error.tokenUsage : undefined,
                 };
@@ -430,12 +432,23 @@ export class AIPipeline {
         // Each part is judged blank after cleaning, so the fallback still applies
         // when the reasoning cleans to nothing. See storableReason and
         // boundForStorage.
+        //
+        // The fallback names what committed the handoff. The verifier is named
+        // only when nothing else did; a draft that must already route never
+        // reaches it.
+        const fallbackReason = investigationFailed
+            ? 'Investigation failed validation or execution'
+            : reply?.decision === 'route'
+              ? 'The investigator routed the question without a usable reason'
+              : !lint.publish || groundedness.suppress || groundedness.forcesEscalation
+                ? 'A draft check required review without a usable finding'
+                : confidenceAssessment.degraded
+                  ? 'Independent verification was unavailable or malformed'
+                  : 'Independent verification found insufficient support';
         const handoffReason =
             suppressed || groundedness.forcesEscalation
                 ? storableReason([...deterministicReasons, generatedResponse.reasoning], 2000) ||
-                  (confidenceAssessment.degraded
-                      ? 'Independent verification was unavailable or malformed'
-                      : 'Independent verification found insufficient support')
+                  fallbackReason
                 : undefined;
 
         return {

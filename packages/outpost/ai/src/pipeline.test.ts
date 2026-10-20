@@ -1077,6 +1077,8 @@ describe('AIPipeline', () => {
                 },
             );
 
+            // A draft that must already route never reaches the verifier, so neither
+            // of these may blame it.
             it.each(UNUSABLE_REASONINGS)(
                 'falls back to its own reason when a failed investigation reports %s',
                 async (_label, message) => {
@@ -1091,8 +1093,42 @@ describe('AIPipeline', () => {
                     });
 
                     expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
                     expect(result.handoffReason).toBe(
-                        'Independent verification was unavailable or malformed',
+                        'Investigation failed validation or execution',
+                    );
+                },
+            );
+
+            it.each(UNUSABLE_REASONINGS)(
+                'falls back to its own reason when the investigator routes with %s',
+                async (_label, handoffReason) => {
+                    const routing = createPipeline({
+                        investigate: async () => ({
+                            reply: {
+                                decision: 'route',
+                                summary: 'A maintainer should check this setup.',
+                                details: '',
+                                apiVersion: 'unknown',
+                                appliesTo: '',
+                                evidence: [],
+                                handoffReason,
+                            },
+                            sources: [],
+                            tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                        }),
+                    });
+
+                    const result = await routing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expect(result.groundedness.suppress).toBe(false);
+                    expect(result.groundedness.forcesEscalation).toBe(false);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    expect(result.handoffReason).toBe(
+                        'The investigator routed the question without a usable reason',
                     );
                 },
             );
@@ -1516,18 +1552,6 @@ describe('every handoff-reason path survives the hostile corpus', () => {
     /** The pipeline's bound on `handoffReason`, restated so moving it fails here. */
     const BOUND = 2000;
 
-    /**
-     * `String.prototype.isWellFormed` (Node 20+), typed by hand because this
-     * package compiles against the ES2022 lib. It is the oracle here because it
-     * shares no code with the production regex it is checking.
-     */
-    function isWellFormed(text: string): boolean {
-        return (text as unknown as { isWellFormed(): boolean }).isWellFormed();
-    }
-
-    /** Nothing a reader could use: only whitespace and U+FFFD. */
-    const BLANK = /^[\s\uFFFD]*$/;
-
     interface HostileCase {
         /** The free text, given how many code units the path leaves it before the bound. */
         text(room: number): string;
@@ -1596,9 +1620,21 @@ describe('every handoff-reason path survives the hostile corpus', () => {
          * corpus as a single string.
          */
         finding?: string;
+        /**
+         * The whole reason when nothing the path was given is usable. It names
+         * what committed the handoff, never a check that did not decide it.
+         */
+        fallback: string;
         /** Drive the path with `parts` and return the reason it hands off. */
         run(parts: string[]): Promise<string | undefined>;
     }
+
+    /** What the linter finds in `lintBlockedDraft`. The pipeline writes it, so no arm blanks it. */
+    const { reasons: lintReasons } = lintDraft(lintBlockedDraft, sampleSearchResults, 'enforce');
+    const LINT_FINDING = lintReasons.join('; ');
+
+    const DRAFT_CHECK_FALLBACK = 'A draft check required review without a usable finding';
+    const INVESTIGATION_FALLBACK = 'Investigation failed validation or execution';
 
     const groundedness = (overrides: { suppress: boolean; forcesEscalation: boolean }) => ({
         penalty: 0.6,
@@ -1616,11 +1652,32 @@ describe('every handoff-reason path survives the hostile corpus', () => {
         score: 0.9,
     };
 
+    /** A support agent replying from `supportSource` with `decision` and `handoffReason`. */
+    const investigating = (decision: 'answer' | 'route', handoffReason: string) =>
+        createPipeline({
+            investigate: async () => ({
+                reply: {
+                    decision,
+                    summary: supportSource.content,
+                    details: '',
+                    apiVersion: 'v2',
+                    appliesTo: 'CopilotKit v2',
+                    evidence: [
+                        { sourceUrl: supportSource.sourceUrl, quote: supportSource.content },
+                    ],
+                    handoffReason,
+                },
+                sources: [supportSource],
+                tokenUsage: { inputTokens: 0, outputTokens: 0 },
+            }),
+        });
+
     const HANDOFF_PATHS: Array<[string, HandoffPath]> = [
         [
             'a draft withheld for unsourced identifiers',
             {
                 finding: 'identifiers absent from sources: copilotKitGhostA',
+                fallback: DRAFT_CHECK_FALLBACK,
                 run: async (parts) => {
                     mockGenerate.mockResolvedValue({
                         ...sampleGeneratedResponse,
@@ -1643,6 +1700,7 @@ describe('every handoff-reason path survives the hostile corpus', () => {
             'a forced escalation that still publishes',
             {
                 finding: 'asserts own verification: "we reproduced it"',
+                fallback: DRAFT_CHECK_FALLBACK,
                 run: async (parts) => {
                     mockGenerate.mockResolvedValue({
                         ...sampleGeneratedResponse,
@@ -1663,34 +1721,70 @@ describe('every handoff-reason path survives the hostile corpus', () => {
             },
         ],
         [
-            'an answer the verifier scored too low to publish',
+            'a draft enforced lint blocked',
             {
+                finding: LINT_FINDING,
+                fallback: LINT_FINDING,
                 run: async (parts) => {
-                    mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.2 });
-                    const answering = createPipeline({
-                        investigate: async () => ({
-                            reply: {
-                                decision: 'answer',
-                                summary: supportSource.content,
-                                details: '',
-                                apiVersion: 'v2',
-                                appliesTo: 'CopilotKit v2',
-                                evidence: [
-                                    {
-                                        sourceUrl: supportSource.sourceUrl,
-                                        quote: supportSource.content,
-                                    },
-                                ],
-                                handoffReason: parts.join(' '),
-                            },
-                            sources: [supportSource],
-                            tokenUsage: { inputTokens: 0, outputTokens: 0 },
-                        }),
+                    mockConfigState.draftLintMode = 'enforce';
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        text: lintBlockedDraft,
+                        groundedness: groundedness({ suppress: false, forcesEscalation: false }),
+                        // The linter writes the finding, so the model's text is the rest.
+                        reasoning: parts.filter((part) => part !== LINT_FINDING).join(' '),
                     });
-                    const result = await answering.generateSupportResponse('q', {
+                    const result = await createPipeline().generateSupportResponse('q', {
                         source: 'github',
                     });
                     expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an answer the verifier scored too low to publish',
+            {
+                fallback: 'Independent verification found insufficient support',
+                run: async (parts) => {
+                    mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.2 });
+                    const result = await investigating(
+                        'answer',
+                        parts.join(' '),
+                    ).generateSupportResponse('q', { source: 'github' });
+                    expect(result.suppressed).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an answer whose verifier came back degraded',
+            {
+                fallback: 'Independent verification was unavailable or malformed',
+                run: async (parts) => {
+                    mockScore.mockResolvedValue({ ...sampleConfidence, degraded: true });
+                    const result = await investigating(
+                        'answer',
+                        parts.join(' '),
+                    ).generateSupportResponse('q', { source: 'github' });
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).toHaveBeenCalledTimes(1);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'a question the investigator routed',
+            {
+                fallback: 'The investigator routed the question without a usable reason',
+                run: async (parts) => {
+                    const result = await investigating(
+                        'route',
+                        parts.join(' '),
+                    ).generateSupportResponse('q', { source: 'github' });
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
                     return result.handoffReason;
                 },
             },
@@ -1698,6 +1792,7 @@ describe('every handoff-reason path survives the hostile corpus', () => {
         [
             'an investigation whose reply failed validation',
             {
+                fallback: INVESTIGATION_FALLBACK,
                 run: async (parts) => {
                     const failing = createPipeline({
                         investigate: async () => {
@@ -1708,6 +1803,7 @@ describe('every handoff-reason path survives the hostile corpus', () => {
                         source: 'github',
                     });
                     expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
                     return result.handoffReason;
                 },
             },
@@ -1715,6 +1811,7 @@ describe('every handoff-reason path survives the hostile corpus', () => {
         [
             'an investigation that ran over budget',
             {
+                fallback: INVESTIGATION_FALLBACK,
                 run: async (parts) => {
                     const { InvestigationBudgetError } = await import('./support-agent.js');
                     const failing = createPipeline({
@@ -1726,6 +1823,7 @@ describe('every handoff-reason path survives the hostile corpus', () => {
                         source: 'github',
                     });
                     expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
                     return result.handoffReason;
                 },
             },
@@ -1793,13 +1891,14 @@ describe('every handoff-reason path survives the hostile corpus', () => {
         expect(isWellFormed(reason)).toBe(true);
         expect(reason).not.toContain('\u0000');
         expect(reason.length).toBeLessThanOrEqual(BOUND);
-        expect(reason).not.toMatch(BLANK);
-        // Neither end padded, and no part blank between the separators.
+        // Neither end padded, and every part between the separators says something.
         expect(reason).toBe(reason.trim());
-        for (const part of reason.split('; ')) expect(part).not.toMatch(BLANK);
-        if (path.finding !== undefined && !hostile.blankParts) {
-            expect(reason.startsWith(path.finding)).toBe(true);
-        }
+        for (const part of reason.split('; ')) expect(part).toMatch(/[\p{L}\p{N}]/u);
+        // The finding the reason leads with, unless blank parts stand in for it.
+        const finding = hostile.blankParts ? undefined : path.finding;
+        if (finding !== undefined) expect(reason.startsWith(finding)).toBe(true);
         if (hostile.survivor !== null) expect(reason).toContain(hostile.survivor);
+        // Nothing usable left, so the reason is that finding alone, or the path's fallback.
+        else expect(reason).toBe(finding ?? path.fallback);
     });
 });
