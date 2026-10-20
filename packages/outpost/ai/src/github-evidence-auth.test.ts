@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
     GitHubEvidenceAuthError,
     anonymousGitHubEvidenceAuth,
@@ -284,6 +284,8 @@ describe('GitHub evidence authentication', () => {
     });
 
     it('surfaces a synchronous strategy construction failure without echoing the private key', async () => {
+        // auth-app's own option checks throw fixed strings (`dist-node/index.js:429-439`). This
+        // stand-in quotes the key, as an injected factory could, to show the boundary holds anyway.
         const leaky = new TypeError(
             `[@octokit/auth-app] privateKey ${CREDENTIALS.GITHUB_PRIVATE_KEY} is malformed`,
         );
@@ -700,6 +702,64 @@ describe('GitHub evidence authentication: tokens GitHub will not accept', () => 
     );
 });
 
+// The real SDK stamps every token it reports (`dist-node/index.js:246`), so it cannot exercise the
+// fallback for a source that reports no creation time. A plain source stands in for one.
+describe('GitHub evidence authentication: a source that reports no creation time', () => {
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-10-19T12:00:00.000Z'));
+    });
+    afterEach(() => vi.useRealTimers());
+    const elapse = (ms: number) => vi.setSystemTime(Date.now() + ms);
+
+    /** Serves one token until asked to refresh, then mints the next. Never reports `createdAt`. */
+    function undatedSource() {
+        let minted = 0;
+        return fakeAppAuth(async ({ refresh }) => {
+            if (refresh || minted === 0) minted += 1;
+            return { token: `ghs_syntheticundated${minted}` };
+        });
+    }
+    const refreshes = (auth: ReturnType<typeof undatedSource>['auth']) =>
+        auth.mock.calls.map(([options]) => options.refresh);
+
+    it('ignores a refusal that lands under five seconds after the bearer was first handed out', async () => {
+        const { create, auth } = undatedSource();
+        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        const bearer = (await resolver.authorization()) as string;
+        elapse(4_999);
+        resolver.invalidate?.(bearer);
+        expect(await resolver.authorization()).toBe(bearer);
+        expect(refreshes(auth)).toEqual([undefined, undefined]);
+    });
+
+    it('acts on one five seconds after the first hand-out, however recently it was handed out again', async () => {
+        const { create, auth } = undatedSource();
+        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        const bearer = (await resolver.authorization()) as string;
+        elapse(4_000);
+        expect(await resolver.authorization()).toBe(bearer);
+        elapse(1_000);
+        resolver.invalidate?.(bearer);
+        expect(await resolver.authorization()).toBe('Bearer ghs_syntheticundated2');
+        expect(refreshes(auth)).toEqual([undefined, undefined, true]);
+    });
+
+    it('ages a replacement from its own first hand-out, not from the bearer it replaced', async () => {
+        const { create, auth } = undatedSource();
+        const resolver = githubEvidenceAuthFromEnv(CREDENTIALS, create);
+        const first = (await resolver.authorization()) as string;
+        elapse(60_000);
+        resolver.invalidate?.(first);
+        const replacement = (await resolver.authorization()) as string;
+        expect(replacement).toBe('Bearer ghs_syntheticundated2');
+        elapse(4_999);
+        resolver.invalidate?.(replacement);
+        expect(await resolver.authorization()).toBe(replacement);
+        expect(refreshes(auth)).toEqual([undefined, true, undefined]);
+    });
+});
+
 /**
  * Contract tests: the resolver driven over the production factory — the real `createAppAuth`
  * from `@octokit/auth-app@7.2.2` and a real Octokit request — entirely offline. The only stand-in
@@ -872,8 +932,10 @@ describe('GitHub evidence authentication over the real @octokit/auth-app', () =>
         expect(exchanges).toHaveLength(2);
     });
 
-    // auth-app retries a 401 while the token is younger than five seconds and gives up once it
-    // is that old (`dist-node/index.js:337`, `:399-412`). The resolver draws the same line.
+    // auth-app's request hook retries a 401 to an attempt it sent while the token was under five
+    // seconds old (`dist-node/index.js:337`, `:399-412`). The resolver uses the same five seconds,
+    // but takes the token's age when the 401 is reported to it, so that is the age moved here:
+    // there is no request in this test, only the report.
     it('keeps a token GitHub refused inside its replication lag, and retires it once past it', async () => {
         const exchanges = tokenEndpoint();
         const auth = resolver();
@@ -951,5 +1013,34 @@ describe('GitHub evidence authentication over the real @octokit/auth-app', () =>
         settle(granted('ghs_syntheticexchange2'));
         expect(await Promise.all(calls)).toEqual(Array(3).fill('Bearer ghs_syntheticexchange2'));
         expect(exchanges).toHaveLength(2);
+    });
+
+    // A refresh, once a refusal asks for it, stands until a read that skipped the cache succeeds.
+    // A read already under way when the refusal landed did not skip it on the refusal's behalf, so
+    // its answer does not clear the request — even here, where the SDK cache had lapsed and that
+    // read was minting a token of its own, so the refresh costs an exchange the cache did not need.
+    // Pinned so that trading the exchange away is a decision rather than an accident.
+    it('keeps the refresh a refusal asked for when a read already under way comes back with another bearer', async () => {
+        let settle: (reply: Reply) => void = () => {};
+        const exchanges = tokenEndpoint([
+            undefined,
+            new Promise<Reply>((resolve) => (settle = resolve)),
+        ]);
+        // The pending read is shared module-wide, so a failed assertion must not leave it held.
+        onTestFinished(() => settle(granted('ghs_syntheticexchange2')));
+        const auth = resolver();
+        const refused = (await auth.authorization()) as string;
+        // Past the SDK's 59-minute cache entry (`dist-node/index.js:43-50`): the next read exchanges.
+        elapse(59 * 60_000);
+        const underway = auth.authorization();
+        await exchangesReach(exchanges, 2);
+        auth.invalidate?.(refused);
+        settle(granted('ghs_syntheticexchange2'));
+        expect(await underway).toBe('Bearer ghs_syntheticexchange2');
+        // The refresh is still owed, and the read that pays for it is the one that clears it.
+        expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange3');
+        expect(exchanges).toHaveLength(3);
+        expect(await auth.authorization()).toBe('Bearer ghs_syntheticexchange3');
+        expect(exchanges).toHaveLength(3);
     });
 });

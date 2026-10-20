@@ -1090,6 +1090,9 @@ describe('OpenAI support agent', () => {
 
     describe('GitHub evidence authentication', () => {
         const SYNTHETIC_HEADER = 'Bearer ghs_syntheticplaceholdertoken';
+        /** The whole of what a refused credential writes to the operator log: one constant. */
+        const REFUSED_CREDENTIAL_LINE =
+            '[SupportAgent] GitHub rejected the evidence credential with HTTP 401';
         const sha = 'a'.repeat(40);
         const releaseUrl = 'https://github.com/CopilotKit/CopilotKit/releases/tag/v2.0.0';
         const PEM = '-----BEGIN RSA PRIVATE KEY-----\nplaceholder\n-----END RSA PRIVATE KEY-----';
@@ -1416,7 +1419,8 @@ describe('OpenAI support agent', () => {
             const githubRequests = stubGitHub(okSourceFile);
             scriptTurns([{ tool: 'read_source', path: SOURCE_PATH }, { output: routeReply }]);
             const failingExchange: InstallationTokenFactory = () => async () => {
-                // @octokit/auth-app quotes the key it could not parse; that must not travel.
+                // The real SDK's key errors are fixed strings, but the factory is injectable and
+                // its text untrusted: one that quotes the key it could not use must not leak it.
                 throw new Error(`could not sign JWT with ${pem}`);
             };
             const agent = new SupportAgent({
@@ -1487,8 +1491,14 @@ describe('OpenAI support agent', () => {
         ] as const)(
             '$tool answered $status to an $read read; refusal reported: $reported',
             async ({ tool, status, read, reported }) => {
+                // GitHub's words in both the body and the status text, so neither can reach the
+                // line unnoticed.
                 const githubRequests = stubGitHub(
-                    () => new Response('{"message":"Bad credentials"}', { status }),
+                    () =>
+                        new Response('{"message":"Bad credentials"}', {
+                            status,
+                            statusText: 'Bad credentials',
+                        }),
                 );
                 scriptTurns([
                     tool === 'read_source'
@@ -1514,8 +1524,9 @@ describe('OpenAI support agent', () => {
                 expect(result.reply.decision).toBe('route');
                 expect(githubRequests).toHaveLength(1);
                 expect(invalidate.mock.calls).toEqual(reported ? [[SYNTHETIC_HEADER]] : []);
-                // One line per refused credential, carrying neither the bearer nor GitHub's body.
-                expect(operatorLog).toHaveBeenCalledTimes(reported ? 1 : 0);
+                // Exactly the constant line, once, for a refused credential, and nothing at all for
+                // an anonymous 401 or any other status: no bearer, no body, no status text.
+                expect(operatorLog.mock.calls).toEqual(reported ? [[REFUSED_CREDENTIAL_LINE]] : []);
                 expect(operatorSaw()).not.toContain('ghs_syntheticplaceholdertoken');
                 expect(operatorSaw()).not.toContain('Bad credentials');
                 expect(toolResultSentToModel(0)).not.toContain('Bad credentials');
@@ -1583,8 +1594,12 @@ describe('OpenAI support agent', () => {
                 return { reads, exchanges };
             }
 
-            // auth-app retries a 401 on a token younger than five seconds and gives up once it is
-            // that old (`dist-node/index.js:337`, `:399-412`); the resolver draws the same line.
+            // auth-app's request hook takes a token's age as it sends each attempt, and retries a
+            // 401 to one sent under five seconds old (`dist-node/index.js:337`, `:399-412`). The
+            // resolver uses the same five seconds, but takes the age when the 401 is reported to it.
+            // The handler below moves the clock between the send and the refusal, so `age` is the
+            // age at the report; the request itself goes out at age 0. In the 5,000 ms case that
+            // difference shows: auth-app, judging at the send, would have retried the same token.
             it.each([
                 {
                     when: 'once past the replication lag, the next read carries a freshly minted one',
@@ -1593,7 +1608,7 @@ describe('OpenAI support agent', () => {
                     exchanged: 2,
                 },
                 {
-                    when: 'inside the replication lag, the next read reuses it as auth-app would',
+                    when: 'inside the replication lag, the next read reuses it',
                     age: 4_999,
                     next: 'Bearer ghs_syntheticexchange1',
                     exchanged: 1,
@@ -1639,6 +1654,8 @@ describe('OpenAI support agent', () => {
 
                 expect(github.reads).toEqual(['Bearer ghs_syntheticexchange1', next]);
                 expect(github.exchanges).toHaveLength(exchanged);
+                // Whether or not the resolver acts on it, the refusal is logged once, as the constant.
+                expect(operatorLog.mock.calls).toEqual([[REFUSED_CREDENTIAL_LINE]]);
                 expect(operatorSaw()).not.toContain('ghs_synthetic');
             });
         });

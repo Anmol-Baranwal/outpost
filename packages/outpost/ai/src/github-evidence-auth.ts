@@ -4,10 +4,12 @@
  * `read_source` and `read_release` were the only GitHub callers in this package
  * that sent no credential at all, so they ran on the anonymous 60 requests/hour
  * budget shared by every process on the host while the worker already holds App
- * installation credentials. This module reuses those same credentials —
- * `GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY` / `GITHUB_INSTALLATION_ID`, read exactly
- * as `shared/platforms/registry.ts` and `apps/github-app` read them — and nothing
- * else: no `gh` CLI token, no personal access token, no key file on disk.
+ * installation credentials. This module reuses those same credentials — the
+ * `GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY` / `GITHUB_INSTALLATION_ID` variables that
+ * `shared/platforms/registry.ts` and `apps/github-app` read, though not read the same
+ * way: both of those take the raw values (the registry converting the id with `Number`),
+ * while this module trims each one and accepts only a positive decimal installation id.
+ * It reads nothing else: no `gh` CLI token, no personal access token, no key file on disk.
  */
 
 import { createAppAuth } from '@octokit/auth-app';
@@ -16,12 +18,15 @@ import { Octokit } from '@octokit/rest';
 /**
  * Evidence reads fetch commits, file contents and release metadata. `contents:read`
  * covers all three; `metadata:read` is implicit in every installation token. Asking
- * for a narrowed token means a leaked one cannot write, and cannot read anything the
- * App is installed for beyond repository contents.
+ * for a narrowed token means a leaked one cannot write, and can read nothing the App
+ * is installed for beyond repository contents and that implicit repository metadata.
  */
 const EVIDENCE_PERMISSIONS = { contents: 'read' } as const;
 
-/** Installation ids are positive decimal integers; `Number` alone would accept `1e3` and ` 7 `. */
+/**
+ * Installation ids are positive decimal integers; `Number` alone would accept `1e3` and `0x1f`.
+ * It is tested after trimming, so surrounding whitespace is accepted.
+ */
 const INSTALLATION_ID = /^[1-9][0-9]*$/;
 
 /**
@@ -45,10 +50,17 @@ const AUTHORIZATION_VALUE = /^[A-Za-z]+ [\x21-\x7E]+$/;
 
 /**
  * How long GitHub may refuse an installation token it has just issued, while the token
- * replicates. `@octokit/auth-app@7.2.2` retries such a 401 rather than minting another while
- * the token is younger than this, and gives up once it is this old (`dist-node/index.js:337`
- * `FIVE_SECONDS_IN_MS`, `:399-412` `sendRequestWithRetries`). Re-minting inside the window
- * would only trade one unreplicated token for another.
+ * replicates. Re-minting inside the window would only trade one unreplicated token for another.
+ *
+ * The five seconds are `@octokit/auth-app@7.2.2`'s, but not its measurement. Its request hook,
+ * which this module does not use, takes a token's age as it sends each attempt
+ * (`dist-node/index.js:400`, before the request at `:402`), retries a 401 to an attempt sent
+ * younger than this (`:413-419`), and gives up on one sent at this age or older (`:337`
+ * `FIVE_SECONDS_IN_MS`, `:407-412`). This resolver retries nothing, and takes the age when a 401
+ * is reported to `invalidate`, after the round trip. A token can therefore look older here than
+ * auth-app would judge it, by up to the refused request's latency: a request sent at 4.9 s whose
+ * 401 arrives at 5.1 s retires the token here, where auth-app would retry it. The cost is one
+ * exchange, for a replacement that has itself only just been issued.
  */
 const TOKEN_REPLICATION_LAG_MS = 5_000;
 
@@ -103,8 +115,9 @@ export class GitHubEvidenceAuthError extends Error {
     override name = 'GitHubEvidenceAuthError';
     /**
      * A claim about what went wrong, not a trusted one. `message` stays unreadable to any
-     * consumer — it can quote a PEM — so this is the only part meant to be surfaced, and only
-     * after `githubEvidenceAuthDiagnostic` has re-derived it from the allowlists above.
+     * consumer — it can carry a third-party error's class name, and an error raised through
+     * the `githubAuth` seam can carry anything — so this is the only part meant to be surfaced,
+     * and only after `githubEvidenceAuthDiagnostic` has re-derived it from the allowlists above.
      */
     readonly diagnostic?: GitHubEvidenceAuthDiagnostic;
 
@@ -361,10 +374,11 @@ function installationAuth(
 
     const read = (skipCache: boolean) =>
         mintWithoutLeaking(() => {
-            // Built on first use, and inside the boundary: createAppAuth validates its
-            // options synchronously and names what it rejected (`@octokit/auth-app@7.2.2`
-            // `dist-node/index.js:429-439`), so a throw here could quote the PEM exactly as a
-            // failed exchange could.
+            // Built on first use, and inside the boundary. Not because the SDK's own checks quote
+            // anything: `createAppAuth` throws only fixed messages (`@octokit/auth-app@7.2.2`
+            // `dist-node/index.js:429-439`), and the OAuth strategy it builds checks nothing
+            // (`@octokit/auth-oauth-app@8.1.4` `dist-bundle/index.js:75-90`). But `createAuth`
+            // is whatever factory was injected, and a third-party error's text is untrusted.
             tokens ??= createAuth(credentials);
             // Re-invoked per request on purpose. The SDK caches the installation token for
             // 59 minutes and exchanges again once the entry lapses (`:43-50`, `:182-207`), a
@@ -405,9 +419,11 @@ function installationAuth(
                 if (skippedCache) refresh = false;
                 const authorization = `Bearer ${minted.token}`;
                 // Aged from the SDK's own stamp. A source that reports none is aged from when
-                // this resolver first handed the bearer out, which can only make it look
-                // younger than it is: the error is toward keeping a token a little longer,
-                // never toward retiring one GitHub is still replicating.
+                // this resolver first handed the bearer out — a different bearer in between
+                // starts the count again — which can only make it look younger than it is, so
+                // this fallback errs toward keeping a token a little longer. (Taking the age at
+                // the report rather than the send errs the other way; see
+                // `TOKEN_REPLICATION_LAG_MS`.)
                 const since =
                     minted.createdAt ??
                     (issued?.authorization === authorization ? issued.since : Date.now());
@@ -427,9 +443,10 @@ function installationAuth(
             // A refusal of a bearer this resolver has since replaced says nothing about the
             // one it hands out now.
             if (issued?.authorization !== refusedAuthorization) return;
-            // GitHub briefly refuses a token it has only just issued. Inside that window the
-            // token is kept, as auth-app keeps it (see `TOKEN_REPLICATION_LAG_MS`), and the
-            // next read reuses it.
+            // GitHub briefly refuses a token it has only just issued. A refusal that arrives
+            // while the token is younger than `TOKEN_REPLICATION_LAG_MS` is ignored, and the
+            // next read reuses the token. The age is taken now, at the report, not when the
+            // refused request was sent; that constant says how this differs from auth-app.
             if (Date.now() - issued.since < TOKEN_REPLICATION_LAG_MS) return;
             refused = refusedAuthorization;
             refresh = true;
@@ -456,9 +473,15 @@ interface MintedToken {
  * Runs strategy construction and the token read inside one boundary, and resolves only with a
  * token that can actually be sent.
  *
- * Either step can quote the PEM it rejected or the token it just minted. Only the underlying
- * error's class name crosses the boundary — deliberately not its message, and not as `cause`,
- * which any structured logger would serialize straight back out.
+ * What either step throws is text this module did not write, and is treated as untrusted. The
+ * SDK's own messages for a rejected key are fixed strings (`@octokit/auth-app@7.2.2`
+ * `dist-node/index.js:31-34`, `:429-439`; `universal-github-app-jwt@2.2.2`
+ * `lib/get-token.js:23-35`). But a failed exchange's `RequestError` carries whatever body GitHub
+ * or a proxy answered with (`@octokit/request@9.2.4` `dist-bundle/index.js:120-125`,
+ * `:153-165`), a transport failure carries its cause's message (`:60-80`), and an injected
+ * factory or source can throw anything at all, the key or a minted token included. Only the
+ * underlying error's class name crosses the boundary — deliberately not its message, and not as
+ * `cause`, which any structured logger would serialize straight back out.
  *
  * Even that class name stays inside `message`, which no consumer prints: a third-party strategy
  * chooses its own error names and nothing constrains them. What reaches the operator is the
@@ -480,11 +503,14 @@ async function mintWithoutLeaking(
             { code: 'token_exchange_failed' },
         );
     }
-    // A 2xx is not a token. `@octokit/request@9.2.4` makes the response data whatever body it
-    // could read (`dist-bundle/index.js:127`, `:130-149`): parsed JSON, or the raw text when
-    // that does not parse; the text of a `text/*` or untyped body, a proxy's HTML page among
-    // them; an ArrayBuffer for any other type; and `""` only when there was no body or it could
-    // not be read (`:92`, `:101-103`). `@octokit/auth-app@7.2.2` destructures `token` from that
+    // A 2xx is not a token. `@octokit/request@9.2.4` makes the response data whatever
+    // `getResponseData` reads from the body (`dist-bundle/index.js:127`, `:130-149`): with no
+    // content type, the text (`:132-133`); for `application/json` or `application/scim+json`,
+    // the parsed body, or its raw text when that does not parse (`:136-143`); for any `text/*`
+    // type, or any type with `charset=utf-8`, the text, a proxy's HTML page among them
+    // (`:144-145`); for anything else, an ArrayBuffer (`:146-147`). A body that cannot be read
+    // becomes `""`, or an empty ArrayBuffer on that last branch, and a 204 or 205 keeps the
+    // initial `""` (`:92`, `:101-103`). `@octokit/auth-app@7.2.2` destructures `token` from that
     // data — `undefined` out of a string or an ArrayBuffer — then caches and returns it as a
     // success (`dist-node/index.js:229-241`, `:259`, `:273`), and later cache hits read the
     // entry back as `""` (`:57-64`). The message names the shape that failed, never the value.
