@@ -6,6 +6,9 @@
  * All external dependencies (Prisma, AIPipeline, etc.) are mocked.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import type { Message } from '@prisma/client';
+import type { EscalationPayload, JobHandlerContext } from '../types.js';
+import type * as OutpostAi from '@copilotkit/outpost/ai';
 
 // Seven tests in this file assert the non-shadow path. An inherited
 // SHADOW_MODE=true flips the handler and fails them, so the ambient value is
@@ -21,7 +24,6 @@ afterAll(() => {
     if (AMBIENT_SHADOW.value !== undefined) process.env.SHADOW_MODE = AMBIENT_SHADOW.value;
     else delete process.env.SHADOW_MODE;
 });
-import type { JobHandlerContext } from '../types.js';
 
 // ─── Mock Setup ─────────────────────────────────────────────────────────────
 
@@ -35,10 +37,12 @@ const mockPrismaMessage = {
     update: vi.fn(),
     updateMany: vi.fn(),
     findUnique: vi.fn(),
+    findMany: vi.fn(),
 };
 
 const mockPrismaJob = {
     create: vi.fn(),
+    findMany: vi.fn(),
 };
 
 const mockPrismaQueryRaw = vi.fn();
@@ -67,7 +71,11 @@ class MockAIPipeline {
     destroy = mockDestroy;
 }
 
-vi.mock('@copilotkit/outpost/ai', () => ({
+// Only the pipeline is stubbed. `publishableText` stays real on purpose: it is the
+// serialization these tests assert the durable sinks store, so stubbing it would
+// make every assertion about footer placement check the stub instead of the code.
+vi.mock('@copilotkit/outpost/ai', async (importOriginal) => ({
+    ...(await importOriginal<typeof OutpostAi>()),
     AIPipeline: MockAIPipeline,
 }));
 
@@ -125,6 +133,7 @@ vi.mock('@copilotkit/outpost/shared/platforms', () => ({
 
 // Import after mocks
 const { handleAiResponse } = await import('../handlers/ai-response.js');
+const { handlePendingResponseSweep } = await import('../handlers/pending-response-sweep.js');
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
@@ -265,6 +274,35 @@ const lowConfidenceResult = {
     confidenceScore: 0.25,
 };
 
+/** The deterministic finding behind a forced escalation: the draft claimed WE checked. */
+const OWN_VERIFICATION_REASON = 'asserts own verification: "we confirmed"';
+
+/**
+ * What the pipeline returns for a draft that asserts its own verification.
+ *
+ * `forcesEscalation` clamps the score to SUPPRESSED_CONFIDENCE_CAP (ESCALATE -
+ * 0.01) without setting `suppressed`, so the answer publishes AND a human is
+ * summoned. Unlike an ordinary low score, the reason for that handoff is known
+ * and already on the result — this is the one published path that arrives with
+ * a `handoffReason` the handler must not drop.
+ */
+const forcedEscalationResult = {
+    ...highConfidenceResult,
+    confidenceLevel: 'LOW',
+    confidenceScore: 0.39,
+    groundedness: {
+        penalty: 0.3,
+        unverifiedClaims: ['"we confirmed"'],
+        unsourcedIdentifiers: [],
+        hedgeCount: 0,
+        suppress: false,
+        forcesEscalation: true,
+        reasons: [OWN_VERIFICATION_REASON],
+    },
+    suppressed: false,
+    handoffReason: OWN_VERIFICATION_REASON,
+};
+
 const sampleClassification = {
     priority: 'LOW',
     type: 'QUESTION',
@@ -272,6 +310,124 @@ const sampleClassification = {
     reasoning: 'A question about integrating CopilotKit with Next.js',
     tokenUsage: { inputTokens: 50, outputTokens: 30 },
 };
+
+type PersistedResponse = Pick<
+    Message,
+    | 'id'
+    | 'ticketId'
+    | 'type'
+    | 'content'
+    | 'isAiGenerated'
+    | 'responseKey'
+    | 'responseState'
+    | 'responseJobId'
+    | 'responseError'
+    | 'escalationRequiredReason'
+    | 'deliveryConfirmed'
+>;
+
+/** Retry/sweep snapshots come from actual writes, with transaction rollback on failure. */
+function trackResponsePersistence() {
+    let response: PersistedResponse | undefined;
+    mockPrismaTicket.findUnique.mockImplementation(async () => ({
+        ...sampleTicket,
+        messages: [...sampleTicket.messages, ...(response ? [{ ...response }] : [])],
+    }));
+    mockPrismaMessage.create.mockImplementation(
+        async ({
+            data,
+        }: {
+            data: Omit<PersistedResponse, 'id' | 'deliveryConfirmed' | 'escalationRequiredReason'> &
+                Partial<Pick<PersistedResponse, 'deliveryConfirmed' | 'escalationRequiredReason'>>;
+        }) => {
+            response = {
+                id: 'msg-new',
+                deliveryConfirmed: false,
+                escalationRequiredReason: null,
+                ...data,
+            };
+            return { ...response };
+        },
+    );
+    mockPrismaMessage.update.mockImplementation(
+        async ({ data }: { data: Partial<PersistedResponse> }) => {
+            if (data.escalationRequiredReason && data.responseError === undefined) {
+                throw new Error('owed-reason update unavailable');
+            }
+            if (!response) throw new Error('response row missing');
+            Object.assign(response, data);
+            return response;
+        },
+    );
+    mockPrismaMessage.updateMany.mockImplementation(
+        async ({
+            where,
+            data,
+        }: {
+            where: Partial<PersistedResponse>;
+            data: Partial<PersistedResponse>;
+        }) => {
+            if (
+                !response ||
+                response.id !== where.id ||
+                response.responseState !== where.responseState ||
+                (where.responseKey !== undefined && response.responseKey !== where.responseKey) ||
+                (where.responseJobId !== undefined &&
+                    response.responseJobId !== where.responseJobId)
+            ) {
+                return { count: 0 };
+            }
+            Object.assign(response, data);
+            return { count: 1 };
+        },
+    );
+    mockPrismaTransaction.mockImplementation(
+        async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
+            const snapshot = response ? { ...response } : undefined;
+            try {
+                return await callback(mockPrisma);
+            } catch (error) {
+                response = snapshot;
+                throw error;
+            }
+        },
+    );
+    mockPrismaMessage.findMany.mockImplementation(async () =>
+        response?.responseState === 'PENDING'
+            ? [{ ...response, ticket: { source: sampleTicket.source } }]
+            : [],
+    );
+    mockPrismaMessage.findUnique.mockImplementation(async () =>
+        response ? { ...response } : null,
+    );
+    mockPrismaJob.findMany.mockResolvedValue([]);
+    return () => response;
+}
+
+function holdPlatformPost() {
+    let signalStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+    });
+    let rejectPost!: (error: Error) => void;
+    let resolvePost!: () => void;
+    const pendingPost = new Promise<void>((resolve, reject) => {
+        resolvePost = () => resolve();
+        rejectPost = reject;
+    });
+    mockPostResponse.mockImplementationOnce(() => {
+        signalStarted();
+        return pendingPost;
+    });
+    return { started, rejectPost, resolvePost };
+}
+
+function findShadowMessageCreateCall() {
+    return mockPrismaMessage.create.mock.calls.find(
+        (call: Array<Record<string, Record<string, unknown>>>) =>
+            call[0].data.author === 'outpost-shadow',
+    );
+}
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
@@ -285,7 +441,9 @@ describe('handleAiResponse', () => {
         // Only read when an escalation compare-and-set reports no rows changed;
         // "row is gone" is the least forgiving default for that path.
         mockPrismaMessage.findUnique.mockResolvedValue(null);
+        mockPrismaMessage.findMany.mockResolvedValue([]);
         mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
+        mockPrismaJob.findMany.mockResolvedValue([]);
         mockPrismaQueryRaw.mockResolvedValue([{ now: new Date('2026-08-11T20:00:00.000Z') }]);
         mockPrismaTransaction.mockImplementation(
             async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
@@ -567,6 +725,7 @@ describe('handleAiResponse', () => {
                 responseState: 'PENDING',
                 responseJobId: 'test-job-1',
                 responseError: null,
+                escalationRequiredReason: null,
             },
         });
     });
@@ -744,6 +903,198 @@ describe('handleAiResponse', () => {
 
         expect(result.success).toBe(true);
         expect(mockPostResponse).not.toHaveBeenCalled();
+        expect(mockPrismaTicket.update).toHaveBeenCalledWith({
+            where: { id: 'tkt-1' },
+            data: { suggestedResponse: highConfidenceResult.formatted.text },
+        });
+    });
+
+    it.each([
+        {
+            name: 'all parts once, including the final source and footer',
+            parts: [
+                'Summary',
+                'Details\n\nSources:\n- [Doc](https://example.test/doc)\n\n---\n*Powered by CopilotKit AI*',
+            ],
+            expected:
+                'Summary\n\nDetails\n\nSources:\n- [Doc](https://example.test/doc)\n\n---\n*Powered by CopilotKit AI*',
+        },
+        { name: 'the summary when parts is empty', parts: [], expected: 'Summary' },
+    ])('stores $name in the durable suggestion', async ({ parts, expected }) => {
+        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+        mockGenerateSupportResponse.mockResolvedValue({
+            ...highConfidenceResult,
+            response: 'Private investigation draft',
+            handoffReason: 'Private handoff metadata',
+            formatted: { text: 'Summary', parts, truncated: false },
+        });
+
+        const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+        expect(result.success).toBe(true);
+        expect(mockPrismaTicket.update).toHaveBeenCalledWith({
+            where: { id: 'tkt-1' },
+            data: { suggestedResponse: expected },
+        });
+    });
+
+    it.each(['WEB', 'EMAIL', 'LINEAR', 'MANUAL', 'ORCA'])(
+        'preserves the complete publishable web response for %s without an adapter',
+        async (source) => {
+            mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source });
+            mockHasAdapter.mockReturnValue(false);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...highConfidenceResult,
+                response: 'Private investigation draft',
+                handoffReason: 'Private handoff metadata',
+                formatted: {
+                    text: 'Summary',
+                    details: 'Details\n\nSources:\n- [Doc](https://example.test/doc)',
+                    truncated: false,
+                },
+            });
+
+            const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+            expect(result.success).toBe(true);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
+                sampleTicket.messages[0].content,
+                expect.objectContaining({ source: 'web' }),
+            );
+            expect(mockPrismaTicket.update).toHaveBeenCalledWith({
+                where: { id: 'tkt-1' },
+                data: {
+                    suggestedResponse:
+                        'Summary\n\nDetails\n\nSources:\n- [Doc](https://example.test/doc)',
+                },
+            });
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        },
+    );
+
+    // What the web formatter actually returns: `text` is the summary pane and ALREADY
+    // ends with the footer that closes the response, `details` is the second pane, and
+    // `completeText` is the one-string serialization the formatter composed itself.
+    // The durable sinks below hold one string, so they must take `completeText` —
+    // re-joining the two panes leaves the footer stranded in the middle.
+    const webFormatted = {
+        text: 'Summary\n\n---\n*Powered by CopilotKit AI*',
+        details: 'Details\n\nSources:\n- [Doc](https://example.test/doc)',
+        completeText:
+            'Summary\n\nDetails\n\nSources:\n- [Doc](https://example.test/doc)' +
+            '\n\n---\n*Powered by CopilotKit AI*',
+        truncated: false,
+    };
+
+    it('ends the durable web suggestion with the footer, after the details', async () => {
+        mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+        mockHasAdapter.mockReturnValue(false);
+        mockGenerateSupportResponse.mockResolvedValue({
+            ...highConfidenceResult,
+            response: 'Private investigation draft',
+            handoffReason: 'Private handoff metadata',
+            formatted: webFormatted,
+        });
+
+        const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+        expect(result.success).toBe(true);
+        expect(mockPrismaTicket.update).toHaveBeenCalledWith({
+            where: { id: 'tkt-1' },
+            data: { suggestedResponse: webFormatted.completeText },
+        });
+        const stored = mockPrismaTicket.update.mock.calls.find(
+            (call: Array<Record<string, Record<string, unknown>>>) =>
+                call[0].data.suggestedResponse !== undefined,
+        )![0].data.suggestedResponse as string;
+        expect(stored.endsWith('\n\n---\n*Powered by CopilotKit AI*')).toBe(true);
+        expect(stored.split('*Powered by CopilotKit AI*')).toHaveLength(2);
+        expect(stored).not.toContain('Private investigation draft');
+        expect(stored).not.toContain('Private handoff metadata');
+    });
+
+    it('ends the shadow SYSTEM record with the footer, after the details', async () => {
+        const originalShadow = process.env.SHADOW_MODE;
+        try {
+            process.env.SHADOW_MODE = 'true';
+            mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...highConfidenceResult,
+                response: 'Private investigation draft',
+                handoffReason: 'Private handoff metadata',
+                formatted: webFormatted,
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'web' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            const content = findShadowMessageCreateCall()![0].data.content as string;
+            expect(content).toBe(webFormatted.completeText);
+            expect(content.endsWith('\n\n---\n*Powered by CopilotKit AI*')).toBe(true);
+            expect(content.split('*Powered by CopilotKit AI*')).toHaveLength(2);
+            expect(content.split('Sources:')).toHaveLength(2);
+            expect(content).not.toContain('Private investigation draft');
+            expect(content).not.toContain('Private handoff metadata');
+        } finally {
+            restoreShadowMode(originalShadow);
+        }
+    });
+
+    // The two tests above pin WHERE the footer lands using a hand-built value. This
+    // one pins WHAT is stored, through the real validator and the real formatter:
+    // an answer about embedding is HTML, `validateSupportReply` publishes the tags
+    // it writes inside a fence or a code span, and the durable `suggestedResponse`
+    // is what a bot without an adapter picks up and posts. Serializing that answer
+    // through a sanitizer deletes the <script> element and the onclick attribute, so
+    // the stored reply tells the reader to copy an empty fence and a dead button.
+    it('stores the validated code literal in the durable web suggestion', async () => {
+        const { ResponseFormatter, validateSupportReply } =
+            await vi.importActual<typeof OutpostAi>('@copilotkit/outpost/ai');
+        const source = {
+            title: 'Embedding the widget',
+            content: 'Mount the widget with a script tag and a button that calls handleClick.',
+            sourceUrl: 'https://docs.copilotkit.ai/embed',
+            score: 0.9,
+        };
+        const htmlReply = validateSupportReply(
+            {
+                decision: 'answer',
+                summary: 'Mount the widget with the snippet below.',
+                details:
+                    'Add the script and the trigger to your page:\n\n' +
+                    '```html\n' +
+                    '<script src="app.js"></script>\n' +
+                    '<button onclick="handleClick()">Run</button>\n' +
+                    '```',
+                apiVersion: 'v2',
+                appliesTo: 'React applications',
+                evidence: [{ sourceUrl: source.sourceUrl, quote: source.content }],
+                handoffReason: '',
+            },
+            [source],
+        );
+        const formatted = new ResponseFormatter().formatStructured(htmlReply, 'web');
+
+        mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+        mockHasAdapter.mockReturnValue(false);
+        mockGenerateSupportResponse.mockResolvedValue({ ...highConfidenceResult, formatted });
+
+        const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+        expect(result.success).toBe(true);
+        const stored = mockPrismaTicket.update.mock.calls.find(
+            (call: Array<Record<string, Record<string, unknown>>>) =>
+                call[0].data.suggestedResponse !== undefined,
+        )![0].data.suggestedResponse as string;
+        expect(stored).toContain(
+            '```html\n<script src="app.js"></script>\n<button onclick="handleClick()">Run</button>\n```',
+        );
+        expect(stored.startsWith(htmlReply.summary)).toBe(true);
+        expect(stored.endsWith('\n\n---\n*Powered by CopilotKit AI*')).toBe(true);
+        expect(stored.split('*Powered by CopilotKit AI*')).toHaveLength(2);
     });
 
     it('skips post-back in shadow mode', async () => {
@@ -760,11 +1111,84 @@ describe('handleAiResponse', () => {
             expect(result.success).toBe(true);
             expect(mockPostResponse).not.toHaveBeenCalled();
             // Shadow response should be logged as a SYSTEM message
-            const shadowMessageCall = mockPrismaMessage.create.mock.calls.find(
-                (call: Array<Record<string, Record<string, unknown>>>) =>
-                    call[0].data.author === 'outpost-shadow',
-            );
+            const shadowMessageCall = findShadowMessageCreateCall();
             expect(shadowMessageCall).toBeDefined();
+        } finally {
+            restoreShadowMode(originalShadow);
+        }
+    });
+
+    it('preserves web details and source links in the shadow SYSTEM message', async () => {
+        const originalShadow = process.env.SHADOW_MODE;
+        try {
+            process.env.SHADOW_MODE = 'true';
+            mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...highConfidenceResult,
+                response: 'Private investigation draft',
+                handoffReason: 'Private handoff metadata',
+                formatted: {
+                    text: 'Summary',
+                    details: 'Details\n\nSources:\n- [Doc](https://example.test/doc)',
+                    truncated: false,
+                },
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'web' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            const shadowMessageCall = findShadowMessageCreateCall();
+            expect(shadowMessageCall).toBeDefined();
+            expect(shadowMessageCall![0].data.content).toBe(
+                'Summary\n\nDetails\n\nSources:\n- [Doc](https://example.test/doc)',
+            );
+            expect(shadowMessageCall![0].data.content).not.toContain('Private investigation draft');
+            expect(shadowMessageCall![0].data.content).not.toContain('Private handoff metadata');
+        } finally {
+            restoreShadowMode(originalShadow);
+        }
+    });
+
+    it('preserves multipart Discord output once in the shadow SYSTEM message', async () => {
+        const originalShadow = process.env.SHADOW_MODE;
+        try {
+            process.env.SHADOW_MODE = 'true';
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...highConfidenceResult,
+                response: 'Private investigation draft',
+                handoffReason: 'Private handoff metadata',
+                formatted: {
+                    text: 'Summary',
+                    parts: [
+                        'Summary',
+                        'Details\n\nSources:\n- [Doc](https://example.test/doc)\n\n---\n*Powered by CopilotKit AI*',
+                    ],
+                    truncated: true,
+                },
+            });
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            const shadowMessageCall = findShadowMessageCreateCall();
+            expect(shadowMessageCall).toBeDefined();
+            expect(shadowMessageCall![0].data.content).toBe(
+                'Summary\n\nDetails\n\nSources:\n- [Doc](https://example.test/doc)\n\n---\n*Powered by CopilotKit AI*',
+            );
+            expect(shadowMessageCall![0].data.content).not.toBe(
+                'Summary\n\nSummary\n\nDetails\n\nSources:\n- [Doc](https://example.test/doc)\n\n---\n*Powered by CopilotKit AI*',
+            );
+            expect(shadowMessageCall![0].data.content).not.toContain('Private investigation draft');
+            expect(shadowMessageCall![0].data.content).not.toContain('Private handoff metadata');
         } finally {
             restoreShadowMode(originalShadow);
         }
@@ -800,6 +1224,468 @@ describe('handleAiResponse', () => {
         expect(mockPostResponse).not.toHaveBeenCalled();
     });
 
+    // ── A published answer can arrive with its handoff reason already known ──
+    //
+    // `handoffReason` is documented as "internal reason preserved for durable
+    // human escalation". The suppressed arm has always consumed it. The
+    // published arm had only the score to go on, so a forced escalation — which
+    // publishes, and whose reason the pipeline computed deterministically —
+    // reached the human as a bare percentage. The reason was discarded at this
+    // seam, BEFORE the durable write, so no retry or sweep could recover it.
+    describe('a published response that carries its own handoff reason', () => {
+        const payload = { ticketId: 'tkt-1', source: 'discord' as const };
+
+        /**
+         * The handler's MAX_REPEATED_HANDOFF_REASON, restated rather than
+         * exported: these tests pin the number, so moving the bound fails them
+         * instead of moving them along with it.
+         */
+        const MAX_REPEATED_HANDOFF_REASON = 2000;
+
+        /**
+         * `LONE_SURROGATE` from ai/src/test-utils/surrogates.ts, restated because
+         * the queue's tsconfig roots at queue/src and refuses an import from the
+         * ai package's sources (TS6059).
+         */
+        const LONE_SURROGATE =
+            /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+        /**
+         * `isWellFormed` from ai/src/test-utils/surrogates.ts, restated for the
+         * same reason: the engine's own check, which does not share the
+         * production regex the way LONE_SURROGATE does. The TS lib stops at
+         * ES2022, hence the cast. U+0000 is well formed, so it is asserted apart.
+         */
+        const isWellFormed = (text: string): boolean =>
+            (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+
+        function escalationReasons(): string[] {
+            return mockPrismaJob.create.mock.calls
+                .map((call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data)
+                .filter((data: { type: string }) => data.type === 'ESCALATION')
+                .map((data: { payload: unknown }) => (data.payload as { reason: string }).reason);
+        }
+
+        it('queues and durably stores the known reason behind a forced escalation', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(forcedEscalationResult);
+
+            const result = await handleAiResponse(payload, makeContext());
+
+            expect(result.success).toBe(true);
+            // The answer still publishes — a forced escalation is not a
+            // suppression, and this fix must not turn it into one.
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+
+            const expectedReason =
+                `Low AI confidence (39%) — automated escalation ` + `(${OWN_VERIFICATION_REASON})`;
+
+            // The human is told why, not just how little.
+            expect(escalationReasons()).toEqual([expectedReason]);
+            // And the same text is committed with the response row BEFORE any
+            // publication, so an interrupted attempt leaves it behind.
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    escalationRequiredReason: expectedReason,
+                }),
+            });
+            // The numeric prefix the existing readers key on is untouched.
+            expect(expectedReason.indexOf('Low AI confidence (39%) — automated escalation')).toBe(
+                0,
+            );
+            // Internal reasoning stays internal.
+            expect(JSON.stringify(mockPostResponse.mock.calls)).not.toContain(
+                OWN_VERIFICATION_REASON,
+            );
+        });
+
+        it('leaves an ordinary low score with the generic reason, exactly as before', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+
+            await handleAiResponse(payload, makeContext());
+
+            // Negative control. A reply that merely landed under the gate has no
+            // known reason, and the handler must not invent a parenthetical.
+            expect(escalationReasons()).toEqual(['Low AI confidence (25%) — automated escalation']);
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                }),
+            });
+        });
+
+        it.each([
+            ['empty', ''],
+            ['blank', '   \n  '],
+        ])(
+            'leaves the generic reason alone for a %s handoff reason',
+            async (_label, handoffReason) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...lowConfidenceResult,
+                    handoffReason,
+                });
+
+                await handleAiResponse(payload, makeContext());
+
+                // Negative control. A present-but-substanceless reason must not
+                // produce "— automated escalation ()".
+                expect(escalationReasons()).toEqual([
+                    'Low AI confidence (25%) — automated escalation',
+                ]);
+            },
+        );
+
+        it('bounds a pathologically long handoff reason', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            const runaway = 'x'.repeat(5000);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...forcedEscalationResult,
+                handoffReason: runaway,
+            });
+
+            await handleAiResponse(payload, makeContext());
+
+            const [reason] = escalationReasons();
+            expect(reason.indexOf('Low AI confidence (39%) — automated escalation')).toBe(0);
+            expect(reason).toContain('x'.repeat(100));
+            expect(reason).not.toContain(runaway);
+            expect(reason.length).toBeLessThanOrEqual(
+                'Low AI confidence (39%) — automated escalation ()'.length + 2000,
+            );
+        });
+
+        // The bound counts UTF-16 code units, so an emoji whose leading half is the
+        // 2000th unit would be cut in two by a plain `.slice()`. The lone surrogate
+        // left behind is refused at the first write, `Message.create` of
+        // `escalationRequiredReason`, before the reply posts. boundForStorage says
+        // what that refusal loses.
+        it('never leaves half an emoji at the end of a bounded handoff reason', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...forcedEscalationResult,
+                handoffReason: 'x'.repeat(1999) + '😀' + ' and more after the cut',
+            });
+
+            await handleAiResponse(payload, makeContext());
+
+            const expectedReason = `Low AI confidence (39%) — automated escalation (${'x'.repeat(1999)})`;
+            expect(escalationReasons()).toEqual([expectedReason]);
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+            });
+        });
+
+        // The emoji case above cuts at 1999 whether the bound is 1999 or 2000, so
+        // it cannot tell the two apart. These lengths can: one is exactly the
+        // bound and one is a unit over it, and both must come out at the bound.
+        it.each([
+            ['keeps a reason exactly as long as the bound whole', MAX_REPEATED_HANDOFF_REASON],
+            ['cuts a reason one unit over the bound to the bound', MAX_REPEATED_HANDOFF_REASON + 1],
+        ])('%s', async (_label, length) => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...forcedEscalationResult,
+                handoffReason: 'x'.repeat(length),
+            });
+
+            await handleAiResponse(payload, makeContext());
+
+            const expectedReason =
+                `Low AI confidence (39%) — automated escalation ` +
+                `(${'x'.repeat(MAX_REPEATED_HANDOFF_REASON)})`;
+            expect(escalationReasons()).toEqual([expectedReason]);
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+            });
+        });
+
+        // The published arm repeats the reason into the same column and payload a
+        // withheld draft does, and the store refuses an ill-formed string whichever
+        // arm wrote it (see boundForStorage). Every unit is replaced in place,
+        // so the diagnosis survives around each U+FFFD rather than being dropped.
+        it('makes an ill-formed low-confidence handoff reason storable', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            const handoffReason = 'Evidence quote \uDE00 does not match\u0000 the \uD83D docs';
+            // The input really is unstorable, so the test cannot pass vacuously.
+            expect(isWellFormed(handoffReason)).toBe(false);
+            expect(handoffReason).toContain('\u0000');
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...forcedEscalationResult,
+                handoffReason,
+            });
+
+            const result = await handleAiResponse(payload, makeContext());
+
+            expect(result.success).toBe(true);
+            // Still published: cleaning the reason must not turn it into a suppression.
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            const queued = escalationReasons();
+            const stored = mockPrismaMessage.create.mock.calls[0][0].data
+                .escalationRequiredReason as string;
+            const expectedReason =
+                'Low AI confidence (39%) — automated escalation ' +
+                '(Evidence quote \uFFFD does not match\uFFFD the \uFFFD docs)';
+            expect(queued).toEqual([expectedReason]);
+            expect(stored).toBe(expectedReason);
+            for (const reason of [...queued, stored]) {
+                expect(isWellFormed(reason)).toBe(true);
+                expect(reason).not.toMatch(LONE_SURROGATE);
+                expect(reason).not.toContain('\u0000');
+            }
+        });
+
+        // ── A withheld draft repeats its reason the same way ──
+        //
+        // The suppressed arm writes its reason to the same durable column and the
+        // same queued payload as the low-confidence arm, so it gets the same
+        // treatment: trimmed, falling back when blank, bounded, and made storable.
+        // An unstorable reason fails the attempt before it posts; see boundForStorage.
+
+        it.each([
+            [
+                'the groundedness findings',
+                suppressedResult.groundedness.reasons,
+                'unverifiable claims: "bug confirmed"; identifiers absent from sources: ' +
+                    'copilotKitInputControls, copilotKitInputControlsExpanded',
+            ],
+            [
+                'the default when the findings are blank too',
+                ['   '],
+                'Insufficient verified evidence',
+            ],
+            [
+                'the default when several findings are blank',
+                ['', '', '  \n'],
+                'Insufficient verified evidence',
+            ],
+            [
+                'the default when the findings hold only unstorable units',
+                ['\u0000', '\uDE00 \uD83D'],
+                'Insufficient verified evidence',
+            ],
+        ])(
+            'falls back from a blank withheld reason to %s',
+            async (_label, reasons, expectedDetail) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...suppressedResult,
+                    handoffReason: '   \n  ',
+                    groundedness: { ...suppressedResult.groundedness, reasons },
+                });
+                const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+                try {
+                    await handleAiResponse(payload, makeContext());
+
+                    const expectedReason = `AI response withheld (${expectedDetail}) — needs a human answer`;
+                    expect(escalationReasons()).toEqual([expectedReason]);
+                    expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                        data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                    });
+                    // The log names the same reason the human is handed.
+                    expect(warn).toHaveBeenCalledWith(
+                        expect.stringContaining(`withheld for ticket tkt-1 — ${expectedDetail}. `),
+                    );
+                } finally {
+                    warn.mockRestore();
+                }
+            },
+        );
+
+        it.each([
+            ['handoff reason', { handoffReason: 'x'.repeat(5000) }],
+            [
+                'groundedness fallback',
+                {
+                    groundedness: {
+                        ...suppressedResult.groundedness,
+                        reasons: ['x'.repeat(5000)],
+                    },
+                },
+            ],
+        ])('bounds a runaway withheld %s', async (_label, overrides) => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({ ...suppressedResult, ...overrides });
+
+            await handleAiResponse(payload, makeContext());
+
+            const expectedReason =
+                `AI response withheld (${'x'.repeat(MAX_REPEATED_HANDOFF_REASON)}) ` +
+                `— needs a human answer`;
+            expect(escalationReasons()).toEqual([expectedReason]);
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+            });
+        });
+
+        const ILL_FORMED_REASON = 'Reporter version \u0000 is unknown \uDE00 \uD83D';
+
+        it.each([
+            ['handoff reason', { handoffReason: ILL_FORMED_REASON }],
+            [
+                'groundedness fallback',
+                {
+                    groundedness: {
+                        ...suppressedResult.groundedness,
+                        reasons: [ILL_FORMED_REASON],
+                    },
+                },
+            ],
+        ])('makes an ill-formed withheld %s storable', async (_label, overrides) => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({ ...suppressedResult, ...overrides });
+
+            await handleAiResponse(payload, makeContext());
+
+            const queued = escalationReasons();
+            const stored = mockPrismaMessage.create.mock.calls[0][0].data
+                .escalationRequiredReason as string;
+            const expectedReason =
+                'AI response withheld (Reporter version \uFFFD is unknown \uFFFD \uFFFD) ' +
+                '— needs a human answer';
+            expect(queued).toEqual([expectedReason]);
+            expect(stored).toBe(expectedReason);
+            for (const reason of [...queued, stored]) {
+                expect(isWellFormed(reason)).toBe(true);
+                expect(reason).not.toMatch(LONE_SURROGATE);
+                expect(reason).not.toContain('\u0000');
+            }
+        });
+
+        // A reason made only of units the store refuses cleans to U+FFFD and
+        // nothing else, which says no more than a blank one.
+        const UNSTORABLE_ONLY = [
+            ['U+0000 only', '\u0000\u0000'],
+            ['lone surrogates only', '\uDE00 \uD83D'],
+        ];
+
+        it.each(UNSTORABLE_ONLY)(
+            'falls back from a withheld handoff reason of %s',
+            async (_label, handoffReason) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...suppressedResult,
+                    handoffReason,
+                });
+
+                await handleAiResponse(payload, makeContext());
+
+                const expectedReason =
+                    'AI response withheld (unverifiable claims: "bug confirmed"; identifiers ' +
+                    'absent from sources: copilotKitInputControls, ' +
+                    'copilotKitInputControlsExpanded) — needs a human answer';
+                expect(escalationReasons()).toEqual([expectedReason]);
+                expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                });
+            },
+        );
+
+        it.each(UNSTORABLE_ONLY)(
+            'adds nothing to the low-confidence reason for a handoff reason of %s',
+            async (_label, handoffReason) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...forcedEscalationResult,
+                    handoffReason,
+                });
+
+                await handleAiResponse(payload, makeContext());
+
+                const expectedReason = 'Low AI confidence (39%) — automated escalation';
+                expect(escalationReasons()).toEqual([expectedReason]);
+                expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                });
+            },
+        );
+
+        it.each([
+            [
+                'withheld',
+                suppressedResult,
+                `AI response withheld (${'x'.repeat(MAX_REPEATED_HANDOFF_REASON - 1)}) ` +
+                    `— needs a human answer`,
+            ],
+            [
+                'low-confidence',
+                forcedEscalationResult,
+                `Low AI confidence (39%) — automated escalation ` +
+                    `(${'x'.repeat(MAX_REPEATED_HANDOFF_REASON - 1)})`,
+            ],
+        ])(
+            'leaves no whitespace where the bound cuts a %s reason',
+            async (_label, result, expectedReason) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGenerateSupportResponse.mockResolvedValue({
+                    ...result,
+                    handoffReason:
+                        'x'.repeat(MAX_REPEATED_HANDOFF_REASON - 1) + ' ' + 'y'.repeat(100),
+                });
+
+                await handleAiResponse(payload, makeContext());
+
+                expect(escalationReasons()).toEqual([expectedReason]);
+                expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({ escalationRequiredReason: expectedReason }),
+                });
+            },
+        );
+
+        // `groundedness` is only read for a withheld draft.
+        it('publishes a confident reply whose result carries no groundedness', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...highConfidenceResult,
+                groundedness: undefined,
+            } as unknown as typeof highConfidenceResult);
+
+            const result = await handleAiResponse(payload, makeContext());
+
+            expect(result.success).toBe(true);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(escalationReasons()).toEqual([]);
+        });
+
+        it('keeps the reason through a failed enqueue and recovers it on retry', async () => {
+            const storedResponse = trackResponsePersistence();
+            mockGenerateSupportResponse.mockResolvedValue(forcedEscalationResult);
+            mockPrismaJob.create.mockRejectedValueOnce(new Error('queue unavailable'));
+
+            const first = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+            expect(first.success).toBe(false);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            // Delivered, but the handoff is still owed — and the owed marker
+            // carries the reason rather than a bare percentage.
+            expect(storedResponse()).toMatchObject({
+                responseState: 'PENDING',
+                deliveryConfirmed: true,
+            });
+            expect(storedResponse()?.escalationRequiredReason).toContain(OWN_VERIFICATION_REASON);
+
+            const retry = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+            expect(retry.data).toMatchObject({
+                escalated: true,
+                deliveryFailed: false,
+                reason: 'escalation_recovered',
+            });
+            // Recovery reads the row, so losing the reason at the seam above
+            // would have lost it here too. Proven delivery, so nothing is
+            // appended about an arrival that did not fail. One failed enqueue
+            // plus one successful retry, and the reason is identical on both.
+            expect(escalationReasons()).toEqual([
+                `Low AI confidence (39%) — automated escalation (${OWN_VERIFICATION_REASON})`,
+                `Low AI confidence (39%) — automated escalation (${OWN_VERIFICATION_REASON})`,
+            ]);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+        });
+    });
+
     // ── Undelivered responses always end up with a human ──────────────────
     //
     // The one-response-per-ticket guard reads the BOT Message row, which is
@@ -828,12 +1714,12 @@ describe('handleAiResponse', () => {
         }
 
         /** The single ESCALATION job payload, asserting exactly one was created. */
-        function escalationPayload(): Record<string, unknown> {
+        function escalationPayload(): EscalationPayload {
             const calls = mockPrismaJob.create.mock.calls.filter(
                 (call: Array<{ data: { type: string } }>) => call[0].data.type === 'ESCALATION',
             );
             expect(calls).toHaveLength(1);
-            return calls[0][0].data.payload as Record<string, unknown>;
+            return calls[0][0].data.payload;
         }
 
         it('enqueues an ESCALATION job when post-back throws', async () => {
@@ -873,6 +1759,28 @@ describe('handleAiResponse', () => {
             expect(result.success).toBe(true);
             expect(result.data?.deliveryFailed).toBe(true);
             expect(escalationPayload().reason).toContain('adapter misconfigured');
+        });
+
+        it('enqueues an ESCALATION job when post-back throws an error with no message', async () => {
+            // An empty failure must not read as no failure: the reply never landed,
+            // and nothing else owes this reporter a human.
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error(''));
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+            expect(escalationPayload().reason).toBe(
+                'AI response generated but not delivered to DISCORD (no usable error message) — needs a human to answer the reporter',
+            );
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: { responseError: 'no usable error message' },
+            });
         });
 
         it('names the delivery failure even when confidence is also low', async () => {
@@ -950,22 +1858,17 @@ describe('handleAiResponse', () => {
 
         it('does not escalate when posting succeeds but DELIVERED state persistence fails', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
-            mockPrismaMessage.update.mockImplementation(
-                async (args: { data: Record<string, unknown> }) => {
-                    if (args.data.responseState === 'DELIVERED') {
-                        throw new Error('DB write conflict');
-                    }
-                    return {};
-                },
-            );
+            mockPrismaMessage.update.mockRejectedValueOnce(new Error('DB write conflict'));
+            const context = makeContext({ jobId: 'job-delivered-state' });
 
             const result = await handleAiResponse(
                 { ticketId: 'tkt-1', source: 'discord' },
-                makeContext({ jobId: 'job-delivered-state' }),
+                context,
             );
 
             expect(mockPostResponse).toHaveBeenCalledTimes(1);
             expect(result.success).toBe(true);
+            expect(context.reportProgress).toHaveBeenLastCalledWith(100);
             expect(result.data?.deliveryFailed).toBe(false);
             expect(result.data?.escalated).toBe(false);
             expect(mockPrismaJob.create).not.toHaveBeenCalled();
@@ -976,6 +1879,76 @@ describe('handleAiResponse', () => {
                     responseError: expect.stringContaining('DB write conflict'),
                 },
             });
+        });
+
+        it('fails visibly when both delivery writes fail and retries without reposting', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPrismaMessage.update
+                .mockRejectedValueOnce(new Error('DB write conflict'))
+                .mockRejectedValueOnce(new Error('DB marker unavailable'));
+            const context = makeContext();
+
+            const result = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                context,
+            );
+
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mockPrismaMessage.update).toHaveBeenNthCalledWith(1, {
+                where: { id: 'msg-new' },
+                data: { responseState: 'DELIVERED', responseError: null },
+            });
+            expect(mockPrismaMessage.update).toHaveBeenNthCalledWith(2, {
+                where: { id: 'msg-new' },
+                data: {
+                    deliveryConfirmed: true,
+                    responseError: expect.stringContaining('DB write conflict'),
+                },
+            });
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('DB write conflict');
+            expect(result.error).toContain('DB marker unavailable');
+            expect(result.error).toContain('needs manual attention');
+            expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(mockDestroy).toHaveBeenCalledTimes(1);
+
+            // The primary response survived both failed writes. Its retry must
+            // make recovery visible without sending the answer a second time.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-new',
+                        type: 'BOT',
+                        content: highConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: context.jobId,
+                        deliveryConfirmed: false,
+                        responseError: null,
+                    },
+                ],
+            });
+
+            const retry = await handleAiResponse(
+                { ticketId: 'tkt-1', source: 'discord' },
+                makeContext(),
+            );
+
+            expect(retry.data).toMatchObject({
+                skipped: true,
+                recoveryScheduled: true,
+                reason: 'delivery_recovery_scheduled',
+            });
+            expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+            expect(mockPrismaJob.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ type: 'AI_RESPONSE' }),
+            });
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
         });
 
         it('does not escalate or repost a confirmed delivery whose DELIVERED state write failed', async () => {
@@ -1274,6 +2247,25 @@ describe('handleAiResponse', () => {
             expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
         });
 
+        it('preserves the investigator handoff reason in durable escalation', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...suppressedResult,
+                handoffReason: 'Reporter version cannot be matched to a release',
+            });
+            await handleAiResponse({ ticketId: 'tkt-1', source: 'discord' }, makeContext());
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    escalationRequiredReason: expect.stringContaining(
+                        'Reporter version cannot be matched to a release',
+                    ),
+                }),
+            });
+            expect(JSON.stringify(mockPostResponse.mock.calls)).not.toContain(
+                'Reporter version cannot be matched to a release',
+            );
+        });
+
         it.each([
             ['low-confidence', lowConfidenceResult, 'Low AI confidence'],
             ['suppressed', suppressedResult, 'AI response withheld'],
@@ -1292,11 +2284,10 @@ describe('handleAiResponse', () => {
                 expect(mockPostResponse).toHaveBeenCalledTimes(1);
                 expect(result.success).toBe(false);
                 expect(result.error).toContain('queue unavailable');
-                expect(mockPrismaMessage.update).toHaveBeenCalledWith({
-                    where: { id: 'msg-new' },
-                    data: {
+                expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
                         escalationRequiredReason: expect.stringContaining(reasonFragment),
-                    },
+                    }),
                 });
                 expect(mockPrismaMessage.update).not.toHaveBeenCalledWith({
                     where: { id: 'msg-new' },
@@ -1319,6 +2310,13 @@ describe('handleAiResponse', () => {
                         responseState: 'PENDING',
                         responseJobId: 'job-required-escalation',
                         escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                        // The first attempt above posted successfully, and a
+                        // delivered response that owes a handoff records that on
+                        // deliveryConfirmed. Without it the row would say only
+                        // "a human is owed", which is also what an attempt that
+                        // died before posting leaves behind — and that one is
+                        // routed to a delayed takeover instead of escalating.
+                        deliveryConfirmed: true,
                         createdAt: new Date(),
                     },
                 ],
@@ -1374,6 +2372,224 @@ describe('handleAiResponse', () => {
             });
         });
 
+        it.each([
+            [
+                'low-confidence',
+                lowConfidenceResult,
+                'Low AI confidence (25%) — automated escalation',
+            ],
+            [
+                'suppressed',
+                {
+                    ...suppressedResult,
+                    handoffReason: 'Reporter version cannot be matched to a release',
+                },
+                'AI response withheld (Reporter version cannot be matched to a release) — needs a human answer',
+            ],
+        ])(
+            'retains the exact %s reason on retry when post-publication marker writes and enqueue fail',
+            async (_label, pipelineResult, reason) => {
+                const storedResponse = trackResponsePersistence();
+                mockGenerateSupportResponse.mockResolvedValue(pipelineResult);
+                mockPrismaJob.create.mockRejectedValueOnce(new Error('queue unavailable'));
+                let reasonAtPublication: string | null | undefined;
+                mockPostResponse.mockImplementation(async () => {
+                    reasonAtPublication = storedResponse()?.escalationRequiredReason;
+                });
+                const payload = { ticketId: 'tkt-1', source: 'discord' as const };
+                const context = makeContext();
+
+                const first = await handleAiResponse(payload, context);
+                expect(first.success).toBe(false);
+                expect(first.error).toContain(reason);
+                expect(first.error).toContain('queue unavailable');
+                expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+                const persistedReason = storedResponse()?.escalationRequiredReason;
+
+                const retry = await handleAiResponse(payload, makeContext());
+                expect(retry.data).toMatchObject({
+                    escalated: true,
+                    reason: 'escalation_recovered',
+                });
+                expect(reasonAtPublication).toBe(reason);
+                expect(persistedReason).toBe(reason);
+                expect(mockPrismaJob.create).toHaveBeenLastCalledWith({
+                    data: expect.objectContaining({
+                        type: 'ESCALATION',
+                        payload: { ticketId: 'tkt-1', reason },
+                    }),
+                });
+                const settledRetry = await handleAiResponse(payload, makeContext());
+                expect(settledRetry.data?.reason).toBe('already_answered');
+                expect(mockPrismaJob.create).toHaveBeenCalledTimes(2);
+                expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+                expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            },
+        );
+
+        it('preserves the original suppression reason for the sweep after publication is interrupted', async () => {
+            const storedResponse = trackResponsePersistence();
+            const reason =
+                'AI response withheld (Reporter version is unknown) — needs a human answer';
+            mockGenerateSupportResponse.mockResolvedValue({
+                ...suppressedResult,
+                handoffReason: 'Reporter version is unknown',
+            });
+            const context = makeContext({
+                reportProgress: vi.fn(async (progress: number) => {
+                    if (progress === 85) throw new Error('worker interrupted before enqueue');
+                }),
+            });
+
+            await expect(handleAiResponse({ ticketId: 'tkt-1' }, context)).rejects.toThrow(
+                'worker interrupted',
+            );
+            const persistedReason = storedResponse()?.escalationRequiredReason;
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+
+            const sweep = await handlePendingResponseSweep({}, makeContext({ jobId: 'sweep-1' }));
+            expect(sweep.success).toBe(true);
+            expect(sweep.data?.escalated).toBe(1);
+            expect(escalationPayload()).toEqual({ ticketId: 'tkt-1', reason });
+            expect(persistedReason).toBe(reason);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not publish when the primary response and owed reason cannot be persisted', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockGenerateSupportResponse.mockResolvedValue(suppressedResult);
+            mockPrismaMessage.create.mockRejectedValueOnce(
+                new Error('primary response insert failed'),
+            );
+            const context = makeContext();
+
+            await expect(handleAiResponse({ ticketId: 'tkt-1' }, context)).rejects.toThrow(
+                'primary response insert failed',
+            );
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+            expect(mockDestroy).toHaveBeenCalledOnce();
+        });
+
+        it.each(['retry', 'sweep'])(
+            'keeps delivery failure ahead of suppression during %s recovery',
+            async (recovery) => {
+                const storedResponse = trackResponsePersistence();
+                mockGenerateSupportResponse.mockResolvedValue(suppressedResult);
+                mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+                mockPrismaJob.create.mockRejectedValueOnce(new Error('queue unavailable'));
+                const reason =
+                    'AI response generated but not delivered to DISCORD (Discord API 503) — needs a human to answer the reporter';
+
+                const first = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+                expect(first.success).toBe(false);
+                expect(first.error).toContain(reason);
+                expect(storedResponse()?.escalationRequiredReason).toBe(reason);
+                if (recovery === 'retry') {
+                    const retry = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+                    expect(retry.data).toMatchObject({ escalated: true, deliveryFailed: true });
+                } else {
+                    await handlePendingResponseSweep({}, makeContext({ jobId: 'sweep-1' }));
+                }
+                expect(mockPrismaJob.create).toHaveBeenLastCalledWith({
+                    data: expect.objectContaining({
+                        type: 'ESCALATION',
+                        payload: { ticketId: 'tkt-1', reason },
+                    }),
+                });
+                expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+                expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            },
+        );
+
+        it('reports a failed delivery-reason replacement when the escalation also cannot enqueue', async () => {
+            const storedResponse = trackResponsePersistence();
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+            mockPrismaMessage.updateMany.mockRejectedValueOnce(
+                new Error('delivery reason update unavailable'),
+            );
+            mockPrismaJob.create.mockRejectedValueOnce(new Error('queue unavailable'));
+            const context = makeContext();
+
+            const result = await handleAiResponse({ ticketId: 'tkt-1' }, context);
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('Discord API 503');
+            expect(result.error).toContain('delivery reason update unavailable');
+            expect(result.error).toContain('queue unavailable');
+            expect(storedResponse()?.escalationRequiredReason).toBe(
+                'Low AI confidence (25%) — automated escalation',
+            );
+            expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+        });
+
+        it.each(['ESCALATED', 'DELIVERED'] as const)(
+            'does not recreate an owed marker when a pending post fails after the row settles %s',
+            async (settledState) => {
+                const storedResponse = trackResponsePersistence();
+                mockGenerateSupportResponse.mockResolvedValue(suppressedResult);
+                const post = holdPlatformPost();
+                const payload = { ticketId: 'tkt-1', source: 'discord' as const };
+                const first = handleAiResponse(
+                    payload,
+                    makeContext({
+                        reportProgress: vi.fn(async (progress: number) => {
+                            // DELIVERED is defensive coverage for another writer:
+                            // an interruption must not strand a newly owed marker.
+                            if (settledState === 'DELIVERED' && progress === 85) {
+                                throw new Error('worker interrupted after delivery bookkeeping');
+                            }
+                        }),
+                    }),
+                );
+                await post.started;
+
+                if (settledState === 'ESCALATED') {
+                    // The real gate processes an owed marker before checking
+                    // owner identity, even while the original post is pending.
+                    const concurrentRetry = await handleAiResponse(
+                        payload,
+                        makeContext({ jobId: 'concurrent-retry' }),
+                    );
+                    expect(concurrentRetry.data).toMatchObject({
+                        escalated: true,
+                        reason: 'escalation_recovered',
+                    });
+                    expect(mockPrismaJob.create).toHaveBeenCalledTimes(1);
+                } else {
+                    await mockPrismaMessage.update({
+                        where: { id: 'msg-new' },
+                        data: { responseState: 'DELIVERED', escalationRequiredReason: null },
+                    });
+                }
+                expect(storedResponse()?.responseState).toBe(settledState);
+                expect(storedResponse()?.escalationRequiredReason).toBeNull();
+
+                post.rejectPost(new Error('Discord API 503'));
+                if (settledState === 'DELIVERED') {
+                    await expect(first).rejects.toThrow('worker interrupted');
+                } else {
+                    expect((await first).data).toMatchObject({
+                        escalated: true,
+                        deliveryFailed: true,
+                    });
+                }
+
+                expect(storedResponse()).toMatchObject({
+                    responseState: settledState,
+                    escalationRequiredReason: null,
+                    responseError: 'Discord API 503',
+                });
+                expect(mockPrismaJob.create).toHaveBeenCalledTimes(
+                    settledState === 'ESCALATED' ? 1 : 0,
+                );
+                expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+                expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            },
+        );
+
         it('recovers the keyed primary response when an older AI BOT row appears first', async () => {
             mockPrismaTicket.findUnique.mockResolvedValue({
                 ...sampleTicket,
@@ -1397,6 +2613,9 @@ describe('handleAiResponse', () => {
                         responseState: 'PENDING',
                         responseJobId: 'job-required-escalation',
                         escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                        // Delivered, handoff still owed — the shape that escalates
+                        // on sight rather than waiting for a delayed takeover.
+                        deliveryConfirmed: true,
                         createdAt: new Date('2026-04-23T10:00:20Z'),
                     },
                 ],
@@ -1428,6 +2647,322 @@ describe('handleAiResponse', () => {
         });
     });
 
+    // ── A delivery failure is stored bounded and storable ─────────────────
+    //
+    // The failure text comes from an adapter or Prisma error, and some adapters
+    // put a whole HTTP response body in it. It is written to responseError, to
+    // the owed escalationRequiredReason when the row already owes a handoff, and
+    // to the queued ESCALATION payload. Nothing else bounds its length, and the
+    // store refuses U+0000 and unpaired surrogates. boundForStorage says what a
+    // refusal at these writes loses.
+    describe('a delivery failure is bounded and made storable before it is written', () => {
+        /**
+         * The handler's bound on error text it stores, restated rather than
+         * exported so that moving it fails these tests.
+         */
+        const MAX_STORED_ERROR_TEXT = 2000;
+
+        /**
+         * `LONE_SURROGATE` from ai/src/test-utils/surrogates.ts, restated because
+         * the queue's tsconfig roots at queue/src and refuses an import from the
+         * ai package's sources (TS6059).
+         */
+        const LONE_SURROGATE =
+            /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+        /**
+         * `isWellFormed` from ai/src/test-utils/surrogates.ts, restated for the
+         * same reason: the engine's own check, which does not share the
+         * production regex the way LONE_SURROGATE does. The TS lib stops at
+         * ES2022, hence the cast. U+0000 is well formed, so it is asserted apart.
+         */
+        const isWellFormed = (text: string): boolean =>
+            (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+
+        const ILL_FORMED_ERROR = 'Teams API 400: {"error":"bad \u0000 body \uDE00 \uD83D"}';
+        const STORABLE_ERROR = 'Teams API 400: {"error":"bad \uFFFD body \uFFFD \uFFFD"}';
+
+        /**
+         * The three places the handler derives a delivery failure. Each arranges
+         * its failure around `error` and names the text the handler puts before it.
+         */
+        const SITES: Array<
+            [string, { source: string; prefix: string; fail(error: string): void }]
+        > = [
+            [
+                'a failed post',
+                {
+                    source: 'DISCORD',
+                    prefix: '',
+                    fail: (error) => {
+                        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                        mockPostResponse.mockRejectedValueOnce(new Error(error));
+                    },
+                },
+            ],
+            [
+                'a misconfigured adapter',
+                {
+                    source: 'DISCORD',
+                    prefix: 'platform adapter misconfigured: ',
+                    fail: (error) => {
+                        mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                        mockGetAdapter.mockImplementation(() => {
+                            throw new Error(error);
+                        });
+                    },
+                },
+            ],
+            [
+                'a lost suggestedResponse with no adapter',
+                {
+                    source: 'WEB',
+                    prefix: 'no platform adapter for WEB and suggestedResponse could not be stored: ',
+                    fail: (error) => {
+                        mockPrismaTicket.findUnique.mockResolvedValue({
+                            ...sampleTicket,
+                            source: 'WEB',
+                        });
+                        mockHasAdapter.mockReturnValue(false);
+                        mockPrismaTicket.update.mockImplementation(
+                            async (args: { data: Record<string, unknown> }) => {
+                                if (args.data.suggestedResponse !== undefined) {
+                                    throw new Error(error);
+                                }
+                                return {};
+                            },
+                        );
+                    },
+                },
+            ],
+        ];
+
+        function notDelivered(source: string, failure: string): string {
+            return `AI response generated but not delivered to ${source} (${failure}) — needs a human to answer the reporter`;
+        }
+
+        /** Every responseError and owed reason written after create, and every queued reason. */
+        function writtenFailure() {
+            const writes = [
+                ...mockPrismaMessage.update.mock.calls,
+                ...mockPrismaMessage.updateMany.mock.calls,
+            ].map((call: Array<{ data: Partial<PersistedResponse> }>) => call[0].data);
+            return {
+                responseErrors: writes
+                    .map((data) => data.responseError)
+                    .filter((value): value is string => typeof value === 'string'),
+                owedReasons: writes
+                    .map((data) => data.escalationRequiredReason)
+                    .filter((value): value is string => typeof value === 'string'),
+                queuedReasons: mockPrismaJob.create.mock.calls
+                    .map(
+                        (call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data,
+                    )
+                    .filter((data: { type: string }) => data.type === 'ESCALATION')
+                    .map(
+                        (data: { payload: unknown }) => (data.payload as { reason: string }).reason,
+                    ),
+            };
+        }
+
+        /**
+         * Hold every captured text to what the store requires. It reads the
+         * arguments the handler passed, never the test's own expectation, which
+         * is a literal and well formed whatever the handler did.
+         */
+        function expectStorable(texts: string[]): void {
+            for (const text of texts) {
+                expect(isWellFormed(text)).toBe(true);
+                expect(text).not.toMatch(LONE_SURROGATE);
+                expect(text).not.toContain('\u0000');
+            }
+        }
+
+        it.each(SITES)(
+            'replaces U+0000 and lone surrogates in the failure from %s',
+            async (_label, site) => {
+                mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+                site.fail(ILL_FORMED_ERROR);
+
+                const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                expect(result.success).toBe(true);
+                expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+                const written = writtenFailure();
+                expectStorable([
+                    ...written.responseErrors,
+                    ...written.owedReasons,
+                    ...written.queuedReasons,
+                ]);
+                const failure = site.prefix + STORABLE_ERROR;
+                expect(written).toEqual({
+                    responseErrors: [failure],
+                    owedReasons: [notDelivered(site.source, failure)],
+                    queuedReasons: [notDelivered(site.source, failure)],
+                });
+            },
+        );
+
+        it.each(SITES)('bounds an oversize failure from %s', async (_label, site) => {
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            site.fail('x'.repeat(100_000));
+            const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            try {
+                await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                const written = writtenFailure();
+                for (const text of written.responseErrors) {
+                    expect(text).toHaveLength(MAX_STORED_ERROR_TEXT);
+                }
+                const failure =
+                    site.prefix + 'x'.repeat(MAX_STORED_ERROR_TEXT - site.prefix.length);
+                expect(written).toEqual({
+                    responseErrors: [failure],
+                    owedReasons: [notDelivered(site.source, failure)],
+                    queuedReasons: [notDelivered(site.source, failure)],
+                });
+                // The operator log names the same bounded text.
+                expect(log).toHaveBeenCalledWith(
+                    expect.stringContaining(`, delivery failed (${failure})`),
+                );
+            } finally {
+                log.mockRestore();
+            }
+        });
+
+        it('bounds the failure written alone when no handoff was owed', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPostResponse.mockRejectedValueOnce(new Error('x'.repeat(100_000)));
+
+            await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+            // High confidence owes no handoff, so the diagnostic goes through the
+            // plain update rather than the owed-reason replacement.
+            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
+                where: { id: 'msg-new' },
+                data: { responseError: 'x'.repeat(MAX_STORED_ERROR_TEXT) },
+            });
+            expect(writtenFailure().queuedReasons).toEqual([
+                notDelivered('DISCORD', 'x'.repeat(MAX_STORED_ERROR_TEXT)),
+            ]);
+        });
+
+        it.each(SITES)(
+            'escalates a failure from %s whose error has no message',
+            async (_label, site) => {
+                mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+                site.fail('');
+
+                const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                expect(result.success).toBe(true);
+                expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+                const failure = `${site.prefix}no usable error message`;
+                expect(writtenFailure()).toEqual({
+                    responseErrors: [failure],
+                    owedReasons: [notDelivered(site.source, failure)],
+                    queuedReasons: [notDelivered(site.source, failure)],
+                });
+            },
+        );
+
+        it.each(SITES)('leaves an ordinary failure from %s unchanged', async (_label, site) => {
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            site.fail('API 503');
+
+            await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+            const failure = `${site.prefix}API 503`;
+            expect(writtenFailure()).toEqual({
+                responseErrors: [failure],
+                owedReasons: [notDelivered(site.source, failure)],
+                queuedReasons: [notDelivered(site.source, failure)],
+            });
+        });
+
+        it('bounds and cleans a failed DELIVERED write before storing it as responseError', async () => {
+            mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+            mockPrismaMessage.update.mockRejectedValueOnce(
+                new Error(`${ILL_FORMED_ERROR} ${'x'.repeat(100_000)}`),
+            );
+
+            const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+            expect(result.success).toBe(true);
+            const { responseErrors } = writtenFailure();
+            expect(responseErrors).toHaveLength(1);
+            expectStorable(responseErrors);
+            const prefix = 'Delivery succeeded but the DELIVERED state write failed: ';
+            const stored = `${prefix}${STORABLE_ERROR} ${'x'.repeat(100_000)}`.slice(
+                0,
+                MAX_STORED_ERROR_TEXT,
+            );
+            expect(mockPrismaMessage.update).toHaveBeenLastCalledWith({
+                where: { id: 'msg-new' },
+                data: { deliveryConfirmed: true, responseError: stored },
+            });
+        });
+
+        // An Error's `message` is typed as a string, but anything can be assigned
+        // to it. storableReason used to call `.replace()` on each part, so a
+        // message that was not a string threw inside the post's catch, and the
+        // attempt rejected without escalating. It is converted now, and a value
+        // that will not convert reads as having no usable message.
+        it.each([
+            ['a number', () => Object.assign(new Error('x'), { message: 42 }), '42'],
+            [
+                'an object, read through a getter',
+                () =>
+                    Object.defineProperty(new Error('x'), 'message', {
+                        get: () => ({ toString: () => 'Teams API 503' }),
+                    }),
+                'Teams API 503',
+            ],
+            [
+                'an object whose toString throws',
+                () =>
+                    Object.assign(new Error('x'), {
+                        message: {
+                            toString() {
+                                throw new Error('no text');
+                            },
+                        },
+                    }),
+                'no usable error message',
+            ],
+            [
+                'an object with no prototype',
+                () => Object.assign(new Error('x'), { message: Object.create(null) }),
+                'no usable error message',
+            ],
+        ])(
+            'escalates a failed post at once when its error message is %s',
+            async (_label, postError, failure) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockPostResponse.mockRejectedValueOnce(postError());
+                const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+                try {
+                    const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+                    expect(result.success).toBe(true);
+                    expect(result.data).toMatchObject({ escalated: true, deliveryFailed: true });
+                    const written = writtenFailure();
+                    expectStorable([...written.responseErrors, ...written.queuedReasons]);
+                    // High confidence owed no handoff, so no owed reason is written.
+                    expect(written).toEqual({
+                        responseErrors: [failure],
+                        owedReasons: [],
+                        queuedReasons: [notDelivered('DISCORD', failure)],
+                    });
+                } finally {
+                    error.mockRestore();
+                }
+            },
+        );
+    });
+
     /**
      * The recovery paths face the same no-op enqueue the main path does.
      *
@@ -1439,7 +2974,13 @@ describe('handleAiResponse', () => {
      * comes back has to follow the row's real responseState.
      */
     describe('recovery escalation compare-and-set changed no rows', () => {
-        /** Row shape that routes into recoverRequiredEscalation. */
+        /**
+         * Row shape that routes into recoverRequiredEscalation: an owed handoff
+         * on a response whose delivery outcome IS recorded. Without that
+         * recorded outcome the owed marker alone is ambiguous — an attempt that
+         * died before posting leaves the same row — so the gate sends it to a
+         * delayed takeover instead, and these cases would never be reached.
+         */
         const requiredEscalationRow = {
             id: 'msg-required-escalation',
             type: 'BOT',
@@ -1449,6 +2990,7 @@ describe('handleAiResponse', () => {
             responseState: 'PENDING',
             responseJobId: 'job-recovery',
             escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+            deliveryConfirmed: true,
             createdAt: new Date('2026-04-23T10:00:20Z'),
         };
 
@@ -1470,7 +3012,7 @@ describe('handleAiResponse', () => {
             createdAt: new Date('2026-04-23T10:00:20Z'),
         };
 
-        function stageRow(row: Record<string, unknown>): void {
+        function stageRow(row: typeof requiredEscalationRow | typeof pendingDeliveryRow): void {
             mockPrismaTicket.findUnique.mockResolvedValue({
                 ...sampleTicket,
                 messages: [...sampleTicket.messages, row],
@@ -1486,6 +3028,40 @@ describe('handleAiResponse', () => {
 
         beforeEach(() => {
             mockPrismaMessage.updateMany.mockResolvedValue({ count: 0 });
+        });
+
+        it('keeps failing on retries that load DELIVERED with an owed-escalation marker', async () => {
+            stageRow({ ...requiredEscalationRow, responseState: 'DELIVERED' });
+            const context = makeContext({ jobId: 'job-recovery' });
+
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                const result = await handleAiResponse(requiredEscalationJob(), context);
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('response is DELIVERED');
+                expect(result.error).toContain('owed-escalation marker remains');
+                expect(result.error).toContain(requiredEscalationRow.escalationRequiredReason);
+                expect(result.error).toContain('needs manual attention');
+                expect(result.data).toBeUndefined();
+            }
+            expect(mockPrismaMessage.updateMany).not.toHaveBeenCalled();
+            expect(mockPrismaMessage.update).not.toHaveBeenCalled();
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+            expect(mockPostResponse).not.toHaveBeenCalled();
+        });
+
+        it('accepts a retry that loads DELIVERED with no owed-escalation marker', async () => {
+            stageRow({ ...pendingDeliveryRow, responseState: 'DELIVERED' });
+            const context = makeContext({ jobId: 'job-recovery' });
+
+            const result = await handleAiResponse(requiredEscalationJob(), context);
+
+            expect(result.success).toBe(true);
+            expect(result.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(mockPrismaJob.create).not.toHaveBeenCalled();
+            expect(context.reportProgress).toHaveBeenCalledWith(100);
         });
 
         describe.each([
@@ -1551,9 +3127,39 @@ describe('handleAiResponse', () => {
                 expect(context.reportProgress).toHaveBeenCalledWith(100);
             });
 
-            it('succeeds without claiming a handoff when the response is already DELIVERED', async () => {
+            it('fails loudly when a DELIVERED response retains an owed-escalation marker', async () => {
                 stageRow(row);
-                mockPrismaMessage.findUnique.mockResolvedValue({ responseState: 'DELIVERED' });
+                mockPrismaMessage.findUnique.mockResolvedValue({
+                    responseState: 'DELIVERED',
+                    escalationRequiredReason: requiredEscalationRow.escalationRequiredReason,
+                });
+                const context = makeContext({ jobId: 'job-recovery' });
+
+                const result = await handleAiResponse(makePayload(), context);
+
+                expect(result.success).toBe(false);
+                expect(result.error).toContain('response is DELIVERED');
+                expect(result.error).toContain('owed-escalation marker remains');
+                expect(result.error).toContain(requiredEscalationRow.escalationRequiredReason);
+                expect(result.error).toContain('needs manual attention');
+                expect(result.data).toBeUndefined();
+                expect(mockPrismaMessage.findUnique).toHaveBeenCalledWith({
+                    where: { id: row.id },
+                    select: { responseState: true, escalationRequiredReason: true },
+                });
+                expect(mockPrismaJob.create).not.toHaveBeenCalled();
+                expect(mockPrismaMessage.update).not.toHaveBeenCalled();
+                expect(context.reportProgress).not.toHaveBeenCalledWith(100);
+                expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
+                expect(mockPostResponse).not.toHaveBeenCalled();
+            });
+
+            it('succeeds without claiming a handoff when DELIVERED has no owed-escalation marker', async () => {
+                stageRow(row);
+                mockPrismaMessage.findUnique.mockResolvedValue({
+                    responseState: 'DELIVERED',
+                    escalationRequiredReason: null,
+                });
                 const context = makeContext({ jobId: 'job-recovery' });
 
                 const result = await handleAiResponse(makePayload(), context);
@@ -1606,6 +3212,310 @@ describe('handleAiResponse', () => {
                 reason: 'delivery_recovered',
             });
             expect(mockPrismaMessage.findUnique).not.toHaveBeenCalled();
+        });
+    });
+
+    /**
+     * An owed handoff and a delivery outcome are different facts, and the row
+     * records them separately because it has to.
+     *
+     * `escalationRequiredReason` is stamped on the response when it is created,
+     * before publication is even attempted — it is the promise ("low
+     * confidence", "withheld draft"), not a report on what the reporter
+     * received. On its own it therefore cannot tell these apart:
+     *
+     *   - the answer went out and a human is owed a look at a weak one, versus
+     *   - the attempt died around the post and the reporter has nothing.
+     *
+     * Treating every owed marker as the first case escalated immediately on a
+     * row whose delivery was unknown — summoning a human against a post that
+     * may still have been in flight, under a reason that implies an answer
+     * arrived, and reporting deliveryFailed: false for a reporter who may be
+     * sitting in silence. So delivery has to be recorded even while the row
+     * stays PENDING for its handoff, and an unrecorded outcome has to take the
+     * delayed takeover route that already exists for exactly this uncertainty.
+     */
+    describe('an owed handoff whose delivery outcome was never recorded', () => {
+        const payload = { ticketId: 'tkt-1', source: 'discord' as const };
+
+        function jobsOfType(type: string) {
+            return mockPrismaJob.create.mock.calls
+                .map((call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data)
+                .filter((data: { type: string }) => data.type === type);
+        }
+
+        function lastEscalationReason(): string {
+            const escalations = jobsOfType('ESCALATION');
+            expect(escalations.length).toBeGreaterThan(0);
+            return (escalations[escalations.length - 1].payload as { reason: string }).reason;
+        }
+
+        /**
+         * Commit the response row, then stop the worker dead before the platform
+         * post — the interruption that leaves an owed marker next to an unknown
+         * delivery. The row survives because it is already committed; the throw
+         * escapes the handler exactly as a crashing attempt would.
+         */
+        function crashAfterResponseRow(): void {
+            const persist = mockPrismaMessage.create.getMockImplementation()!;
+            mockPrismaMessage.create.mockImplementationOnce(async (args: unknown) => {
+                await persist(args);
+                throw new Error('worker interrupted before publication');
+            });
+        }
+
+        it.each([
+            [
+                'low-confidence',
+                lowConfidenceResult,
+                'Low AI confidence (25%) — automated escalation',
+                'escalation_recovered',
+            ],
+            [
+                'suppressed',
+                { ...suppressedResult, handoffReason: 'Reporter version is unknown' },
+                'AI response withheld (Reporter version is unknown) — needs a human answer',
+                'escalation_recovered',
+            ],
+            // A forced escalation publishes rather than suppressing, so it owes
+            // its handoff down the low-confidence arm — and that arm now carries
+            // the pipeline's own reason all the way to the recovered escalation.
+            [
+                'forced-escalation',
+                forcedEscalationResult,
+                `Low AI confidence (39%) — automated escalation (${OWN_VERIFICATION_REASON})`,
+                'escalation_recovered',
+            ],
+            // The control: medium confidence owes no handoff, so the marker is
+            // absent and this row has always taken the delayed route. The two
+            // above must now reach the same place by the same road.
+            ['medium-confidence', mediumConfidenceResult, null, 'delivery_recovered'],
+        ])(
+            'defers an interrupted %s response to the delayed takeover, then escalates undelivered',
+            async (_label, pipelineResult, owedReason, takeoverOutcome) => {
+                const storedResponse = trackResponsePersistence();
+                mockGenerateSupportResponse.mockResolvedValue(pipelineResult);
+                crashAfterResponseRow();
+                mockPrismaJob.create.mockResolvedValueOnce({ id: 'job-delayed-takeover' });
+
+                await expect(
+                    handleAiResponse(payload, makeContext({ jobId: 'job-owner' })),
+                ).rejects.toThrow('worker interrupted before publication');
+
+                // Nothing reached the reporter, and nothing on the row claims
+                // otherwise — which is precisely the ambiguity to resolve.
+                expect(mockPostResponse).not.toHaveBeenCalled();
+                expect(storedResponse()).toMatchObject({
+                    responseState: 'PENDING',
+                    deliveryConfirmed: false,
+                    responseError: null,
+                    escalationRequiredReason: owedReason,
+                });
+
+                const retry = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+                // No human yet: the takeover delay is what keeps recovery from
+                // racing a post this job may still be making.
+                expect(retry.data).toMatchObject({
+                    skipped: true,
+                    recoveryScheduled: true,
+                    recoveryJobId: 'job-delayed-takeover',
+                    reason: 'delivery_recovery_scheduled',
+                });
+                expect(jobsOfType('ESCALATION')).toHaveLength(0);
+                // The claim moved; the promise did not.
+                expect(storedResponse()).toMatchObject({
+                    responseJobId: 'job-delayed-takeover',
+                    escalationRequiredReason: owedReason,
+                });
+
+                const takeover = await handleAiResponse(
+                    { ...payload, pendingResponseRecovery: { messageId: 'msg-new' } },
+                    makeContext({ jobId: 'job-delayed-takeover' }),
+                );
+
+                expect(takeover.data).toMatchObject({
+                    skipped: true,
+                    escalated: true,
+                    // The reporter may have nothing. Saying delivery succeeded
+                    // here is the reading that gets the thread closed unread.
+                    deliveryFailed: true,
+                    reason: takeoverOutcome,
+                });
+                expect(storedResponse()).toMatchObject({
+                    responseState: 'ESCALATED',
+                    escalationRequiredReason: null,
+                });
+
+                const reason = lastEscalationReason();
+                expect(reason).toContain('A human must verify the thread and answer if needed.');
+                if (owedReason) {
+                    // The exact promise survives, and the uncertainty is added
+                    // to it rather than replacing it.
+                    expect(reason).toContain(owedReason);
+                    expect(reason).toContain('DISCORD');
+                    expect(reason).toContain('may have received no response at all');
+                }
+                // One takeover, one escalation, and never a second post.
+                expect(jobsOfType('ESCALATION')).toHaveLength(1);
+                expect(jobsOfType('AI_RESPONSE')).toHaveLength(1);
+                expect(mockPostResponse).not.toHaveBeenCalled();
+                expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+            },
+        );
+
+        it('waits out a post still in flight instead of escalating against it', async () => {
+            const storedResponse = trackResponsePersistence();
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            const post = holdPlatformPost();
+            mockPrismaJob.create.mockResolvedValueOnce({ id: 'job-delayed-takeover' });
+
+            const original = handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+            await post.started;
+
+            // The owning job is retried while its first attempt sits inside
+            // postResponse — a timed-out claim, not a dead worker. The owed
+            // marker predates that post, so settling on it here summons a human
+            // against an answer that is about to land.
+            const retry = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+            expect(retry.data).toMatchObject({
+                recoveryScheduled: true,
+                reason: 'delivery_recovery_scheduled',
+            });
+            expect(jobsOfType('ESCALATION')).toHaveLength(0);
+
+            post.resolvePost();
+            const first = await original;
+
+            // Delivery is now a proven fact, recorded even though the row has to
+            // stay PENDING until the handoff it owes is durable.
+            expect(first.data).toMatchObject({ escalated: true, deliveryFailed: false });
+            expect(storedResponse()).toMatchObject({
+                responseState: 'ESCALATED',
+                deliveryConfirmed: true,
+            });
+            expect(jobsOfType('ESCALATION')).toHaveLength(1);
+            // A delivered answer's handoff carries its own reason and nothing
+            // about a delivery that did not fail.
+            expect(lastEscalationReason()).toBe('Low AI confidence (25%) — automated escalation');
+
+            // The takeover the retry scheduled finds the row settled and leaves
+            // it there: one post, one escalation.
+            const takeover = await handleAiResponse(
+                { ...payload, pendingResponseRecovery: { messageId: 'msg-new' } },
+                makeContext({ jobId: 'job-delayed-takeover' }),
+            );
+
+            expect(takeover.data).toMatchObject({ skipped: true, reason: 'already_answered' });
+            expect(jobsOfType('ESCALATION')).toHaveLength(1);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it('records the delivery of a response held PENDING by its owed handoff', async () => {
+            const storedResponse = trackResponsePersistence();
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPrismaJob.create.mockRejectedValueOnce(new Error('queue unavailable'));
+
+            const first = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+            expect(first.success).toBe(false);
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            // Both facts, on one row, because responseState can only hold one of
+            // them: the reporter has the answer AND a human is still owed.
+            expect(storedResponse()).toMatchObject({
+                responseState: 'PENDING',
+                deliveryConfirmed: true,
+                escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+            });
+
+            const retry = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+            // Proven delivery, so there is nothing to wait out: escalate now,
+            // and never tell the human the answer failed to arrive.
+            expect(retry.data).toMatchObject({
+                escalated: true,
+                deliveryFailed: false,
+                reason: 'escalation_recovered',
+            });
+            expect(jobsOfType('AI_RESPONSE')).toHaveLength(0);
+            expect(lastEscalationReason()).toBe('Low AI confidence (25%) — automated escalation');
+            expect(mockPostResponse).toHaveBeenCalledTimes(1);
+            expect(mockGenerateSupportResponse).toHaveBeenCalledTimes(1);
+        });
+
+        it('escalates a recorded delivery failure at once, keeping its diagnostic', async () => {
+            const storedResponse = trackResponsePersistence();
+            mockGenerateSupportResponse.mockResolvedValue(lowConfidenceResult);
+            mockPostResponse.mockRejectedValueOnce(new Error('Discord API 503'));
+            mockPrismaJob.create.mockRejectedValueOnce(new Error('queue unavailable'));
+
+            const first = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+            expect(first.success).toBe(false);
+            expect(storedResponse()).toMatchObject({
+                responseState: 'PENDING',
+                deliveryConfirmed: false,
+                responseError: 'Discord API 503',
+            });
+
+            const retry = await handleAiResponse(payload, makeContext({ jobId: 'job-owner' }));
+
+            // A recorded failure is an answered question, not an open one — no
+            // delay, and the reason the delivery path already wrote stands as
+            // it is, diagnostic included.
+            expect(retry.data).toMatchObject({
+                escalated: true,
+                deliveryFailed: true,
+                reason: 'escalation_recovered',
+            });
+            expect(jobsOfType('AI_RESPONSE')).toHaveLength(0);
+            expect(lastEscalationReason()).toBe(
+                'AI response generated but not delivered to DISCORD (Discord API 503) — ' +
+                    'needs a human to answer the reporter',
+            );
+        });
+
+        it('does not defer an owed handoff it no longer owns', async () => {
+            // A stale duplicate cannot transfer a claim it does not hold, so
+            // deferring here would drop the handoff rather than delay it. The
+            // escalation compare-and-set is what keeps it from doubling up with
+            // the real owner.
+            mockPrismaTicket.findUnique.mockResolvedValue({
+                ...sampleTicket,
+                messages: [
+                    ...sampleTicket.messages,
+                    {
+                        id: 'msg-newer-owner',
+                        type: 'BOT',
+                        content: lowConfidenceResult.response,
+                        isAiGenerated: true,
+                        responseKey: 'PRIMARY_AI_RESPONSE',
+                        responseState: 'PENDING',
+                        responseJobId: 'job-newer',
+                        escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
+                        deliveryConfirmed: false,
+                        responseError: null,
+                        createdAt: new Date(),
+                    },
+                ],
+            });
+
+            const result = await handleAiResponse(payload, makeContext({ jobId: 'job-stale' }));
+
+            expect(result.data).toMatchObject({
+                skipped: true,
+                escalated: true,
+                deliveryFailed: true,
+                reason: 'escalation_recovered',
+            });
+            expect(jobsOfType('AI_RESPONSE')).toHaveLength(0);
+            const reason = lastEscalationReason();
+            expect(reason).toContain('Low AI confidence (25%) — automated escalation');
+            expect(reason).toContain('may have received no response at all');
+            expect(mockPostResponse).not.toHaveBeenCalled();
+            expect(mockGenerateSupportResponse).not.toHaveBeenCalled();
         });
     });
 
@@ -1671,11 +3581,11 @@ describe('handleAiResponse', () => {
             );
 
             expect(result.success).toBe(false);
-            expect(mockPrismaMessage.update).toHaveBeenCalledWith({
-                where: { id: 'msg-new' },
-                data: {
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
                     escalationRequiredReason: 'Low AI confidence (25%) — automated escalation',
-                },
+                    responseError: null,
+                }),
             });
             // The reason is not an error, so it must not reach responseError —
             // delivery succeeded here, only the handoff is outstanding.
@@ -1901,8 +3811,18 @@ describe('handleAiResponse', () => {
             'Hello',
             expect.objectContaining({
                 conversationHistory: [
-                    { role: 'assistant', content: 'Hi there!' },
-                    { role: 'user', content: 'Follow up question' },
+                    expect.objectContaining({
+                        role: 'assistant',
+                        content: 'Hi there!',
+                        authorRole: 'support',
+                        createdAt: '2026-04-23T10:01:00.000Z',
+                    }),
+                    expect.objectContaining({
+                        role: 'user',
+                        content: 'Follow up question',
+                        authorRole: 'participant',
+                        createdAt: '2026-04-23T10:03:00.000Z',
+                    }),
                 ],
             }),
         );
@@ -1960,7 +3880,12 @@ describe('handleAiResponse', () => {
             expect(mockGenerateSupportResponse).toHaveBeenCalledWith(
                 'How do I use CopilotKit with Next.js?',
                 expect.objectContaining({
-                    conversationHistory: [{ role: 'user', content: 'btw I am on the app router' }],
+                    conversationHistory: [
+                        expect.objectContaining({
+                            role: 'user',
+                            content: 'btw I am on the app router',
+                        }),
+                    ],
                 }),
             );
         });
@@ -2533,14 +4458,18 @@ describe('handleAiResponse', () => {
                 where: { id: 'msg-new' },
                 data: { escalationRequiredReason: null },
             });
-            // The marker was written first, then cleared — in that order.
+            // The marker was inserted with the response, then cleared.
+            expect(mockPrismaMessage.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    escalationRequiredReason: expect.stringContaining('Low AI confidence'),
+                }),
+            });
             const markerWrites = mockPrismaMessage.update.mock.calls.filter(
-                (call: Array<{ data: Record<string, unknown> }>) =>
+                (call: Array<{ data: Partial<PersistedResponse> }>) =>
                     'escalationRequiredReason' in call[0].data,
             );
-            expect(markerWrites).toHaveLength(2);
-            expect(markerWrites[0][0].data.escalationRequiredReason).toContain('Low AI confidence');
-            expect(markerWrites[1][0].data.escalationRequiredReason).toBeNull();
+            expect(markerWrites).toHaveLength(1);
+            expect(markerWrites[0][0].data.escalationRequiredReason).toBeNull();
         });
 
         it('fails the job when the orphaned escalation marker cannot be cleared', async () => {
@@ -2749,7 +4678,13 @@ describe('handleAiResponse', () => {
  * pinned here rather than left to trust.
  */
 describe('restoreShadowMode', () => {
-    const beforeEachTest = process.env.SHADOW_MODE;
+    // Read per test, not when the describe is collected. Collection runs before
+    // the file's beforeAll clears SHADOW_MODE, so a value read then is the
+    // ambient one, and handing it back would set it for every block after this.
+    let beforeEachTest: string | undefined;
+    beforeEach(() => {
+        beforeEachTest = process.env.SHADOW_MODE;
+    });
     afterEach(() => {
         restoreShadowMode(beforeEachTest);
     });
@@ -2773,5 +4708,497 @@ describe('restoreShadowMode', () => {
         restoreShadowMode(original);
 
         expect(process.env.SHADOW_MODE).toBe('false');
+    });
+});
+
+// ─── One hostile corpus through every escalation-reason arm ───────────────
+//
+// An attempt that generates a reply writes its escalation reason from one of
+// three arms: the published low-confidence arm, the withheld arm or the
+// delivery-failure arm. Each queues the reason in the ESCALATION job's payload.
+// The first two also create the response row with it as
+// `escalationRequiredReason`, before the reply posts. The delivery-failure arm
+// writes only after the post has failed. Its error text goes to `responseError`,
+// and its reason replaces the owed one only on a row that already owed a
+// handoff. On a row that owed none, the reason is queued and nothing more. What
+// a refused write loses differs between these writes; see boundForStorage.
+//
+// Recovery writes reasons as well: recoverRequiredEscalation,
+// recoverPendingResponse and the pending-response sweep compose theirs from what
+// the row already holds. None of them is driven here.
+//
+// Review kept finding one more arm that forgot to clean, bound or fall back, so
+// every way into the three arms takes the same corpus, and a way added later
+// joins ESCALATION_ARMS to inherit it. The corpus extends the one in
+// ai/src/pipeline.test.ts, restated because the queue's tsconfig roots at
+// queue/src and refuses an import from the ai package (TS6059).
+describe('every first-attempt escalation-reason arm writes a clean, bounded reason', () => {
+    /**
+     * The handler's MAX_REPEATED_HANDOFF_REASON, MAX_STORED_ERROR_TEXT and
+     * ERROR_WITHOUT_MESSAGE, restated rather than exported. A case that reaches
+     * a bound expects its exact text, so moving either bound, up or down, fails
+     * the over-bound case here.
+     */
+    const MAX_REPEATED_HANDOFF_REASON = 2000;
+    const MAX_STORED_ERROR_TEXT = 2000;
+    const ERROR_WITHOUT_MESSAGE = 'no usable error message';
+
+    /**
+     * `String.prototype.isWellFormed` (Node 20+), typed by hand because this
+     * package compiles against the ES2022 lib. It is the oracle here because it
+     * shares no code with the production regex it is checking.
+     */
+    function isWellFormed(text: string): boolean {
+        return (text as unknown as { isWellFormed(): boolean }).isWellFormed();
+    }
+
+    interface HostileCase {
+        /**
+         * The input as parts, given how many code units the arm leaves it before
+         * the bound. An arm that takes one string receives them joined with a
+         * space.
+         */
+        parts(room: number): string[];
+        /**
+         * Exactly what the arm keeps of the input after its own prefix, given the
+         * same room and whether the input arrived as parts. Null when nothing in
+         * it is usable, so the arm must fall back.
+         */
+        kept: ((room: number, asParts: boolean) => string) | null;
+        /**
+         * The two code units the raw input holds either side of the bound, so the
+         * case cannot drift off it.
+         */
+        straddles?(asParts: boolean): string;
+    }
+
+    const HOSTILE_CORPUS: Array<[string, HostileCase]> = [
+        [
+            // What V8's JSON.parse reports for a reply opening with 😀: it quotes the
+            // emoji's leading half alone. The whole emoji later on must survive intact.
+            'a lone high surrogate',
+            {
+                parts: () => [`Unexpected token '\uD83D', "😀 not json" is not valid JSON`],
+                kept: () => `Unexpected token '\uFFFD', "😀 not json" is not valid JSON`,
+            },
+        ],
+        [
+            'a lone low surrogate',
+            {
+                parts: () => ['Evidence quote \uDE00 does not match'],
+                kept: () => 'Evidence quote \uFFFD does not match',
+            },
+        ],
+        [
+            'a reversed pair (low then high)',
+            {
+                parts: () => ['Diagnosis \uDE00\uD83D cut short'],
+                kept: () => 'Diagnosis \uFFFD\uFFFD cut short',
+            },
+        ],
+        [
+            'U+0000',
+            {
+                parts: () => ['Reporter version \u0000 is unknown'],
+                kept: () => 'Reporter version \uFFFD is unknown',
+            },
+        ],
+        ['whitespace only', { parts: () => [' \n\t '], kept: null }],
+        [
+            'several blank parts',
+            { parts: () => ['', '   ', '\u0000', '\uDE00 \uD83D', ' \n '], kept: null },
+        ],
+        [
+            // As parts, each blank one is dropped with its separator. Joined into
+            // one string, the unstorable units sit inside the text and stay as U+FFFD.
+            'blank parts around usable ones',
+            {
+                parts: () => [
+                    '  ',
+                    'first finding',
+                    '\u0000',
+                    '\uDE00 \uD83D',
+                    'second finding  ',
+                    '',
+                ],
+                kept: (_room, asParts) =>
+                    asParts
+                        ? 'first finding; second finding'
+                        : 'first finding \uFFFD \uFFFD \uFFFD second finding',
+            },
+        ],
+        [
+            'an over-bound reason (5000 chars)',
+            { parts: () => ['x'.repeat(5000)], kept: (room) => 'x'.repeat(room) },
+        ],
+        [
+            'an emoji whose high half lands exactly on the bound',
+            {
+                parts: (room) => ['x'.repeat(room - 1) + '😀' + ' and more after the cut'],
+                kept: (room) => 'x'.repeat(room - 1),
+                straddles: () => '\uD83D\uDE00',
+            },
+        ],
+        [
+            'a space exactly at the cut',
+            {
+                parts: (room) => ['x'.repeat(room - 1) + ' ' + 'y'.repeat(100)],
+                kept: (room) => 'x'.repeat(room - 1),
+                straddles: () => ' y',
+            },
+        ],
+        [
+            // As parts, the bound falls between the separator's ';' and its space.
+            'a cut inside the separator',
+            {
+                parts: (room) => ['x'.repeat(room - 1), 'y'.repeat(100)],
+                kept: (room) => 'x'.repeat(room - 1),
+                straddles: (asParts) => (asParts ? '; ' : ' y'),
+            },
+        ],
+        [
+            // As parts, the bound falls right after the separator.
+            'a cut just after the separator',
+            {
+                parts: (room) => ['x'.repeat(room - 2), 'y'.repeat(100)],
+                kept: (room, asParts) => 'x'.repeat(room - 2) + (asParts ? '' : ' y'),
+                straddles: (asParts) => (asParts ? ' y' : 'yy'),
+            },
+        ],
+        [
+            // As parts, all the bound leaves of the second part is a unit the
+            // store refuses, which cleans to U+FFFD and nothing else.
+            'a cut that leaves only an unstorable unit after the separator',
+            {
+                parts: (room) => ['x'.repeat(room - 3), '\uDE00' + 'y'.repeat(100)],
+                kept: (room, asParts) => 'x'.repeat(room - 3) + (asParts ? '' : ' \uFFFDy'),
+                straddles: (asParts) => (asParts ? '\uDE00y' : 'yy'),
+            },
+        ],
+    ];
+
+    interface EscalationArm {
+        /** Everything before the parenthetical's contents, and everything after them. */
+        head: string;
+        tail: string;
+        /**
+         * The whole reason when nothing in the input is usable. The low-confidence
+         * arm leaves its parenthetical off, the withheld arm falls through to its
+         * next source, and a delivery failure says its error had no usable message.
+         */
+        fallback: string;
+        /** Text the arm puts inside the parenthetical ahead of the input, within the bound. */
+        innerPrefix: string;
+        /** Bound on the parenthetical's contents. */
+        bound: number;
+        /** Whether the arm receives the corpus as separate parts or as one string. */
+        takesParts: boolean;
+        arrange(input: string[]): void;
+        /** Every owed reason the arm writes to the response row. */
+        stored(): string[];
+        /** Whether it writes one: a delivery failure on a row that owed no handoff does not. */
+        storesReason: boolean;
+        /** Whether it writes the parenthetical's contents to `responseError`, as a delivery failure does. */
+        storesError: boolean;
+    }
+
+    /** The owed reason the BOT row is created with, before any publication. */
+    function createdReasons(): string[] {
+        return mockPrismaMessage.create.mock.calls
+            .map(
+                (call: Array<{ data: Partial<PersistedResponse> }>) =>
+                    call[0].data.escalationRequiredReason,
+            )
+            .filter((value): value is string => typeof value === 'string');
+    }
+
+    /** The owed reason a delivery failure replaces the created one with. */
+    function replacedReasons(): string[] {
+        return mockPrismaMessage.updateMany.mock.calls
+            .map(
+                (call: Array<{ data: Partial<PersistedResponse> }>) =>
+                    call[0].data.escalationRequiredReason,
+            )
+            .filter((value): value is string => typeof value === 'string');
+    }
+
+    /** Every `responseError` written to the row after it was created. */
+    function errorTexts(): string[] {
+        return [...mockPrismaMessage.update.mock.calls, ...mockPrismaMessage.updateMany.mock.calls]
+            .map((call: Array<{ data: Partial<PersistedResponse> }>) => call[0].data.responseError)
+            .filter((value): value is string => typeof value === 'string');
+    }
+
+    function queuedReasons(): string[] {
+        return mockPrismaJob.create.mock.calls
+            .map((call: Array<{ data: { type: string; payload: unknown } }>) => call[0].data)
+            .filter((data: { type: string }) => data.type === 'ESCALATION')
+            .map((data: { payload: unknown }) => (data.payload as { reason: string }).reason);
+    }
+
+    const LOW_CONFIDENCE = 'Low AI confidence (39%) — automated escalation';
+    const WITHHELD = { head: 'AI response withheld (', tail: ') — needs a human answer' };
+
+    /**
+     * One delivery-failure site: how it fails, the label it puts before the
+     * error, and whether the reply already owed a handoff when the post failed.
+     */
+    function notDelivered(
+        source: string,
+        innerPrefix: string,
+        owesHandoff: boolean,
+        fail: (error: string) => void,
+    ): EscalationArm {
+        const head = `AI response generated but not delivered to ${source} (`;
+        const tail = ') — needs a human to answer the reporter';
+        return {
+            head,
+            tail,
+            fallback: head + innerPrefix + ERROR_WITHOUT_MESSAGE + tail,
+            innerPrefix,
+            bound: MAX_STORED_ERROR_TEXT,
+            takesParts: false,
+            arrange: ([error]) => {
+                // A low score owes a handoff before the post; a high one does not.
+                mockGenerateSupportResponse.mockResolvedValue(
+                    owesHandoff ? lowConfidenceResult : highConfidenceResult,
+                );
+                fail(error);
+            },
+            stored: replacedReasons,
+            storesReason: owesHandoff,
+            storesError: true,
+        };
+    }
+
+    /** The three places the handler derives a delivery failure, and the label each puts first. */
+    const DELIVERY_SITES: Array<[string, string, string, (error: string) => void]> = [
+        [
+            'a failed post',
+            'DISCORD',
+            '',
+            (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockPostResponse.mockRejectedValueOnce(new Error(error));
+            },
+        ],
+        [
+            'a misconfigured adapter',
+            'DISCORD',
+            'platform adapter misconfigured: ',
+            (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                mockGetAdapter.mockImplementation(() => {
+                    throw new Error(error);
+                });
+            },
+        ],
+        [
+            'a lost suggestedResponse with no adapter',
+            'WEB',
+            'no platform adapter for WEB and suggestedResponse could not be stored: ',
+            (error) => {
+                mockPrismaTicket.findUnique.mockResolvedValue({ ...sampleTicket, source: 'WEB' });
+                mockHasAdapter.mockReturnValue(false);
+                mockPrismaTicket.update.mockImplementation(
+                    async (args: { data: Record<string, unknown> }) => {
+                        if (args.data.suggestedResponse !== undefined) {
+                            throw new Error(error);
+                        }
+                        return {};
+                    },
+                );
+            },
+        ],
+    ];
+
+    const ESCALATION_ARMS: Array<[string, EscalationArm]> = [
+        [
+            'the published low-confidence arm',
+            {
+                head: `${LOW_CONFIDENCE} (`,
+                tail: ')',
+                fallback: LOW_CONFIDENCE,
+                innerPrefix: '',
+                bound: MAX_REPEATED_HANDOFF_REASON,
+                takesParts: false,
+                arrange: ([handoffReason]) => {
+                    mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                    mockGenerateSupportResponse.mockResolvedValue({
+                        ...forcedEscalationResult,
+                        handoffReason,
+                    });
+                },
+                stored: createdReasons,
+                storesReason: true,
+                storesError: false,
+            },
+        ],
+        [
+            'the withheld arm, from the handoff reason',
+            {
+                ...WITHHELD,
+                // A handoff reason with nothing usable in it falls through to the findings.
+                fallback:
+                    WITHHELD.head +
+                    suppressedResult.groundedness.reasons.join('; ') +
+                    WITHHELD.tail,
+                innerPrefix: '',
+                bound: MAX_REPEATED_HANDOFF_REASON,
+                takesParts: false,
+                arrange: ([handoffReason]) => {
+                    mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                    mockGenerateSupportResponse.mockResolvedValue({
+                        ...suppressedResult,
+                        handoffReason,
+                    });
+                },
+                stored: createdReasons,
+                storesReason: true,
+                storesError: false,
+            },
+        ],
+        [
+            'the withheld arm, from the groundedness findings',
+            {
+                ...WITHHELD,
+                fallback: WITHHELD.head + 'Insufficient verified evidence' + WITHHELD.tail,
+                innerPrefix: '',
+                bound: MAX_REPEATED_HANDOFF_REASON,
+                takesParts: true,
+                arrange: (reasons) => {
+                    mockPrismaTicket.findUnique.mockResolvedValue(sampleTicket);
+                    mockGenerateSupportResponse.mockResolvedValue({
+                        ...suppressedResult,
+                        groundedness: { ...suppressedResult.groundedness, reasons },
+                    });
+                },
+                stored: createdReasons,
+                storesReason: true,
+                storesError: false,
+            },
+        ],
+        ...DELIVERY_SITES.flatMap(
+            ([site, source, label, fail]): Array<[string, EscalationArm]> => [
+                [`the delivery-failure arm, from ${site}`, notDelivered(source, label, true, fail)],
+                [
+                    `the delivery-failure arm, from ${site}, owing no handoff`,
+                    notDelivered(source, label, false, fail),
+                ],
+            ],
+        ),
+    ];
+
+    const ARM_CASES = ESCALATION_ARMS.flatMap(([armLabel, arm]) =>
+        HOSTILE_CORPUS.map(([caseLabel, hostile]): [string, string, EscalationArm, HostileCase] => [
+            armLabel,
+            caseLabel,
+            arm,
+            hostile,
+        ]),
+    );
+
+    beforeEach(() => {
+        // Every arm here takes the non-shadow path. SHADOW_MODE is cleared for
+        // each test and handed back after it, so neither the environment nor a
+        // block that ran earlier decides which path that is.
+        const shadowMode = process.env.SHADOW_MODE;
+        delete process.env.SHADOW_MODE;
+        // The same happy path describe('handleAiResponse') primes, restated
+        // because this block sits outside it.
+        vi.clearAllMocks();
+        mockPrismaTicket.update.mockResolvedValue({});
+        mockPrismaMessage.create.mockResolvedValue({ id: 'msg-new' });
+        mockPrismaMessage.update.mockResolvedValue({});
+        mockPrismaMessage.updateMany.mockResolvedValue({ count: 1 });
+        mockPrismaMessage.findUnique.mockResolvedValue(null);
+        mockPrismaMessage.findMany.mockResolvedValue([]);
+        mockPrismaJob.create.mockResolvedValue({ id: 'job-esc-1' });
+        mockPrismaJob.findMany.mockResolvedValue([]);
+        mockPrismaQueryRaw.mockResolvedValue([{ now: new Date('2026-08-11T20:00:00.000Z') }]);
+        mockPrismaTransaction.mockImplementation(
+            async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+        );
+        mockGenerateSupportResponse.mockResolvedValue(highConfidenceResult);
+        mockClassifyTicket.mockResolvedValue(sampleClassification);
+        mockGetFeedbackCalibration.mockResolvedValue(0);
+        mockPostResponse.mockResolvedValue(undefined);
+        mockHasAdapter.mockReturnValue(true);
+        mockGetAdapter.mockReturnValue({
+            platform: 'DISCORD',
+            postResponse: mockPostResponse,
+            postSystemMessage: vi.fn(),
+            parseInboundEvent: vi.fn(),
+            fetchUserInfo: vi.fn(),
+        });
+        // Every failure arm logs, and that noise would bury real output.
+        const quiet = [
+            vi.spyOn(console, 'error').mockImplementation(() => {}),
+            vi.spyOn(console, 'warn').mockImplementation(() => {}),
+            vi.spyOn(console, 'log').mockImplementation(() => {}),
+        ];
+        return () => {
+            quiet.forEach((spy) => spy.mockRestore());
+            restoreShadowMode(shadowMode);
+        };
+    });
+
+    it('has an oracle that tells a well-formed string from an ill-formed one', () => {
+        expect(isWellFormed('😀 and text')).toBe(true);
+        expect(isWellFormed('\uD83D')).toBe(false);
+        expect(isWellFormed('\uDE00')).toBe(false);
+        expect(isWellFormed('\uDE00\uD83D')).toBe(false);
+    });
+
+    it.each(ARM_CASES)('%s: %s', async (_arm, _case, arm, hostile) => {
+        const room = arm.bound - arm.innerPrefix.length;
+        const parts = hostile.parts(room);
+        const input = arm.takesParts ? parts : [parts.join(' ')];
+        // A case aimed at the bound only means something if the raw input really
+        // puts the named units either side of it, so that is checked before the run.
+        if (hostile.straddles) {
+            const raw = arm.innerPrefix + input.join('; ');
+            expect(raw.slice(arm.bound - 1, arm.bound + 1)).toBe(hostile.straddles(arm.takesParts));
+        }
+        arm.arrange(input);
+
+        const result = await handleAiResponse({ ticketId: 'tkt-1' }, makeContext());
+
+        expect(result.success).toBe(true);
+        expect(result.data).toMatchObject({ escalated: true, deliveryFailed: arm.storesError });
+        const queued = queuedReasons();
+        expect(queued).toHaveLength(1);
+        const [reason] = queued;
+        expect(arm.stored()).toEqual(arm.storesReason ? [reason] : []);
+        const errors = errorTexts();
+
+        // Storable: what Prisma and Postgres require of every text written or
+        // queued. No pair is excused from these.
+        for (const text of [reason, ...errors]) {
+            expect(isWellFormed(text)).toBe(true);
+            expect(text).not.toContain('\u0000');
+        }
+        // Nothing a cut or a blank part can leave behind: an empty
+        // parenthetical, or a separator or whitespace at either end of one.
+        expect(reason).not.toContain('()');
+        expect(reason).not.toContain('(;');
+        expect(reason).not.toContain('; )');
+        if (reason.startsWith(arm.head) && reason.endsWith(arm.tail)) {
+            const inner = reason.slice(arm.head.length, reason.length - arm.tail.length);
+            expect(inner).not.toMatch(/;$/);
+            expect(inner).toBe(inner.trim());
+        }
+
+        // Exact, so a case that reaches the bound pins it, and a fallback is the
+        // arm's own text rather than whatever survives around a label.
+        const expected =
+            hostile.kept === null
+                ? arm.fallback
+                : arm.head + arm.innerPrefix + hostile.kept(room, arm.takesParts) + arm.tail;
+        expect(reason).toBe(expected);
+        // A delivery failure stores its error text exactly as the parenthetical holds it.
+        expect(errors).toEqual(
+            arm.storesError ? [reason.slice(arm.head.length, reason.length - arm.tail.length)] : [],
+        );
     });
 });

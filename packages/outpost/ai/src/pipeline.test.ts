@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('./config.js', () => ({
+import type * as ConfigModule from './config.js';
+
+const mockConfigState = vi.hoisted(() => ({
+    draftLintMode: 'report' as 'report' | 'enforce',
+}));
+
+vi.mock('./config.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof ConfigModule>()),
     config: {
+        responseProvider: 'anthropic',
         anthropicApiKey: 'test-key',
         pathfinderMcpUrl: 'http://localhost:8787',
         responseModel: 'claude-sonnet-4-6',
@@ -12,16 +20,23 @@ vi.mock('./config.js', () => ({
         responseTemperature: 0.3,
         confidence: { highThreshold: 0.8, mediumThreshold: 0.5 },
         pathfinder: { defaultLimit: 8, defaultMinScore: 0.3 },
+        get draftLintMode() {
+            return mockConfigState.draftLintMode;
+        },
     },
     validateConfig: vi.fn(),
 }));
 
 import { AI_CONFIDENCE } from '@copilotkit/outpost/shared';
 import { AIPipeline, SUPPRESSED_RESPONSE_TEXT } from './pipeline.js';
+import { assessGroundedness } from './groundedness.js';
+import { describeVerdict, lintDraft } from './eval/linter.js';
 import { AI_DISCLAIMER, AI_DISCLAIMER_ESCALATED, AI_DISCLAIMER_REVIEWED } from './formatter.js';
 import { ConfidenceLevel, TicketPriority, TicketType } from './types.js';
 import type { SearchResult, GeneratedResponse } from './types.js';
 import type { ConfidenceAssessment } from './confidence.js';
+import { InvalidSupportReplyError, type SupportAgent } from './support-agent.js';
+import { LONE_SURROGATE, isWellFormed } from './test-utils/surrogates.js';
 
 // Create mock instances
 const mockSearchDocs = vi.fn();
@@ -35,8 +50,10 @@ const mockClassify = vi.fn();
 const mockHeuristicClassify = vi.fn();
 const mockFormat = vi.fn();
 
-function createPipeline() {
+/** Without `supportAgent` the pipeline takes the legacy generator path. */
+function createPipeline(supportAgent?: Pick<SupportAgent, 'investigate'>) {
     return new AIPipeline({
+        supportAgent,
         pathfinder: {
             searchDocs: mockSearchDocs,
             searchCode: mockSearchCode,
@@ -92,6 +109,11 @@ const sampleConfidence: ConfidenceAssessment = {
     degraded: false,
 };
 
+const lintBlockedDraft =
+    'Great question! I cannot inspect your runtime from here, but the documented answer is to use the CopilotChat component with the instructions prop. '.repeat(
+        4,
+    );
+
 describe('AIPipeline', () => {
     let pipeline: AIPipeline;
 
@@ -108,6 +130,7 @@ describe('AIPipeline', () => {
             text: 'Formatted response',
             truncated: false,
         });
+        mockConfigState.draftLintMode = 'report';
     });
 
     // Phase 2: retrieval reads the SOURCE as well as the docs. Until this, only
@@ -250,9 +273,7 @@ describe('AIPipeline', () => {
         });
 
         it('caps the merged list so the prompt cannot silently double', async () => {
-            mockSearchDocs.mockResolvedValue(
-                Array.from({ length: 8 }, (_, i) => docHit(`d${i}`)),
-            );
+            mockSearchDocs.mockResolvedValue(Array.from({ length: 8 }, (_, i) => docHit(`d${i}`)));
             mockSearchCode.mockResolvedValue(
                 Array.from({ length: 8 }, (_, i) => codeHit(`p/c${i}.ts`)),
             );
@@ -637,6 +658,87 @@ describe('AIPipeline', () => {
                 expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
             });
 
+            // The clamp above guarantees a human picks this up, so the reason the
+            // clamp fired has to travel with it. Suppression is NOT the trigger —
+            // this draft publishes — so a reason gated on `suppressed` alone hands
+            // the reviewer an escalation with no explanation of what to check.
+            it('carries the own-verification reason on a forced escalation that still publishes', async () => {
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(false);
+                expect(result.groundedness.forcesEscalation).toBe(true);
+                expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
+                expect(result.handoffReason).toEqual(expect.any(String));
+                expect(result.handoffReason ?? '').toContain('asserts own verification');
+            });
+
+            // The reason is bounded at 2000 UTF-16 code units, and a lone surrogate
+            // left at the cut is unstorable (see boundForStorage). The
+            // deterministic reasons lead, so where the model's text starts depends
+            // on their length; running both parities puts an emoji's leading half
+            // on the 2000th unit in exactly one of them, whatever that length is.
+            it.each([
+                ['even', ''],
+                ['odd', 'x'],
+            ])(
+                'never cuts an emoji in half when bounding a long reason (%s alignment)',
+                async (_label, pad) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                        reasoning: pad + '😀'.repeat(1500),
+                    });
+
+                    const result = await pipeline.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    const handoffReason = result.handoffReason ?? '';
+                    expect(handoffReason).toContain('asserts own verification');
+                    expect(handoffReason.length).toBeLessThanOrEqual(2000);
+                    expect(handoffReason.length).toBeGreaterThanOrEqual(1999);
+                    expect(isWellFormed(handoffReason)).toBe(true);
+                    expect(handoffReason).not.toMatch(LONE_SURROGATE);
+                    // The precondition: the cut fell inside the emoji run, so a whole
+                    // emoji ends the reason. Should the deterministic reasons ever fill
+                    // the bound on their own, this fails rather than the case passing
+                    // on a cut that never came near an emoji.
+                    expect(handoffReason.endsWith('😀')).toBe(true);
+                },
+            );
+
+            // The complement of the test above, and the bound on it: a score under
+            // the gate is not by itself something a reviewer can act on, so a
+            // published answer that merely scored low must stay reason-free rather
+            // than carry a restatement of its own confidence number.
+            it('does not manufacture a handoff reason for a merely low-scoring published answer', async () => {
+                mockScore.mockResolvedValue({
+                    ...sampleConfidence,
+                    score: 0.2,
+                    level: ConfidenceLevel.LOW,
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(false);
+                expect(result.groundedness.forcesEscalation).toBe(false);
+                expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
+                expect(result.handoffReason).toBeUndefined();
+            });
+
+            it('leaves a published grounded answer without a handoff reason', async () => {
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(false);
+                expect(result.groundedness.forcesEscalation).toBe(false);
+                expect(result.handoffReason).toBeUndefined();
+            });
+
             it('marks a response naming identifiers absent from the sources as suppressed', async () => {
                 mockGenerate.mockResolvedValue({
                     ...sampleGeneratedResponse,
@@ -652,6 +754,60 @@ describe('AIPipeline', () => {
                 expect(result.suppressed).toBe(true);
                 expect(result.groundedness.suppress).toBe(true);
                 expect(result.confidenceScore).toBeLessThan(AI_CONFIDENCE.ESCALATE);
+            });
+
+            it('reports groundedness before generic legacy generator reasoning for a withheld draft', async () => {
+                const draft = 'Override `.copilotKitGhostA` and `.copilotKitGhostB` to fix it.';
+                const genericReason = 'Based on 2 sources with average relevance 0.88.';
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: draft,
+                    reasoning: genericReason,
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(true);
+                expect(result.handoffReason).toEqual(expect.any(String));
+                const handoffReason = result.handoffReason ?? '';
+                expect(handoffReason).toContain('copilotKitGhostA');
+                expect(handoffReason).toContain('copilotKitGhostB');
+                expect(handoffReason.indexOf('copilotKitGhostA')).toBeLessThan(
+                    handoffReason.indexOf(genericReason),
+                );
+                expect(mockFormat).toHaveBeenCalledWith(
+                    SUPPRESSED_RESPONSE_TEXT,
+                    'github',
+                    expect.any(Object),
+                );
+                expect(result.formatted.text).not.toContain(draft);
+            });
+
+            it('reports enforced lint before generic legacy generator reasoning for a withheld draft', async () => {
+                const draft = lintBlockedDraft;
+                const genericReason = 'Based on 2 sources with average relevance 0.88.';
+                mockConfigState.draftLintMode = 'enforce';
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: draft,
+                    reasoning: genericReason,
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(true);
+                expect(result.handoffReason).toEqual(expect.any(String));
+                const handoffReason = result.handoffReason ?? '';
+                expect(handoffReason).toContain('no-banned-phrases');
+                expect(handoffReason.indexOf('no-banned-phrases')).toBeLessThan(
+                    handoffReason.indexOf(genericReason),
+                );
+                expect(mockFormat).toHaveBeenCalledWith(
+                    SUPPRESSED_RESPONSE_TEXT,
+                    'github',
+                    expect.any(Object),
+                );
+                expect(result.formatted.text).not.toContain(draft);
             });
 
             // Positive feedback tunes how we weigh well-formed answers. It must not
@@ -786,6 +942,249 @@ describe('AIPipeline', () => {
                 history,
             );
         });
+
+        // The handoff reason is written through Prisma to `escalationRequiredReason`,
+        // and a unit the store refuses fails that attempt before the reply posts.
+        // See boundForStorage.
+        describe('storable handoff reason', () => {
+            /** What the pipeline says when the model's diagnosis says nothing. */
+            const FALLBACK_REASONS = [
+                'Independent verification was unavailable or malformed',
+                'Independent verification found insufficient support',
+            ];
+
+            /**
+             * The reason is storable AND still carries the diagnosis. Storable alone
+             * proves nothing: dropping the diagnosis, stripping its bad units, or
+             * swapping in a fallback or `''` all store fine. `cleaned` is the
+             * diagnosis written out by hand with U+FFFD where each bad unit was, so
+             * it pins both the surviving text and where the replacement landed.
+             */
+            const expectStorable = (handoffReason: string | undefined, cleaned: string) => {
+                expect(handoffReason).toEqual(expect.any(String));
+                const reason = handoffReason ?? '';
+                expect(isWellFormed(reason)).toBe(true);
+                expect(reason).not.toMatch(LONE_SURROGATE);
+                expect(reason).not.toContain('\u0000');
+                expect(reason.length).toBeLessThanOrEqual(2000);
+                expect(reason).not.toBe('');
+                expect(FALLBACK_REASONS).not.toContain(reason);
+                expect(reason).toContain(cleaned);
+            };
+
+            /** The input really is ill-formed, so the case cannot pass vacuously. */
+            const expectIllFormed = (text: string) => {
+                expect(isWellFormed(text)).toBe(false);
+                expect(text).toMatch(LONE_SURROGATE);
+            };
+
+            it.each([
+                // What V8's JSON.parse reports for a reply that opens with 😀: it
+                // quotes the first code unit, which is the emoji's leading half alone.
+                [
+                    'a JSON.parse error quoting half an emoji',
+                    `Unexpected token '\uD83D', "😀 not json" is not valid JSON`,
+                    `Unexpected token '\uFFFD', "😀 not json" is not valid JSON`,
+                ],
+                [
+                    'a lone low surrogate and U+0000',
+                    'Evidence quote \uDE00 does not match\u0000',
+                    'Evidence quote \uFFFD does not match\uFFFD',
+                ],
+            ])(
+                "makes a failed investigation's diagnosis storable: %s",
+                async (_label, message, cleaned) => {
+                    expectIllFormed(message);
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvalidSupportReplyError(message);
+                        },
+                    });
+
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expectStorable(result.handoffReason, cleaned);
+                },
+            );
+
+            // The bad unit opens the diagnosis, at index 0, and the diagnosis runs
+            // 500 units past the bound. A failed investigation has no deterministic
+            // reason to lead with, so the stored reason is the diagnosis alone:
+            // replaced in place, then cut to exactly the bound.
+            it("makes a failed investigation's diagnosis storable: a lone surrogate opening a diagnosis longer than the bound", async () => {
+                const message = '\uD83D' + 'x'.repeat(2500);
+                expectIllFormed(message);
+                const failing = createPipeline({
+                    investigate: async () => {
+                        throw new InvalidSupportReplyError(message);
+                    },
+                });
+
+                const result = await failing.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.suppressed).toBe(true);
+                expectStorable(result.handoffReason, '\uFFFD' + 'x'.repeat(100));
+                expect(result.handoffReason).toHaveLength(2000);
+                expect(result.handoffReason).toBe('\uFFFD' + 'x'.repeat(1999));
+            });
+
+            it('makes the model reasoning storable on a forced escalation', async () => {
+                const reasoning = 'Diagnosis \uDE00\uD83D cut short\u0000';
+                expectIllFormed(reasoning);
+                mockGenerate.mockResolvedValue({
+                    ...sampleGeneratedResponse,
+                    text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                    reasoning,
+                });
+
+                const result = await pipeline.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.groundedness.forcesEscalation).toBe(true);
+                expect(result.handoffReason ?? '').toContain('asserts own verification');
+                // A reversed pair is two bad units, one of each kind.
+                expectStorable(result.handoffReason, 'Diagnosis \uFFFD\uFFFD cut short\uFFFD');
+            });
+        });
+
+        // Whether a part of the reason is blank, and so whether a fallback applies,
+        // is decided on the text as stored, not on the raw text.
+        describe('handoff reason judged after cleaning', () => {
+            const UNUSABLE_REASONINGS = [
+                ['whitespace only', ' \n\t '],
+                ['U+0000 only', '\u0000\u0000'],
+                ['lone surrogates only', '\uDE00 \uD83D'],
+            ];
+
+            it.each(UNUSABLE_REASONINGS)(
+                'leaves only the deterministic reasons on a forced escalation whose reasoning is %s',
+                async (_label, reasoning) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        text: '## Bug Confirmed: Cursor Jump\n\nRoot cause is a re-render.',
+                        reasoning,
+                    });
+
+                    const result = await pipeline.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.groundedness.forcesEscalation).toBe(true);
+                    expect(result.groundedness.reasons.length).toBeGreaterThan(0);
+                    expect(result.handoffReason).toBe(result.groundedness.reasons.join('; '));
+                },
+            );
+
+            // A draft that must already route never reaches the verifier, so neither
+            // of these may blame it.
+            it.each(UNUSABLE_REASONINGS)(
+                'falls back to its own reason when a failed investigation reports %s',
+                async (_label, message) => {
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvalidSupportReplyError(message);
+                        },
+                    });
+
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    expect(result.handoffReason).toBe(
+                        'Investigation failed validation or execution',
+                    );
+                },
+            );
+
+            it.each(UNUSABLE_REASONINGS)(
+                'falls back to its own reason when the investigator routes with %s',
+                async (_label, handoffReason) => {
+                    const routing = createPipeline({
+                        investigate: async () => ({
+                            reply: {
+                                decision: 'route',
+                                summary: 'A maintainer should check this setup.',
+                                details: '',
+                                apiVersion: 'unknown',
+                                appliesTo: '',
+                                evidence: [],
+                                handoffReason,
+                            },
+                            sources: [],
+                            tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                        }),
+                    });
+
+                    const result = await routing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expect(result.groundedness.suppress).toBe(false);
+                    expect(result.groundedness.forcesEscalation).toBe(false);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    expect(result.handoffReason).toBe(
+                        'The investigator routed the question without a usable reason',
+                    );
+                },
+            );
+
+            it.each(UNUSABLE_REASONINGS)(
+                'falls back to its own reason when a verified-too-low answer hands off with %s',
+                async (_label, handoffReason) => {
+                    const source = {
+                        title: 'Setup',
+                        content: 'Restart the dev server after you change the config.',
+                        sourceUrl: 'https://docs.copilotkit.ai/setup',
+                        score: 0.9,
+                    };
+                    const answering = createPipeline({
+                        investigate: async () => ({
+                            reply: {
+                                decision: 'answer',
+                                summary: 'Restart the dev server after you change the config.',
+                                details: '',
+                                apiVersion: 'v2',
+                                appliesTo: 'CopilotKit v2',
+                                evidence: [{ sourceUrl: source.sourceUrl, quote: source.content }],
+                                handoffReason,
+                            },
+                            sources: [source],
+                            tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                        }),
+                    });
+                    mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.2 });
+
+                    const result = await answering.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+
+                    expect(result.suppressed).toBe(true);
+                    expect(result.groundedness.reasons).toEqual([]);
+                    expect(result.handoffReason).toBe(
+                        'Independent verification found insufficient support',
+                    );
+                },
+            );
+
+            it('never ends the reason in whitespace the bound cut it at', async () => {
+                const failing = createPipeline({
+                    investigate: async () => {
+                        throw new InvalidSupportReplyError(
+                            'x'.repeat(1999) + ' ' + 'y'.repeat(100),
+                        );
+                    },
+                });
+
+                const result = await failing.generateSupportResponse('q', { source: 'github' });
+
+                expect(result.handoffReason).toBe('x'.repeat(1999));
+            });
+        });
     });
 
     describe('degraded confidence safety cap', () => {
@@ -881,6 +1280,89 @@ describe('AIPipeline', () => {
             for await (const chunk of stream) out.push(chunk);
             return out;
         }
+
+        describe.each(['buffered', 'streaming'] as const)('%s draft lint delivery', (delivery) => {
+            const citedDraft =
+                'Use the CopilotChat component with the instructions prop to tell the assistant how to help with your application. ' +
+                'This prop supplies additional context for the assistant while the chat component displays its response. ' +
+                'Keep the instructions specific to the task and provide the application context the assistant needs to answer. ' +
+                'See the retrieved documentation for the component setup and the complete list of supported properties: https://docs.copilotkit.ai/actions.';
+
+            it.each([
+                { name: 'enforce blocks', mode: 'enforce', draft: lintBlockedDraft, blocked: true },
+                { name: 'enforce passes', mode: 'enforce', draft: citedDraft, blocked: false },
+                {
+                    name: 'report records failures',
+                    mode: 'report',
+                    draft: lintBlockedDraft,
+                    blocked: false,
+                },
+            ] as const)(
+                '$name with nonsuppressing groundedness',
+                async ({ mode, draft, blocked }) => {
+                    mockConfigState.draftLintMode = mode;
+                    const groundedness = assessGroundedness(draft, sampleSearchResults);
+                    expect(groundedness.suppress).toBe(false);
+                    expect(groundedness.forcesEscalation).toBe(false);
+                    const verdict = lintDraft(draft, sampleSearchResults, mode);
+                    expect(verdict.publish).toBe(!blocked);
+                    expect(verdict.wouldCollapse).toBe(draft === lintBlockedDraft);
+                    if (draft === citedDraft) {
+                        // This answer needs the actual retrieved citation to pass enforcement.
+                        expect(lintDraft(draft, [], 'enforce').publish).toBe(false);
+                    } else {
+                        expect(lintDraft(draft, sampleSearchResults, 'enforce').publish).toBe(
+                            false,
+                        );
+                        expect(verdict.failed).toContain('no-banned-phrases');
+                    }
+
+                    const originalChunks = [draft.slice(0, 3), draft.slice(3, 22), draft.slice(22)];
+                    mockGenerate.mockResolvedValue({ ...sampleGeneratedResponse, text: draft });
+                    mockGenerateStream.mockReturnValue(streamOf(...originalChunks));
+                    mockFormat.mockImplementation((text: string) => ({ text, truncated: false }));
+                    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+                    try {
+                        let emitted: string[];
+                        if (delivery === 'buffered') {
+                            const result = await pipeline.generateSupportResponse('q', {
+                                source: 'web',
+                            });
+                            expect(result.suppressed).toBe(blocked);
+                            expect(result.response).toBe(draft);
+                            emitted = [result.formatted.text];
+                        } else {
+                            emitted = await collect(
+                                pipeline.generateStreamingResponse('q', { source: 'web' }),
+                            );
+                        }
+
+                        expect(emitted).toEqual(
+                            blocked
+                                ? [SUPPRESSED_RESPONSE_TEXT]
+                                : delivery === 'buffered'
+                                  ? [draft]
+                                  : originalChunks,
+                        );
+                        if (blocked) {
+                            for (const chunk of emitted) {
+                                expect(chunk).not.toContain('CopilotChat');
+                                expect(chunk).not.toContain('Great question');
+                            }
+                        }
+                        if (verdict.wouldCollapse) {
+                            expect(warn).toHaveBeenCalledExactlyOnceWith(
+                                describeVerdict(verdict, 'web'),
+                            );
+                        } else {
+                            expect(warn).not.toHaveBeenCalled();
+                        }
+                    } finally {
+                        warn.mockRestore();
+                    }
+                },
+            );
+        });
 
         it('yields the model chunks unchanged when the draft is grounded', async () => {
             mockGenerateStream.mockReturnValue(
@@ -1055,5 +1537,368 @@ describe('AIPipeline confidence calibration', () => {
             confidenceCalibration: -0.2, // min(0.85, 0.05)=0.05 - 0.2 = -0.15 → clamp
         });
         expect(result.confidenceScore).toBe(0);
+    });
+});
+
+// ─── One hostile corpus through every handoff-reason path ─────────────────
+//
+// `handoffReason` is written through Prisma to `Message.escalationRequiredReason`
+// and then into the ESCALATION job's jsonb payload, so a reason with a unit the
+// store refuses fails the attempt before it posts (see boundForStorage). Review
+// kept finding one more route to the reason that forgot to clean, bound or fall
+// back. Every route therefore takes the same corpus here, and a route added later
+// joins HANDOFF_PATHS to inherit it.
+describe('every handoff-reason path survives the hostile corpus', () => {
+    /** The pipeline's bound on `handoffReason`, restated so moving it fails here. */
+    const BOUND = 2000;
+
+    interface HostileCase {
+        /** The free text, given how many code units the path leaves it before the bound. */
+        text(room: number): string;
+        /** Blank parts a path that takes several parts receives ahead of `text`. */
+        blankParts?: readonly string[];
+        /** A fragment of the input that must survive, or null when none of it is usable. */
+        survivor: string | null;
+        /** What the raw input must hold at the bound, so the case cannot drift off it. */
+        atBound?: 'high surrogate' | 'space';
+    }
+
+    const HOSTILE_CORPUS: Array<[string, HostileCase]> = [
+        [
+            // What V8's JSON.parse reports for a reply opening with 😀: it quotes the
+            // emoji's leading half alone. The whole emoji later on must survive intact.
+            'a lone high surrogate',
+            {
+                text: () => `Unexpected token '\uD83D', "😀 not json" is not valid JSON`,
+                survivor: '"😀 not json" is not valid JSON',
+            },
+        ],
+        [
+            'a lone low surrogate',
+            { text: () => 'Evidence quote \uDE00 does not match', survivor: 'does not match' },
+        ],
+        [
+            'a reversed pair (low then high)',
+            { text: () => 'Diagnosis \uDE00\uD83D cut short', survivor: 'cut short' },
+        ],
+        ['U+0000', { text: () => 'Reporter version \u0000 is unknown', survivor: 'is unknown' }],
+        ['whitespace only', { text: () => ' \n\t ', survivor: null }],
+        [
+            'several blank parts',
+            {
+                blankParts: ['', '   ', '\u0000', '\uDE00 \uD83D'],
+                text: () => ' \n ',
+                survivor: null,
+            },
+        ],
+        [
+            'an over-bound reason (5000 chars)',
+            { text: () => 'x'.repeat(5000), survivor: 'x'.repeat(100) },
+        ],
+        [
+            'an emoji whose high half lands exactly on the bound',
+            {
+                text: (room) => 'x'.repeat(room - 1) + '😀' + ' and more after the cut',
+                survivor: 'x'.repeat(100),
+                atBound: 'high surrogate',
+            },
+        ],
+        [
+            'a space exactly at the cut',
+            {
+                text: (room) => 'x'.repeat(room - 1) + ' ' + 'y'.repeat(100),
+                survivor: 'x'.repeat(100),
+                atBound: 'space',
+            },
+        ],
+    ];
+
+    interface HandoffPath {
+        /**
+         * The deterministic finding this path puts ahead of the model's text, for
+         * a path that composes several parts. A path without one receives the
+         * corpus as a single string.
+         */
+        finding?: string;
+        /**
+         * The whole reason when nothing the path was given is usable. It names
+         * what committed the handoff, never a check that did not decide it.
+         */
+        fallback: string;
+        /** Drive the path with `parts` and return the reason it hands off. */
+        run(parts: string[]): Promise<string | undefined>;
+    }
+
+    /** What the linter finds in `lintBlockedDraft`. The pipeline writes it, so no arm blanks it. */
+    const { reasons: lintReasons } = lintDraft(lintBlockedDraft, sampleSearchResults, 'enforce');
+    const LINT_FINDING = lintReasons.join('; ');
+
+    const DRAFT_CHECK_FALLBACK = 'A draft check required review without a usable finding';
+    const INVESTIGATION_FALLBACK = 'Investigation failed validation or execution';
+
+    const groundedness = (overrides: { suppress: boolean; forcesEscalation: boolean }) => ({
+        penalty: 0.6,
+        unverifiedClaims: [],
+        unsourcedIdentifiers: [],
+        hedgeCount: 0,
+        reasons: [] as string[],
+        ...overrides,
+    });
+
+    const supportSource = {
+        title: 'Setup',
+        content: 'Restart the dev server after you change the config.',
+        sourceUrl: 'https://docs.copilotkit.ai/setup',
+        score: 0.9,
+    };
+
+    /** A support agent replying from `supportSource` with `decision` and `handoffReason`. */
+    const investigating = (decision: 'answer' | 'route', handoffReason: string) =>
+        createPipeline({
+            investigate: async () => ({
+                reply: {
+                    decision,
+                    summary: supportSource.content,
+                    details: '',
+                    apiVersion: 'v2',
+                    appliesTo: 'CopilotKit v2',
+                    evidence: [
+                        { sourceUrl: supportSource.sourceUrl, quote: supportSource.content },
+                    ],
+                    handoffReason,
+                },
+                sources: [supportSource],
+                tokenUsage: { inputTokens: 0, outputTokens: 0 },
+            }),
+        });
+
+    const HANDOFF_PATHS: Array<[string, HandoffPath]> = [
+        [
+            'a draft withheld for unsourced identifiers',
+            {
+                finding: 'identifiers absent from sources: copilotKitGhostA',
+                fallback: DRAFT_CHECK_FALLBACK,
+                run: async (parts) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        groundedness: {
+                            ...groundedness({ suppress: true, forcesEscalation: false }),
+                            unsourcedIdentifiers: ['copilotKitGhostA'],
+                            reasons: parts.slice(0, -1),
+                        },
+                        reasoning: parts[parts.length - 1],
+                    });
+                    const result = await createPipeline().generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'a forced escalation that still publishes',
+            {
+                finding: 'asserts own verification: "we reproduced it"',
+                fallback: DRAFT_CHECK_FALLBACK,
+                run: async (parts) => {
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        groundedness: {
+                            ...groundedness({ suppress: false, forcesEscalation: true }),
+                            unverifiedClaims: ['claims to have reproduced or tested'],
+                            reasons: parts.slice(0, -1),
+                        },
+                        reasoning: parts[parts.length - 1],
+                    });
+                    const result = await createPipeline().generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(false);
+                    expect(result.groundedness.forcesEscalation).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'a draft enforced lint blocked',
+            {
+                finding: LINT_FINDING,
+                fallback: LINT_FINDING,
+                run: async (parts) => {
+                    mockConfigState.draftLintMode = 'enforce';
+                    mockGenerate.mockResolvedValue({
+                        ...sampleGeneratedResponse,
+                        text: lintBlockedDraft,
+                        groundedness: groundedness({ suppress: false, forcesEscalation: false }),
+                        // The linter writes the finding, so the model's text is the rest.
+                        reasoning: parts.filter((part) => part !== LINT_FINDING).join(' '),
+                    });
+                    const result = await createPipeline().generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an answer the verifier scored too low to publish',
+            {
+                fallback: 'Independent verification found insufficient support',
+                run: async (parts) => {
+                    mockScore.mockResolvedValue({ ...sampleConfidence, score: 0.2 });
+                    const result = await investigating(
+                        'answer',
+                        parts.join(' '),
+                    ).generateSupportResponse('q', { source: 'github' });
+                    expect(result.suppressed).toBe(true);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an answer whose verifier came back degraded',
+            {
+                fallback: 'Independent verification was unavailable or malformed',
+                run: async (parts) => {
+                    mockScore.mockResolvedValue({ ...sampleConfidence, degraded: true });
+                    const result = await investigating(
+                        'answer',
+                        parts.join(' '),
+                    ).generateSupportResponse('q', { source: 'github' });
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).toHaveBeenCalledTimes(1);
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'a question the investigator routed',
+            {
+                fallback: 'The investigator routed the question without a usable reason',
+                run: async (parts) => {
+                    const result = await investigating(
+                        'route',
+                        parts.join(' '),
+                    ).generateSupportResponse('q', { source: 'github' });
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an investigation whose reply failed validation',
+            {
+                fallback: INVESTIGATION_FALLBACK,
+                run: async (parts) => {
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvalidSupportReplyError(parts.join(' '));
+                        },
+                    });
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    return result.handoffReason;
+                },
+            },
+        ],
+        [
+            'an investigation that ran over budget',
+            {
+                fallback: INVESTIGATION_FALLBACK,
+                run: async (parts) => {
+                    const { InvestigationBudgetError } = await import('./support-agent.js');
+                    const failing = createPipeline({
+                        investigate: async () => {
+                            throw new InvestigationBudgetError(parts.join(' '));
+                        },
+                    });
+                    const result = await failing.generateSupportResponse('q', {
+                        source: 'github',
+                    });
+                    expect(result.suppressed).toBe(true);
+                    expect(mockScore).not.toHaveBeenCalled();
+                    return result.handoffReason;
+                },
+            },
+        ],
+    ];
+
+    /**
+     * The parts `path` receives for `hostile`. A path with a finding puts it
+     * first, as production does, which leaves the free text less room before
+     * the bound; the blank-parts case stands in for every finding instead.
+     */
+    function partsFor(path: HandoffPath, hostile: HostileCase): string[] {
+        if (hostile.blankParts) return [...hostile.blankParts, hostile.text(BOUND)];
+        if (path.finding === undefined) return [hostile.text(BOUND)];
+        return [path.finding, hostile.text(BOUND - path.finding.length - '; '.length)];
+    }
+
+    const PATH_CASES = HANDOFF_PATHS.flatMap(([pathLabel, path]) =>
+        HOSTILE_CORPUS.map(([caseLabel, hostile]): [string, string, HandoffPath, HostileCase] => [
+            pathLabel,
+            caseLabel,
+            path,
+            hostile,
+        ]),
+    );
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        mockSearchDocs.mockResolvedValue(sampleSearchResults);
+        mockSearchCode.mockResolvedValue([]);
+        mockGenerate.mockResolvedValue(sampleGeneratedResponse);
+        mockScore.mockResolvedValue(sampleConfidence);
+        mockFormat.mockReturnValue({ text: 'Formatted response', truncated: false });
+        mockConfigState.draftLintMode = 'report';
+        // Every failed investigation logs, and that noise would bury real output.
+        const quiet = [
+            vi.spyOn(console, 'error').mockImplementation(() => {}),
+            vi.spyOn(console, 'warn').mockImplementation(() => {}),
+        ];
+        return () => quiet.forEach((spy) => spy.mockRestore());
+    });
+
+    it('has an oracle that tells a well-formed string from an ill-formed one', () => {
+        expect(isWellFormed('😀 and text')).toBe(true);
+        expect(isWellFormed('\uD83D')).toBe(false);
+        expect(isWellFormed('\uDE00')).toBe(false);
+        expect(isWellFormed('\uDE00\uD83D')).toBe(false);
+    });
+
+    it.each(PATH_CASES)('%s: %s', async (_path, _case, path, hostile) => {
+        const parts = partsFor(path, hostile);
+        // The alignment cases only mean something if the raw composition really
+        // puts the named unit at the bound, so that is checked before the run.
+        const raw = parts.join(path.finding === undefined ? ' ' : '; ');
+        if (hostile.atBound === 'high surrogate') {
+            expect(raw.charCodeAt(BOUND - 1).toString(16)).toBe('d83d');
+            expect(raw.charCodeAt(BOUND).toString(16)).toBe('de00');
+        }
+        if (hostile.atBound === 'space') expect(raw[BOUND - 1]).toBe(' ');
+
+        const handoffReason = await path.run(parts);
+
+        expect(handoffReason).toEqual(expect.any(String));
+        const reason = handoffReason ?? '';
+        expect(isWellFormed(reason)).toBe(true);
+        expect(reason).not.toContain('\u0000');
+        expect(reason.length).toBeLessThanOrEqual(BOUND);
+        // Neither end padded, and every part between the separators says something.
+        expect(reason).toBe(reason.trim());
+        for (const part of reason.split('; ')) expect(part).toMatch(/[\p{L}\p{N}]/u);
+        // The finding the reason leads with, unless blank parts stand in for it.
+        const finding = hostile.blankParts ? undefined : path.finding;
+        if (finding !== undefined) expect(reason.startsWith(finding)).toBe(true);
+        if (hostile.survivor !== null) expect(reason).toContain(hostile.survivor);
+        // Nothing usable left, so the reason is that finding alone, or the path's fallback.
+        else expect(reason).toBe(finding ?? path.fallback);
     });
 });

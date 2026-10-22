@@ -4,7 +4,7 @@ Outpost consists of seven services (web dashboard, Discord bot, GitHub app, Slac
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 24+
 - PostgreSQL 16 with pgvector extension
 - Docker (for containerized deployment)
 - Railway account (recommended) or equivalent PaaS
@@ -26,7 +26,7 @@ Railway auto-deploys from GitHub and natively supports Docker-based services.
     - **outpost-linear-sync** — `apps/linear-sync/Dockerfile` (web service, needs public URL for Linear webhooks)
     - **outpost-worker** — `apps/worker/Dockerfile` (background job processor — Postgres queue + scheduler, no public URL needed)
 6. Share `DATABASE_URL` across all services using Railway's variable references (`${{Postgres.DATABASE_URL}}`)
-7. Fill in the remaining secret environment variables (`DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, etc. — see Environment Variables below)
+7. Fill in the remaining secret environment variables (`DISCORD_TOKEN`, `OPENAI_API_KEY`, etc. — see Environment Variables below)
 8. Configure custom domains for the web dashboard, GitHub App webhook endpoint, Teams bot messaging endpoint, and Linear sync webhook endpoint
 
 ### What gets deployed
@@ -75,7 +75,8 @@ Copy `.env.example` and fill in all values. Key groups:
 
 - **Database**: `DATABASE_URL`
 - **Auth**: `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
-- **AI**: `ANTHROPIC_API_KEY`, `PATHFINDER_URL`
+- **AI**: `OPENAI_API_KEY` on the worker and web service, plus `PATHFINDER_URL`
+- **Optional AI rollback**: `AI_RESPONSE_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`; clear any explicit OpenAI model overrides
 - **Discord**: `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `GUILD_ID`, `MONITORED_CHANNEL_IDS`
 - **GitHub App**: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_INSTALLATION_ID`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_TEAM_LOGINS` (optional)
 - **Slack**: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET`, `MONITORED_CHANNEL_IDS`, `TEAM_MEMBER_IDS` (optional)
@@ -84,6 +85,19 @@ Copy `.env.example` and fill in all values. Key groups:
 - **Linear sync**: `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `LINEAR_TEAM_ID`
 - **Monitoring**: `SENTRY_DSN` (optional), `LOG_LEVEL`
 
+All default AI stages use `gpt-5.6-luna`: support investigation, independent confidence verification, ticket classification, and sentiment analysis. Anthropic is needed only for the explicit rollback or direct legacy-generator use. See [Support reply agent](support-agent.md) for model overrides and verification behavior.
+
+### Before the OpenAI default reaches an environment
+
+`AI_RESPONSE_PROVIDER` defaults to `openai`. A deployment that was running on Anthropic has to be prepared **before** a release with this default deploys to it, in **both** Railway environments (staging and production):
+
+1. Set `OPENAI_API_KEY` on `outpost-worker` and on `outpost-web`. These are the two services that make model calls. The other services only format and post replies.
+2. Clear any `claude-*` value from `AI_RESPONSE_MODEL`, `AI_CONFIDENCE_MODEL`, `AI_CLASSIFIER_MODEL` and `AI_SENTIMENT_MODEL`. `validateConfig` rejects a Claude model under the OpenAI provider. `AI_LEGACY_RESPONSE_MODEL` only applies to the legacy generator and can stay.
+3. Grant the GitHub App **Contents: Read-only**. An org owner or a GitHub App manager adds it under the App's **Permissions & events**, and the installation accepts the updated permissions. `read_source` and `read_release` run only on the OpenAI path, and they ask for a token narrowed to `contents: read`. An App without Contents fails every evidence read from the moment the OpenAI default deploys.
+4. Set `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` and `GITHUB_INSTALLATION_ID` on `outpost-web` too, if web QA evidence reads should be authenticated. The web QA route (`/api/qa`) runs the same support agent as the worker, and it reads these three variables from its own service. Without them, web QA evidence reads are anonymous and rate-limited, on the shared 60 requests/hour budget. Set all three or none: a partial set fails every web QA evidence read.
+
+Missing step 1 or 2 does not fail at boot. `validateConfig` runs only when a pipeline is built, so every `AI_RESPONSE` job fails before its pending response row exists, then retries and dead-letters. The reporter gets no reply, and no human gets a handoff. Sentiment analysis meanwhile logs an error line, but nothing fails. Account scoring skips the sentiment update, so each account keeps its last sentiment. Missing step 3 does not stop the job either. Every source and release read fails instead, as [GitHub App Setup](#github-app-setup) describes. To stay on Anthropic instead, set `AI_RESPONSE_PROVIDER=anthropic` (the rollback above) before the release lands.
+
 ## GitHub App Setup
 
 Outpost's GitHub integration (`apps/github-app`) responds to issues and discussions the same way the Discord bot responds in threads. Creating the App is a one-time setup per GitHub org/repo.
@@ -91,8 +105,10 @@ Outpost's GitHub integration (`apps/github-app`) responds to issues and discussi
 1. **Create the App.** GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
     - Webhook URL: `https://<your-github-app-deployment>/api/webhooks/github` — needs a public URL (the deployed `outpost-github-app` Railway service, or a tunnel like ngrok for local dev on port 3200).
     - Webhook secret: generate a random string and save it — this becomes `GITHUB_WEBHOOK_SECRET`.
-    - Permissions: **Issues: Read & write**, **Discussions: Read & write**.
+    - Permissions: **Issues: Read & write**, **Discussions: Read & write**, **Contents: Read-only**. (**Metadata: Read-only** is granted to every App automatically.)
     - Subscribe to events: **Issues**, **Issue comment**, **Discussions**.
+
+    Contents is for the support agent's evidence reads. `read_source` and `read_release` ask GitHub for an installation token narrowed to `contents: read` (`packages/outpost/ai/src/github-evidence-auth.ts`). If the App does not have Contents, GitHub refuses that token request, and every evidence read fails, even though the same public reads would succeed without a token. The model's tool result reports `auth_unavailable`. The worker log line, `[SupportAgent] GitHub evidence authentication unavailable:`, carries the category `token_exchange_failed`, the same one any failed token exchange gets. To add it to an App that already exists, an org owner or a GitHub App manager sets **Contents: Read-only** under the App's **Permissions & events**, and the installation then has to accept the updated permissions. GitHub issues no narrowed token until it does.
 
     GitHub has no webhook event for comment reactions, so 👍/👎 feedback is picked up by a 24-hour poll job instead (`GITHUB_REACTION_POLL`) — no extra event subscription is needed for that.
 
@@ -100,7 +116,7 @@ Outpost's GitHub integration (`apps/github-app`) responds to issues and discussi
 
 3. **Install the App.** App settings → Install App → pick the target repo (scope to one repo rather than the whole org for testing). After installing, the URL bar shows an `installation_id` — that's `GITHUB_INSTALLATION_ID`.
 
-4. **Set environment variables.** Both `apps/github-app` (the webhook receiver) and the worker/web services (via `packages/outpost/shared`'s platform adapter registry) read:
+4. **Set environment variables.** `apps/github-app` (the webhook receiver) reads all four. The worker reads the first three to post replies (via `packages/outpost/shared`'s platform adapter registry), to poll reactions, and for the support agent's evidence reads. `outpost-web` reads the first three only for the support agent's evidence reads in web QA (see [Before the OpenAI default reaches an environment](#before-the-openai-default-reaches-an-environment)).
 
     ```
     GITHUB_APP_ID=<app id>
@@ -149,7 +165,7 @@ All images:
 - Use multi-stage builds (prune -> install -> run)
 - Run as non-root user (`outpost`, uid 1001)
 - Include Docker HEALTHCHECK instructions
-- Base on `node:20-alpine` for minimal size
+- Base on `node:24-alpine` for minimal size
 
 ## CI/CD Pipeline
 
