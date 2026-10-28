@@ -7,11 +7,6 @@
 // `railway config apply`, so editing a setting here and merging does nothing
 // until someone applies it. Needs Railway CLI 5.42.1 or newer.
 //
-// Written by hand, not with `railway config migrate`. As of CLI 5.58 the
-// migrator drops dockerfilePath, builder and restartPolicyType for a monorepo
-// like this one (railwayapp/cli#1199), so every service would fall back to
-// auto-detect and fail to build.
-//
 // `partial` limits what this file owns to the services declared below. A
 // whole-project file deletes every resource it omits on apply, and this file
 // does not declare the Postgres databases, so without it an apply would plan to
