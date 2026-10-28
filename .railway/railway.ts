@@ -17,27 +17,23 @@
 // does not declare the Postgres databases, so without it an apply would plan to
 // delete them.
 //
-// Cutover, per environment (staging first, then production):
-//   1. `railway config pull` and copy that environment's variables in as
-//      preserve(), along with its domains (custom and *.up.railway.app: the
-//      webhook services' URLs are registered with GitHub, Linear and Teams).
-//      Then add the environment to VARIABLES_IMPORTED and merge.
-//   2. In one window, with no deploys in between:
-//      a. Delete the root railway.toml from that environment's deploy branch
-//         (`staging`, then `main`). A service with no config path falls back
-//         to it, and it builds web, so it has to go before any path is cleared.
-//      b. Clear every service's "Config file path" in the dashboard. IaC
-//         cannot manage a service that a railway.toml still manages.
-//      c. `railway config plan`. It may change only the build and deploy
+// Cutover. The change that adds this file also deletes the railway.toml files,
+// so a service still pointed at one has no build config until it is applied.
+//   1. Before merging: `railway config pull` in each environment and copy its
+//      variables in as preserve(), along with its domains (custom and
+//      *.up.railway.app: the webhook services' URLs are registered with
+//      GitHub, Linear and Teams). Then add the environment to
+//      VARIABLES_IMPORTED.
+//   2. When the change reaches an environment's deploy branch (`main` for
+//      production, `staging` for staging), in the same sitting:
+//      a. Clear every service's "Config file path" in the dashboard. IaC
+//         cannot manage a service that Config as Code still manages.
+//      b. `railway config plan`. It may change only the build and deploy
 //         settings this file sets. Stop if it removes or changes anything else:
 //         variables, domains, replicas, dashboard-only settings, the deploy
 //         trigger of slack-bot, teams-bot or linear-sync, or (in staging) an
 //         outpost-release-bot service.
-//      d. `railway config apply`.
-// Run production's cutover before staging is next merged into main: that merge
-// carries step 2a's deletion to main, and production web needs the root file
-// until its own step 2. The per-service railway.toml files under apps/ can be
-// deleted once both environments are applied; nothing reads them after 2b.
+//      c. `railway config apply`.
 //
 // Build context is the repo ROOT for every service (the Dockerfiles run
 // `turbo prune`), so no service sets a root directory.
@@ -81,7 +77,7 @@ export default defineRailway((ctx, project) => {
     // Railway does not document which command it passes here, so a run without
     // one is treated as read-only. That
     // makes this guard catch an apply only when the CLI says `apply`; the plan
-    // check in cutover step 2c stays the real safety net.
+    // check in cutover step 2b stays the real safety net.
     const readOnly = ctx.command === undefined || ctx.command === 'plan' || ctx.command === 'pull';
     if (!VARIABLES_IMPORTED.includes(environment) && !readOnly) {
         throw new Error(
@@ -98,7 +94,7 @@ export default defineRailway((ctx, project) => {
     // by hand and left offline until their credentials are configured, so this
     // file does not set a branch for them. github() defaults the branch to
     // `main`, which would add a deploy trigger, so it is passed as null; the SDK
-    // then drops the key, leaving the branch out of the plan. Cutover step 2c
+    // then drops the key, leaving the branch out of the plan. Cutover step 2b
     // checks that Railway reads that as "no change".
     const manual = github('CopilotKit/outpost', { branch: null });
 
@@ -109,7 +105,7 @@ export default defineRailway((ctx, project) => {
 
     // web's healthcheck was set in the dashboard, not in its railway.toml. It is
     // declared here so it is version-controlled like the other services'. Its
-    // other dashboard-only settings are left out; cutover step 2c checks that
+    // other dashboard-only settings are left out; cutover step 2b checks that
     // the plan leaves them alone.
     const web = service('outpost-web', {
         source: deployed,
